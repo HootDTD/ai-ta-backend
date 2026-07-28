@@ -17,6 +17,7 @@ Covers:
 
 from __future__ import annotations
 
+from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -84,8 +85,11 @@ async def _run(
     use_real_xp=False,
     capture=None,
     diagnostic_result=None,
+    remediation_retrieve=None,
 ):
     db, _sess, _attempt, patches = _old_path_patches()
+    db.begin_nested.return_value.__aenter__ = AsyncMock(return_value=None)
+    db.begin_nested.return_value.__aexit__ = AsyncMock(return_value=False)
     if capture is not None:
         capture["attempt"] = _attempt
     graph = _reference_graph_with_topics()
@@ -94,6 +98,7 @@ async def _run(
         assert course_id == _sess.course_id
         problem = MagicMock()
         problem.id = "p_code"
+        problem.concept_id = "bernoulli_principle"
         problem.problem_text = "text"
         problem.reference_solution = []
         problem.to_kg_graph.return_value = graph
@@ -141,6 +146,13 @@ async def _run(
         patches = [p for p in patches if getattr(p, "attribute", None) != "generate_diagnostic"]
         patches.append(
             patch("apollo.handlers.done.generate_diagnostic", return_value=diagnostic_result)
+        )
+    if remediation_retrieve is not None:
+        patches.append(
+            patch(
+                "apollo.overseer.remediation.retrieve_for_question",
+                new=remediation_retrieve,
+            )
         )
 
     for p in patches:
@@ -221,6 +233,160 @@ async def test_feedback_served_with_topic_score_and_flattened_narrative(monkeypa
 
     assert out["feedback"] == feedback
     assert out["diagnostic_narrative"] == flattened
+
+
+def _remediation_snippet():
+    from config.contracts import BundleSnippet
+
+    return BundleSnippet(
+        id="chunk-1",
+        type="body",
+        page=18,
+        section_path="2.1",
+        text="Steady flow is required.",
+        figure_id=None,
+        why="hit",
+        source_path="course.pdf",
+        doc_title="Course Text",
+        doc_short="Course Text",
+        citation_marker="[Textbook, p. 18]",
+        final_score={"final": 0.95},
+        metadata={"document_id": 55},
+    )
+
+
+async def test_remediation_flag_on_adds_review_with_mocked_retrieval(monkeypatch):
+    monkeypatch.setenv("INTERACTION3", "true")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    retrieve = AsyncMock(return_value=([_remediation_snippet()], {}))
+    feedback = {
+        "headline": "You built a useful foundation.",
+        "topic_feedback": [
+            {"canonical_key": "eq1", "note": "Your equation was clear.", "quote": None},
+            {"canonical_key": "c1", "note": "Add the condition.", "quote": None},
+        ],
+        "recap": [],
+        "next_step": "State when the equation applies.",
+    }
+
+    out = await _run(
+        monkeypatch,
+        diagnostic_result=("flattened", feedback),
+        remediation_retrieve=retrieve,
+    )
+
+    assert "review" not in out["feedback"]["topic_feedback"][0]
+    assert out["feedback"]["topic_feedback"][1]["review"] == [
+        {"doc_id": 55, "label": "[Textbook, p. 18]", "page": 18}
+    ]
+    retrieve.assert_awaited_once()
+
+
+async def test_remediation_matching_concept_adds_review(monkeypatch):
+    monkeypatch.setenv("INTERACTION3", "true")
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "ethics, BERNOULLI_PRINCIPLE")
+    retrieve = AsyncMock(return_value=([_remediation_snippet()], {}))
+    feedback = {
+        "headline": "Headline",
+        "topic_feedback": [
+            {"canonical_key": "eq1", "note": "Strong.", "quote": None},
+            {"canonical_key": "c1", "note": "Review this.", "quote": None},
+        ],
+        "recap": [],
+        "next_step": "Try again.",
+    }
+
+    out = await _run(
+        monkeypatch,
+        diagnostic_result=("flattened", feedback),
+        remediation_retrieve=retrieve,
+    )
+
+    assert out["feedback"]["topic_feedback"][1]["review"] == [
+        {"doc_id": 55, "label": "[Textbook, p. 18]", "page": 18}
+    ]
+    retrieve.assert_awaited_once()
+
+
+async def test_remediation_non_matching_concept_leaves_feedback_untouched(monkeypatch):
+    monkeypatch.setenv("INTERACTION3", "true")
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "ethics")
+    retrieve = AsyncMock(return_value=([_remediation_snippet()], {}))
+    feedback = {
+        "headline": "Headline",
+        "topic_feedback": [
+            {"canonical_key": "eq1", "note": "Strong.", "quote": None},
+            {"canonical_key": "c1", "note": "Review this.", "quote": None},
+        ],
+        "recap": [],
+        "next_step": "Try again.",
+    }
+
+    out = await _run(
+        monkeypatch,
+        diagnostic_result=("flattened", feedback),
+        remediation_retrieve=retrieve,
+    )
+
+    assert out["feedback"] == feedback
+    assert all("review" not in item for item in out["feedback"]["topic_feedback"])
+    retrieve.assert_not_awaited()
+
+
+async def test_remediation_flag_off_leaves_feedback_untouched(monkeypatch):
+    monkeypatch.delenv("INTERACTION3", raising=False)
+    retrieve = AsyncMock(return_value=([_remediation_snippet()], {}))
+    feedback = {
+        "headline": "Headline",
+        "topic_feedback": [
+            {"canonical_key": "eq1", "note": "Strong.", "quote": None},
+            {"canonical_key": "c1", "note": "Review this.", "quote": None},
+        ],
+        "recap": [],
+        "next_step": "Try again.",
+    }
+
+    out = await _run(
+        monkeypatch,
+        diagnostic_result=("flattened", feedback),
+        remediation_retrieve=retrieve,
+    )
+
+    assert out["feedback"] == feedback
+    retrieve.assert_not_awaited()
+
+
+async def test_remediation_failure_leaves_grade_payload_untouched(monkeypatch):
+    retrieve = AsyncMock(side_effect=RuntimeError("retrieval unavailable"))
+    feedback = {
+        "headline": "Headline",
+        "topic_feedback": [
+            {"canonical_key": "eq1", "note": "Strong.", "quote": None},
+            {"canonical_key": "c1", "note": "Review this.", "quote": None},
+        ],
+        "recap": [],
+        "next_step": "Try again.",
+    }
+
+    monkeypatch.delenv("INTERACTION3", raising=False)
+    expected = await _run(
+        monkeypatch,
+        diagnostic_result=("flattened", deepcopy(feedback)),
+        remediation_retrieve=retrieve,
+    )
+
+    monkeypatch.setenv("INTERACTION3", "1")
+    out = await _run(
+        monkeypatch,
+        diagnostic_result=("flattened", deepcopy(feedback)),
+        remediation_retrieve=retrieve,
+    )
+
+    assert out == expected
+    assert out["feedback"] == feedback
+    assert out["rubric"]["overall"] == {"score": 50, "letter": score_to_letter(50)}
+    assert "review" not in out["feedback"]["topic_feedback"][1]
+    retrieve.assert_awaited_once()
 
 
 async def test_feedback_absent_without_topic_score_even_if_diagnostic_returns_one(monkeypatch):

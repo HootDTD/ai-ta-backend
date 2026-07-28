@@ -1,13 +1,13 @@
 ---
 doc: platform/config-settings
-description: config/settings.py — per-request runtime configuration (RequestConfig) plus the env-flag getters (embedding, Neo4j, reranker, subject) used across the backend
+description: config/settings.py — per-request runtime configuration plus backend env-flag getters.
 owns:
   - config/settings.py
   - config/__init__.py
 related:
   - platform/http-server
   - rag-pipeline/hybrid-search
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -33,6 +33,17 @@ The single authority on these env-flag getters; `retrieval/`, `apollo/`, and
 - Neo4j: `get_neo4j_uri/username/password/database()` + `neo4j_configured()`
   (True only when all four vars are set).
 - Reranker: `rerankers_enabled()`, `get_reranker_model()`.
+- Apollo grounding: `interaction1_enabled()` reads `INTERACTION1`, default off;
+  gates whether a session's grounding bundle is BUILT
+  (`apollo/conversation/session-init`).
+- Grounding: `interaction2_enabled()` — default OFF; gates whether the Apollo
+  grading path consumes a session's course-grounding bundle
+  (`apollo/conversation/handlers/done`). Independent of `INTERACTION1`, which
+  only gates whether that bundle is BUILT.
+- Apollo concept scope: `interaction_concepts()` parses `INTERACTION_CONCEPTS`
+  into a normalized concept-slug allowlist, and
+  `interaction_allowed_for_concept(slug)` applies it to interaction features.
+- Apollo remediation: `interaction3_enabled()` reads `INTERACTION3`, default off.
 
 ## Data flow
 
@@ -46,13 +57,17 @@ gates a one-time subject log line.
   request-scoped — the globals are process-wide and not concurrency-safe.
 - `get_embedding_dim()` must match the model used at index time (halfvec HNSW
   index dimensionality); mismatches break retrieval.
+- `INTERACTION_CONCEPTS` is comma-separated, with each slug stripped and
+  casefolded. Unset, empty, and whitespace-only values produce an empty
+  allowlist, which means no concept restriction and preserves existing behavior.
 
 ## Env flags
 
 `RETRIEVAL_WIRE_LOG`, `RUNTIME_DIR`, `TEXTBOOK_SUBJECT`, `CITATION_LABEL`,
 `USE_PGVECTOR_RETRIEVAL`, `EMBEDDING_DIM`, `OPENAI_EMBEDDING_MODEL`,
 `SUPABASE_DB_URL`, `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`/`NEO4J_DATABASE`,
-`RERANKERS_ENABLED`, `RERANKER_MODEL`.
+`RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION1`, `INTERACTION2`, `INTERACTION3`,
+`INTERACTION_CONCEPTS`.
 
 ## Related
 

@@ -3,7 +3,7 @@ doc: apollo/persistence/_index
 description: Router for Apollo's persistence sub-area — the ORM hub, scoped repositories, the DB-free Layer-1 seed converter, and the Neo4j seam.
 owns: []
 related: []
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -33,10 +33,10 @@ which does not use the belief filter's row-spec objects.
 - **Current `app`/`internal` table names only.** DB-13/DB-14 retargeted the
   learner-model + grading tables; the legacy `apollo_*` names survive only as
   frozen migration provenance (`database/legacy-migrations`).
-- **Add a column → active supabase chain.** A new column on any tutoring/learner
-  table needs a migration in the **active** supabase chain
-  (`database/supabase-migrations`), never the frozen legacy chain; then reconcile
-  the owning leaf. Full recipe in [models](models.md).
+- **Add a column → normally the active supabase chain.** Interaction-1 is the
+  explicit sequential-number exception at frozen migration `048`; otherwise use
+  `database/supabase-migrations`, then reconcile the owning leaf. Full recipe in
+  [models](models.md).
 
 ## Related
 

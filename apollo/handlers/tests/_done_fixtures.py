@@ -16,6 +16,9 @@ class _Sess:
         self.concept_id = 3
         self.current_problem_id = 42
         self.phase = "TEACHING"
+        # INTERACTION1 column consumed by INTERACTION2 grounding; NULL is the
+        # default state (no bundle built) and keeps the base golden ungrounded.
+        self.grounding_bundle = None
 
 
 class _Attempt:

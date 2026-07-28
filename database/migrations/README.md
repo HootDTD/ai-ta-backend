@@ -1,8 +1,11 @@
 # Frozen legacy migrations
 
 This numbered migration chain is a read-only historical record through migration
-`047`. Do not add, edit, renumber, delete, or apply files in this directory. The
-normalized checksums in `legacy-manifest.sha256` are enforced by CI.
+`048`. Migration `048_apollo_session_grounding_bundle.sql` is the explicitly
+approved Interaction-1 sequential exception and targets the current
+`app.learning_activities` table. Do not add, edit, renumber, delete, or apply
+further files in this directory. The normalized checksums in
+`legacy-manifest.sha256` are enforced by CI.
 
 All forward schema work must use timestamped SQL files created with the pinned
 Supabase CLI:
@@ -17,9 +20,8 @@ old Python/manual numbered-file runner to apply the new schema.
 
 The duplicate legacy `023` files are preserved as history. Production's
 `046_apollo_solution_source_llm_paired.sql` is the authoritative legacy `046`.
-Any unmerged wave5 numbered migration that collided at `046` must be renumbered
-to at least `048` if it ever joins the legacy line; after migration-history
-reconciliation, it receives a timestamped name in the active chain instead.
+Any unmerged numbered migration must be reconciled into the timestamped active
+chain rather than colliding with the now-occupied `048`.
 
 Remote history reconciliation and remote migration application are human-only
 operations. The repository harness runs only against the local Docker stack.

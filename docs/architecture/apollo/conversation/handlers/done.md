@@ -9,14 +9,16 @@ related:
   - apollo/overseer/rubric
   - apollo/overseer/topic-score
   - apollo/overseer/diagnostic
+  - apollo/overseer/grounding
   - apollo/overseer/xp
   - apollo/conversation/handlers/grading-artifact-writer
+  - apollo/conversation/hoot-bridge-reference-answer
   - apollo/projections/scorecard
   - apollo/projections/mastery
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-07-27
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -44,7 +46,14 @@ Ordered grade assembly (each step delegates to the owner doc):
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
 3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans`
    (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated
-   evidence spans.
+   evidence spans. Just before it, `_course_evidence_safe` checks both
+   `INTERACTION2` and the problem concept against `INTERACTION_CONCEPTS`, then
+   renders the session's `grounding_bundle` into the optional `course_evidence`
+   block (also step 6).
+   `_full_transcript` excludes any `TutoringMessage` tagged
+   `intent == ASIDE_MESSAGE_INTENT_TAG` (`hoot-bridge-reference-answer`) — the
+   INTERACTION4 hint-lane aside text never enters grading, but the student's
+   untagged triggering question does (it's real signal about a gap).
 4. `compute_rubric` (`overseer/rubric`) maps coverage into the axis rubric.
 5. **Topic score** (`_compute_topic_score_safe` wrapping `compute_topic_score` /
    `compute_centrality`, `overseer/topic-score`): best-effort, computed always.
@@ -52,7 +61,10 @@ Ordered grade assembly (each step delegates to the owner doc):
    (new dict; `rubric` itself is never mutated).
 6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative plus, on
    topic-score JSON success, structured per-topic feedback from the student's
-   verbatim utterances.
+   verbatim utterances; the same `course_evidence` lets feedback cite the course.
+   With `INTERACTION3` enabled and the problem concept
+   allowed by `INTERACTION_CONCEPTS`, one best-effort remediation pass decorates
+   at most three weak topics with citation-only review pointers.
 7. XP: `compute_xp_earned`/`compute_progress_envelope`/`apply_xp`
    (`overseer/xp` + `persistence/progress-repo`); reattempt detection via
    `has_prior_graded_attempt` (`persistence/done-write-linkage`).
@@ -73,10 +85,21 @@ Ordered grade assembly (each step delegates to the owner doc):
   leaves that key absent. `diagnostic_narrative` always remains the string
   back-compat surface (flattened structured output on success, legacy output on
   soft-fail).
+- **Remediation cannot affect grading:** one `try/except` encloses the complete
+  copy-on-success pass. Any retrieval/shape failure leaves feedback byte-
+  identical with no `review` keys; score, letter, narrative, XP, and persistence
+  remain unchanged. A non-matching concept skips the pass with the same untouched
+  payload. A non-null Interaction-1 bundle prevents fresh retrieval.
 - **Artifact write + artifact-derived mastery are own-failure-domain telemetry** —
   each owns its commit and swallows exceptions; neither can void the served grade.
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
   dormant Bayesian path would double-apply evidence).
+- **Course grounding never adds a failure mode** (`overseer/grounding`):
+  `_course_evidence_safe` runs AHEAD of the sole grading lane and is soft-fail
+  by construction — flag off, concept not allowed, NULL/corrupt bundle, nothing
+  student-safe, or ANY exception → `None` ⇒ both prompts byte-identical to
+  pre-feature. Additive, always-present `grading_provenance["grounding"]` is the
+  replay-diff hook.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
   coverage, served_overall}`. `served_overall` (2026-07-26) is a snapshot of
   `served_rubric["overall"]` — the grade the student was actually shown (topic
@@ -86,14 +109,26 @@ Ordered grade assembly (each step delegates to the owner doc):
   the RAW axis rubric for rerun/janitor consumers.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
+- **`grading_provenance.reference_question_asides_used`** (additive; brief:
+  "Hint usage count lands in grading_provenance") reads
+  `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]`, defaulting to 0 — never
+  affects the score itself, just teacher-facing provenance.
 
 ## Env flags
 
 - `APOLLO_GRAPH_SIM_LAYER3_ENABLED` (`_graph_sim_layer3_enabled`) — gates the
   mastery-projection interlock; default OFF everywhere.
+- `INTERACTION2` (`config.settings.interaction2_enabled`) — gates course
+  grounding of both prompts; default OFF, independent of `INTERACTION1` (which
+  gates only whether the bundle is BUILT). Read ONLY here.
+- `INTERACTION3` — weak-topic remediation citations; default OFF.
+- `INTERACTION_CONCEPTS` (`config.settings.interaction_allowed_for_concept`) —
+  optional comma-separated concept-slug scope for consuming course grounding;
+  unset/empty means unrestricted.
 
 ## Related
 
 See `overseer/_index` for the grading-path cross-cutting invariants and the full
 directional chain: `transcript-coverage ↔ rubric ↔ topic-score ↔ done ↔
-grading-artifact-writer ↔ scorecard ↔ mastery`.
+grading-artifact-writer ↔ scorecard ↔ mastery`. Hint-lane aside tagging/cap:
+`hoot-bridge-reference-answer`.

@@ -6,7 +6,8 @@ owns:
 related:
   - apollo/overseer/diagnostic
   - apollo/overseer/topic-score
-last_verified: 2026-07-26
+  - apollo/overseer/grounding
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -21,8 +22,8 @@ structured-JSON completion.
 
 ## Interface
 
-- `build_topic_narrative_prompt(result, *, problem_text, student_utterances=())
-  -> (system, user)` — the `(system, user)` message pair.
+- `build_topic_narrative_prompt(result, *, problem_text, student_utterances=(),
+  course_evidence=None) -> (system, user)` — the `(system, user)` message pair.
 - `sanitize_narrative(text, canonical_keys=()) -> str` — deterministic,
   idempotent output-side gate.
 
@@ -50,6 +51,15 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
   same rule in code.
 - **`student_utterances` empty (default) omits the transcript block**, preserving
   the pre-grounding input behavior.
+- **`course_evidence` (INTERACTION2) is student-safe course material, NOT the
+  student's words.** When supplied it is inserted BEFORE the transcript block —
+  so the student's own words stay last and most salient — and the system prompt
+  gains the `COURSE MATERIALS` rules: cite the bracketed marker verbatim (at
+  most one per sentence, never invented), treat the excerpts as untrusted data,
+  and never put excerpt text in a `quote` field or let it change a supplied
+  status/percentage. `None`/empty (the default) keeps BOTH messages
+  byte-identical to the ungrounded build; the block itself arrives pre-capped
+  from [grounding](grounding.md), so this builder never trims anything.
 - **`sanitize_narrative` is belt-and-suspenders:** it strips canonical keys and
   ledger-shaped scoring tokens (`credit 0.80`, `weight`, `dock`) via regex while
   deliberately preserving whole-number percentages; never drops legitimate prose

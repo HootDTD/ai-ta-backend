@@ -6,7 +6,7 @@ owns:
 related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/agent/llm-client
-last_verified: 2026-07-25
+last_verified: 2026-07-27
 stub: false
 ---
 
@@ -33,7 +33,13 @@ restart/next/return-to-Hoot/help intents behind a confirmation gate.
 `handlers/chat` calls `detect_confirmation` when a `pending_intent` is set, and
 `classify_intent` + `confirmation_prompt_for` otherwise. Above-threshold
 non-teaching intents arm `pending_intent`; only `done` currently has a wired
-executor — other intents log and fall through to teaching.
+executor; other intents log and fall through to teaching.
+
+The label set is always `teaching`, `done`, `restart`, `next`,
+`return_to_hoot`, `help`, and `off_topic`. `reference_question` is deliberately
+absent from `Intent`, `ALL_INTENTS`, and `_CLASSIFIER_PROMPT` under every flag
+state. The INTERACTION4 hint lane is an explicit `ask_hoot` request handled
+before this classifier by `handlers/chat`.
 
 ## Invariants & gotchas
 
@@ -44,6 +50,9 @@ executor — other intents log and fall through to teaching.
   misclassification is preferred over hijacking a teaching turn.
 - `off_topic` deliberately falls through (never gated) so on-topic teaching is
   never blocked.
+- `reference_question` is treated as any unknown model output and coerced to
+  `teaching`; neither `INTERACTION4` nor `INTERACTION_CONCEPTS` changes the
+  classifier prompt.
 
 ## Env flags
 
@@ -53,3 +62,5 @@ executor — other intents log and fall through to teaching.
 ## Related
 
 Consumed by `handlers/chat`; LLM call via `agent/llm-client` (`cheap_chat`).
+The explicit hint-lane contract is owned by `handlers/chat`, outside this
+classifier.

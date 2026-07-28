@@ -8,6 +8,7 @@ owns:
   - supabase/migrations/20260717050000_retrieval_functions_v1.sql
   - supabase/migrations/20260722120000_db08b_rls_enforcement_grants.sql
   - supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql
+  - supabase/migrations/20260728120000_apollo_grounding_bundle.sql
   - supabase/config.toml
   - supabase/seed.sql
   - supabase/.gitignore
@@ -17,7 +18,7 @@ related:
   - database/session
   - platform/ops-db-sql
   - platform/ops-db-tooling
-last_verified: 2026-07-25
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -27,7 +28,7 @@ The timestamped `supabase/migrations/` chain is the **CURRENT forward schema**
 (pinned Supabase CLI 2.109.0 per `config.toml`, applied in ascending 14-digit
 order). `database/models.py` ORM MUST track it.
 
-## Interface — the six migrations, in order
+## Interface — the seven migrations, in order
 
 1. **`…_legacy_public_snapshot`** — the loud, non-authoritative DB-03 draft
    reconstruction of legacy `public`. MUST be replaced by a reviewed human
@@ -52,6 +53,10 @@ order). `database/models.py` ORM MUST track it.
    DB-04's select-only set omitted (student_progress, course_memberships,
    mastery_events, learner_state, tutoring_messages, concepts, problems,
    documents, learner_entities). POLICY objects only, no GRANT changes.
+7. **`…_apollo_grounding_bundle`** (INTERACTION1) — nullable
+   `app.learning_activities.grounding_bundle` JSONB, the per-session
+   grounding-bundle cache. Twin of legacy `database/migrations/048`; both
+   chains must carry it.
 
 ## Data flow
 
@@ -68,8 +73,10 @@ disabled (a Windows/Docker-Desktop `vector` log-forwarder limitation).
   (`scripts/db/remove_legacy_public_schema.sql`,
   [platform/ops-db-sql](../platform/ops-db-sql.md)) — deliberately **NOT** under
   `supabase/migrations/` so `reset` never runs it.
-- A new column on a tutoring/learner table needs a migration in THIS active
-  chain, never the frozen legacy chain (add-a-column recipe, `database/_index`).
+- A new column on a tutoring/learner table normally needs a migration in THIS
+  active chain. Interaction-1 is the explicit sequential-number exception at
+  frozen `database/migrations/048`; see the add-a-column recipe in
+  `database/_index`.
 
 ## Related
 

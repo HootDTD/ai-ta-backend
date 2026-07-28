@@ -1,8 +1,8 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-07-25",
-  "repo": "backend",
+  "generated_at": "2026-07-28",
+  "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -66,6 +66,7 @@
     "apollo/handlers/progress.py": "apollo/conversation/handlers/progress",
     "apollo/handlers/restart_problem.py": "apollo/conversation/handlers/navigation",
     "apollo/hoot_bridge/__init__.py": "apollo/conversation/session-init",
+    "apollo/hoot_bridge/reference_answer.py": "apollo/conversation/hoot-bridge-reference-answer",
     "apollo/hoot_bridge/session_init.py": "apollo/conversation/session-init",
     "apollo/knowledge_graph/__init__.py": "apollo/knowledge-graph/store",
     "apollo/knowledge_graph/canon_projection.py": "apollo/knowledge-graph/canon-projection",
@@ -87,9 +88,11 @@
     "apollo/overseer/coverage.py": "apollo/overseer/coverage",
     "apollo/overseer/coverage_contract.py": "apollo/overseer/transcript-coverage",
     "apollo/overseer/diagnostic.py": "apollo/overseer/diagnostic",
+    "apollo/overseer/grounding.py": "apollo/overseer/grounding",
     "apollo/overseer/misconception.py": "apollo/overseer/rubric",
     "apollo/overseer/personalization_flag.py": "apollo/overseer/problem-selector",
     "apollo/overseer/problem_selector.py": "apollo/overseer/problem-selector",
+    "apollo/overseer/remediation.py": "apollo/overseer/diagnostic",
     "apollo/overseer/rubric.py": "apollo/overseer/rubric",
     "apollo/overseer/topic_narrative.py": "apollo/overseer/topic-narrative",
     "apollo/overseer/topic_score.py": "apollo/overseer/topic-score",
@@ -267,6 +270,7 @@
     "database/migrations/045_apollo_mastery_event_problem_link.sql": "database/legacy-migrations",
     "database/migrations/046_apollo_solution_source_llm_paired.sql": "database/legacy-migrations",
     "database/migrations/047_apollo_question_tally.sql": "database/legacy-migrations",
+    "database/migrations/048_apollo_session_grounding_bundle.sql": "database/legacy-migrations",
     "database/migrations/README.md": "database/legacy-migrations",
     "database/migrations/__init__.py": "database/legacy-migrations",
     "database/migrations/legacy-manifest.sha256": "database/legacy-migrations",
@@ -340,6 +344,7 @@
     "supabase/migrations/20260717050000_retrieval_functions_v1.sql": "database/supabase-migrations",
     "supabase/migrations/20260722120000_db08b_rls_enforcement_grants.sql": "database/supabase-migrations",
     "supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql": "database/supabase-migrations",
+    "supabase/migrations/20260728120000_apollo_grounding_bundle.sql": "database/supabase-migrations",
     "supabase/seed.sql": "database/supabase-migrations",
     "teacher_upload_worker.py": "platform/worker-and-procfile",
     "vendors/__init__.py": "platform/vendor-openai-client",
@@ -511,6 +516,14 @@
         "apollo/handlers/progress.py"
       ]
     },
+    "apollo/conversation/hoot-bridge-reference-answer": {
+      "path": "docs/architecture/apollo/conversation/hoot-bridge-reference-answer.md",
+      "kind": "leaf",
+      "description": "INTERACTION4 \"ask Hoot\" hint lane \u2014 stateless bridge from an Apollo chat turn into Hoot's scoped QA pipeline for one reference-question aside.",
+      "owns": [
+        "apollo/hoot_bridge/reference_answer.py"
+      ]
+    },
     "apollo/conversation/parser/edge-resolver": {
       "path": "docs/architecture/apollo/conversation/parser/edge-resolver.md",
       "kind": "leaf",
@@ -590,7 +603,7 @@
     "apollo/conversation/session-init": {
       "path": "docs/architecture/apollo/conversation/session-init.md",
       "kind": "leaf",
-      "description": "hoot_bridge session creation \u2014 the two Apollo entry paths (Hoot handoff + standalone) that mint a TEACHING session and first attempt.",
+      "description": "hoot_bridge session creation \u2014 both Apollo entry paths, first attempt, and optional session grounding.",
       "owns": [
         "apollo/hoot_bridge/session_init.py",
         "apollo/hoot_bridge/__init__.py"
@@ -742,7 +755,16 @@
       "kind": "leaf",
       "description": "Generates the student-facing narrative that explains \u2014 never decides \u2014 the grade.",
       "owns": [
-        "apollo/overseer/diagnostic.py"
+        "apollo/overseer/diagnostic.py",
+        "apollo/overseer/remediation.py"
+      ]
+    },
+    "apollo/overseer/grounding": {
+      "path": "docs/architecture/apollo/overseer/grounding.md",
+      "kind": "leaf",
+      "description": "INTERACTION2 \u2014 turns a session's cached retrieval bundle into one capped, student-safe evidence block for the grading prompts.",
+      "owns": [
+        "apollo/overseer/grounding.py"
       ]
     },
     "apollo/overseer/problem-selector": {
@@ -1411,7 +1433,7 @@
     "database/legacy-migrations": {
       "path": "docs/architecture/database/legacy-migrations.md",
       "kind": "leaf",
-      "description": "The FROZEN numbered legacy migration archive (001\u2013047) \u2014 checksum-locked provenance, not the live schema.",
+      "description": "The FROZEN numbered migration archive (001\u2013048), including the explicit Interaction-1 exception.",
       "owns": [
         "database/migrations/__init__.py",
         "database/migrations/001_create_schema.py",
@@ -1450,6 +1472,7 @@
         "supabase/migrations/20260717050000_retrieval_functions_v1.sql",
         "supabase/migrations/20260722120000_db08b_rls_enforcement_grants.sql",
         "supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql",
+        "supabase/migrations/20260728120000_apollo_grounding_bundle.sql",
         "supabase/config.toml",
         "supabase/seed.sql",
         "supabase/.gitignore"
@@ -1612,7 +1635,7 @@
     "platform/config-settings": {
       "path": "docs/architecture/platform/config-settings.md",
       "kind": "leaf",
-      "description": "config/settings.py \u2014 per-request runtime configuration (RequestConfig) plus the env-flag getters (embedding, Neo4j, reranker, subject) used across the backend",
+      "description": "config/settings.py \u2014 per-request runtime configuration plus backend env-flag getters.",
       "owns": [
         "config/settings.py",
         "config/__init__.py"
@@ -1969,6 +1992,7 @@
         "apollo/conversation/handlers/negotiate",
         "apollo/conversation/handlers/olm-invite",
         "apollo/conversation/handlers/progress",
+        "apollo/conversation/hoot-bridge-reference-answer",
         "apollo/conversation/parser/edge-resolver",
         "apollo/conversation/parser/extraction-schema",
         "apollo/conversation/parser/graph-context",
@@ -2018,6 +2042,7 @@
         "apollo/overseer/concept-inference",
         "apollo/overseer/coverage",
         "apollo/overseer/diagnostic",
+        "apollo/overseer/grounding",
         "apollo/overseer/problem-selector",
         "apollo/overseer/rubric",
         "apollo/overseer/topic-narrative",

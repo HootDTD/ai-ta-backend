@@ -9,9 +9,10 @@ related:
   - apollo/overseer/topic-score
   - apollo/overseer/rubric
   - apollo/overseer/coverage
+  - apollo/overseer/grounding
   - apollo/ontology/graph
   - apollo/conversation/handlers/done
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -23,11 +24,12 @@ frozen KG, so a Neo4j-degraded Done still grades.
 
 ## Interface
 
-- `compute_transcript_coverage_with_spans(transcript, reference_graph, problem)
-  -> (CoverageVerdict, spans)` — the live entry called by `handlers/done.py`.
-  One adjudication call yields both the verdict and the narrative spans map.
+- `compute_transcript_coverage_with_spans(transcript, reference_graph, problem,
+  *, course_evidence=None) -> (CoverageVerdict, spans)` — the live entry called
+  by `handlers/done.py`. One adjudication call yields both the verdict and the
+  narrative spans map.
 - `compute_transcript_coverage(...)` — verdict only (byte-identical verdict;
-  spans are deliberately not a coverage key).
+  spans are deliberately not a coverage key). Same `course_evidence` kwarg.
 - `narrative_evidence_spans(verdicts, transcript) -> {node_id: span}` — the
   per-attempt quote gate for the narrative.
 - `validate_span`, `build_transcript_grader_schema`, `build_system_prompt`,

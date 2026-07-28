@@ -57,7 +57,9 @@ def build_citation_info(
     row: Optional[Any],
     store_meta: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Any]:
-    row_get = row.get if hasattr(row, "get") else (lambda key, default=None: getattr(row, key, default))  # type: ignore
+    row_get = (
+        row.get if hasattr(row, "get") else (lambda key, default=None: getattr(row, key, default))
+    )  # type: ignore
 
     store_key = row_get("store_key", None)
     store_kind = row_get("store_kind", None)
@@ -110,10 +112,14 @@ def build_citation_info(
     page_asset = meta_entry.get("page_asset") if meta_entry else None
     raw_latex = meta_entry.get("raw_latex") if meta_entry else None
 
-    if doc_type in {"Notes", "Slides"} and week_info is not None:
-        label = f"[{doc_type}, Week {week_info}, p. {page_norm if isinstance(page_norm, int) else '?'}]"
+    doc_title = getattr(snippet, "doc_title", None) or ""
+    label_name = doc_title[:30] if doc_title else doc_type
+    if doc_title and page_norm is None:
+        label = f"[{label_name}]"
+    elif doc_type in {"Notes", "Slides"} and week_info is not None:
+        label = f"[{label_name}, Week {week_info}, p. {page_norm if isinstance(page_norm, int) else '?'}]"
     else:
-        label = f"[{doc_type}, p. {page_norm if isinstance(page_norm, int) else '?'}]"
+        label = f"[{label_name}, p. {page_norm if isinstance(page_norm, int) else '?'}]"
 
     return {
         "doc_type": doc_type,

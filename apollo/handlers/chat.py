@@ -28,6 +28,16 @@ from apollo.handlers.intent import (
     confirmation_prompt_for,
     detect_confirmation,
 )
+from apollo.hoot_bridge.reference_answer import (
+    ASIDE_COUNT_SESSION_METADATA_KEY,
+    ASIDE_MESSAGE_INTENT_TAG,
+    MAX_ASIDES_PER_SESSION,
+    MESSAGE_KIND_REFERENCE_ASIDE,
+    answer_reference_question,
+)
+from apollo.hoot_bridge.reference_answer import (
+    is_enabled as _interaction4_enabled,
+)
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.problem_selector import list_problems_for_concept
@@ -38,8 +48,23 @@ from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import plan_next_question
 from apollo.subjects.curriculum_db import load_concept_definition
+from config.settings import interaction_allowed_for_concept
 
 _LOG = logging.getLogger(__name__)
+
+# INTERACTION4 "ask Hoot" hint lane (apollo/hoot_bridge/reference_answer.py).
+# Persona-side framing lives here, not in the bridge: the bridge returns a
+# subject-agnostic Hoot answer, and Apollo never claims it as its own
+# knowledge (brief: the aside is "visually and structurally outside the
+# persona").
+_REFERENCE_QUESTION_RESUME_LINE = "Okay, so how does that fit into what you were teaching me?"
+_REFERENCE_QUESTION_CAP_REDIRECT = (
+    "I think I've looked enough things up for this session — let's keep teaching so I can "
+    "really learn it. What were you saying?"
+)
+_REFERENCE_QUESTION_APOLOGY = (
+    "Hmm, I couldn't look that up right now. Let's keep going — what were you saying?"
+)
 
 
 async def _find_problem(
@@ -226,6 +251,153 @@ async def _handle_pending_done(
     }
 
 
+async def _execute_reference_question(
+    *,
+    db: AsyncSession,
+    sess: TutoringSession,
+    attempt_id: int,
+    message: str,
+    store: KGStore,
+    problem: Problem,
+) -> dict[str, Any]:
+    """Direct-execute a `reference_question` intent: route the utterance
+    through Hoot's QA bridge and return it as an aside, or a plain
+    persona reply on cap / failure. Never confirmation-gated (unlike
+    `done`) and never raises — a failure in the composed path apologizes
+    and falls through as an ordinary teaching-shaped turn, never a 5xx.
+    """
+    current_count = int((sess.metadata_ or {}).get(ASIDE_COUNT_SESSION_METADATA_KEY, 0))
+    if current_count >= MAX_ASIDES_PER_SESSION:
+        await _persist_turn(
+            db,
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            student_msg=message,
+            apollo_msg=_REFERENCE_QUESTION_CAP_REDIRECT,
+        )
+        graph = await _read_graph_or_empty(
+            store, attempt_id=attempt_id, stage="reference_question_capped"
+        )
+        return {
+            "apollo_reply": _REFERENCE_QUESTION_CAP_REDIRECT,
+            "kg_entries_added": 0,
+            "kg": graph.model_dump(mode="json"),
+        }
+
+    try:
+        result = await answer_reference_question(
+            db=db,
+            course_id=int(sess.course_id),
+            question=message,
+            problem=problem,
+        )
+    except Exception:  # noqa: BLE001 - never a 5xx on a chat turn
+        _LOG.warning(
+            "apollo_reference_question_failed session_id=%s attempt_id=%s",
+            sess.id,
+            attempt_id,
+            exc_info=True,
+        )
+        await _persist_turn(
+            db,
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            student_msg=message,
+            apollo_msg=_REFERENCE_QUESTION_APOLOGY,
+        )
+        graph = await _read_graph_or_empty(
+            store, attempt_id=attempt_id, stage="reference_question_failed"
+        )
+        return {
+            "apollo_reply": _REFERENCE_QUESTION_APOLOGY,
+            "kg_entries_added": 0,
+            "kg": graph.model_dump(mode="json"),
+        }
+
+    next_count = current_count + 1
+    sess.metadata_ = {**(sess.metadata_ or {}), ASIDE_COUNT_SESSION_METADATA_KEY: next_count}
+
+    next_idx = await _next_turn_index(db, sess.id)
+    db.add(
+        TutoringMessage(
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            role="student",
+            content=message,
+            turn_index=next_idx,
+        )
+    )
+    db.add(
+        TutoringMessage(
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            role="apollo",
+            content=result.text,
+            turn_index=next_idx + 1,
+            intent=ASIDE_MESSAGE_INTENT_TAG,
+        )
+    )
+    db.add(
+        TutoringMessage(
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            role="apollo",
+            content=_REFERENCE_QUESTION_RESUME_LINE,
+            turn_index=next_idx + 2,
+        )
+    )
+    await db.commit()
+
+    graph = await _read_graph_or_empty(store, attempt_id=attempt_id, stage="reference_question")
+    return {
+        "apollo_reply": _REFERENCE_QUESTION_RESUME_LINE,
+        "kg_entries_added": 0,
+        "kg": graph.model_dump(mode="json"),
+        "message_kind": MESSAGE_KIND_REFERENCE_ASIDE,
+        "aside": {
+            "text": result.text,
+            "citations": result.citations,
+            "in_scope": result.in_scope,
+        },
+        "intent_executed": {"intent": "reference_question", "aside_count": next_count},
+    }
+
+
+async def _maybe_execute_reference_aside(
+    *,
+    db: AsyncSession,
+    sess: TutoringSession,
+    attempt_id: int,
+    message: str,
+    store: KGStore,
+    problem: Problem,
+    ask_hoot: bool,
+) -> dict[str, Any] | None:
+    """Execute the hint lane only for an explicit Ask Hoot request.
+
+    Requests rejected by either rollout gate fall through to the ordinary
+    teaching turn. The utterance is still classified for the other existing
+    intents, but normal typed turns can never enter the aside executor.
+    """
+    if not ask_hoot:
+        return None
+    if not (_interaction4_enabled() and interaction_allowed_for_concept(problem.concept_id)):
+        return None
+    return await _execute_reference_question(
+        db=db,
+        sess=sess,
+        attempt_id=attempt_id,
+        message=message,
+        store=store,
+        problem=problem,
+    )
+
+
 async def _maybe_intent_confirmation(
     *,
     db: AsyncSession,
@@ -294,6 +466,7 @@ async def handle_chat(
     neo: Neo4jClient | None,
     session_id: int,
     message: str,
+    ask_hoot: bool = False,
 ) -> dict[str, Any]:
     store = KGStore(db, neo)
 
@@ -318,6 +491,23 @@ async def handle_chat(
     concept = await load_concept_definition(
         db, concept_id=sess.concept_id, search_space_id=sess.course_id
     )
+    # Resolved up front so an explicit Ask Hoot request can use it for the
+    # leakage-exclusion lookup before the normal teaching path.
+    problem = await _find_problem(
+        db, sess.concept_id, sess.current_problem_id, course_id=sess.course_id
+    )
+
+    aside_response = await _maybe_execute_reference_aside(
+        db=db,
+        sess=sess,
+        attempt_id=current_attempt.id,
+        message=message,
+        store=store,
+        problem=problem,
+        ask_hoot=ask_hoot,
+    )
+    if aside_response is not None:
+        return aside_response
 
     # ---- Intent state machine (item #5) -------------------------------
     # Step 1: if a pending intent exists, see if this turn confirms it.
@@ -398,9 +588,6 @@ async def handle_chat(
         store,
         attempt_id=current_attempt.id,
         stage="student_graph",
-    )
-    problem = await _find_problem(
-        db, sess.concept_id, sess.current_problem_id, course_id=sess.course_id
     )
     next_idx = await _next_turn_index(db, session_id)
 
