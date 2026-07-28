@@ -222,7 +222,15 @@ def test_list_concepts_excludes_concept_without_teachable_problems(client_factor
     assert resp.json() == {"concepts": []}
 
 
-async def _seed_attempt(Session, *, user_id: str, problem_id: str, space_id: int = TEST_SPACE_ID):
+async def _seed_attempt(
+    Session,
+    *,
+    user_id: str,
+    problem_id: str,
+    space_id: int = TEST_SPACE_ID,
+    result: str | None = None,
+    diagnostic_report: dict | None = None,
+):
     async with Session() as db:
         problem = (
             await db.execute(
@@ -246,9 +254,27 @@ async def _seed_attempt(Session, *, user_id: str, problem_id: str, space_id: int
                 difficulty="intro",
                 user_id=sess.user_id,
                 course_id=sess.course_id,
+                result=result,
+                diagnostic_report=diagnostic_report,
             )
         )
         await db.commit()
+
+
+def _graded_report(
+    score: int, letter: str, *, raw_score: int | None = None, narrative: str = "…"
+) -> dict:
+    """A Done-shaped diagnostic_report whose served_overall is (score, letter).
+    `raw_score` (default: different from score) keeps rubric.overall distinct
+    so tests prove the snapshot — not the raw rubric — is what browse serves.
+    `narrative` distinguishes which attempt's feedback rides with the grade."""
+    raw = raw_score if raw_score is not None else max(0, score - 30)
+    return {
+        "narrative": narrative,
+        "rubric": {"overall": {"score": raw, "letter": "F"}},
+        "coverage": {},
+        "served_overall": {"score": score, "letter": letter},
+    }
 
 
 def test_list_problems_filters_and_flags_attempted(client_factory, monkeypatch):
@@ -271,9 +297,192 @@ def test_list_problems_filters_and_flags_attempted(client_factory, monkeypatch):
     assert set(by_id) == set(codes)
     assert by_id[codes[0]]["attempted"] is True
     assert by_id[codes[1]]["attempted"] is False
+    # an attempted-but-never-graded problem carries no grade
+    assert by_id[codes[0]]["grade"] is None
     # student-safety: no solution or answer-shaped fields leak
     for p in problems:
-        assert set(p) == {"id", "difficulty", "problem_text", "attempted"}
+        assert set(p) == {"id", "difficulty", "problem_text", "attempted", "grade"}
+
+
+def test_list_problems_serves_best_grade_from_served_overall(client_factory, monkeypatch):
+    """Graded attempts surface {score, letter}. The BEST served grade wins
+    across attempts, the snapshot takes precedence over the raw rubric
+    overall, and another student's grade never leaks onto our cards."""
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, codes = asyncio.run(_seed_curriculum(Session, n_teachable=2))
+    # p1: graded C, then A-, then a WORSE later attempt — the A- attempt must
+    # win the card AND its feedback must ride along (best attempt, not latest)
+    asyncio.run(
+        _seed_attempt(
+            Session,
+            user_id=TEST_USER_ID,
+            problem_id=codes[0],
+            result="graded",
+            diagnostic_report=_graded_report(60, "C", narrative="c-notes"),
+        )
+    )
+    asyncio.run(
+        _seed_attempt(
+            Session,
+            user_id=TEST_USER_ID,
+            problem_id=codes[0],
+            result="graded",
+            diagnostic_report=_graded_report(88, "A-", narrative="a-notes"),
+        )
+    )
+    asyncio.run(
+        _seed_attempt(
+            Session,
+            user_id=TEST_USER_ID,
+            problem_id=codes[0],
+            result="graded",
+            diagnostic_report=_graded_report(50, "F", narrative="worse-later"),
+        )
+    )
+    # p2: only the OTHER student has a grade — ours must stay null
+    asyncio.run(
+        _seed_attempt(
+            Session,
+            user_id=TEST_USER_ID_2,
+            problem_id=codes[1],
+            result="graded",
+            diagnostic_report=_graded_report(97, "A+"),
+        )
+    )
+
+    client = TestClient(app)
+    resp = client.get(
+        f"/apollo/problems?search_space_id={TEST_SPACE_ID}&concept_id={concept_id}&difficulty=intro",
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    by_id = {p["id"]: p for p in resp.json()["problems"]}
+    # served_overall (88/A-) wins — NOT the raw rubric overall the report
+    # stores — and feedback is the WINNING attempt's narrative
+    assert by_id[codes[0]]["grade"] == {"score": 88, "letter": "A-", "feedback": "a-notes"}
+    assert by_id[codes[1]]["grade"] is None
+    assert by_id[codes[1]]["attempted"] is False
+
+
+def test_list_problems_grade_falls_back_to_rubric_overall(client_factory, monkeypatch):
+    """Attempts graded before the served_overall snapshot existed fall back to
+    the legacy rubric.overall; malformed / non-graded rows degrade to Tried."""
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, codes = asyncio.run(_seed_curriculum(Session, n_teachable=2))
+    # p1: legacy row — rubric.overall only, no snapshot
+    asyncio.run(
+        _seed_attempt(
+            Session,
+            user_id=TEST_USER_ID,
+            problem_id=codes[0],
+            result="graded",
+            diagnostic_report={"narrative": "…", "rubric": {"overall": {"score": 75, "letter": "B"}}},
+        )
+    )
+    # p2: result says graded but the report is unusable + an abandoned attempt
+    # that carries a report — neither may surface a grade or 500 the endpoint
+    asyncio.run(
+        _seed_attempt(
+            Session,
+            user_id=TEST_USER_ID,
+            problem_id=codes[1],
+            result="graded",
+            diagnostic_report=None,
+        )
+    )
+    asyncio.run(
+        _seed_attempt(
+            Session,
+            user_id=TEST_USER_ID,
+            problem_id=codes[1],
+            result="abandoned",
+            diagnostic_report=_graded_report(90, "A"),
+        )
+    )
+
+    client = TestClient(app)
+    resp = client.get(
+        f"/apollo/problems?search_space_id={TEST_SPACE_ID}&concept_id={concept_id}&difficulty=intro",
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    by_id = {p["id"]: p for p in resp.json()["problems"]}
+    assert by_id[codes[0]]["grade"] == {"score": 75, "letter": "B", "feedback": "…"}
+    assert by_id[codes[1]]["grade"] is None
+    assert by_id[codes[1]]["attempted"] is True
+
+
+def test_list_problems_grade_without_narrative_serves_null_feedback(client_factory, monkeypatch):
+    """A graded report missing a usable narrative still serves its grade —
+    feedback degrades to null alone, never the whole chip."""
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, codes = asyncio.run(_seed_curriculum(Session, n_teachable=1))
+    report = _graded_report(82, "B+")
+    del report["narrative"]
+    asyncio.run(
+        _seed_attempt(
+            Session,
+            user_id=TEST_USER_ID,
+            problem_id=codes[0],
+            result="graded",
+            diagnostic_report=report,
+        )
+    )
+
+    client = TestClient(app)
+    resp = client.get(
+        f"/apollo/problems?search_space_id={TEST_SPACE_ID}&concept_id={concept_id}&difficulty=intro",
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    by_id = {p["id"]: p for p in resp.json()["problems"]}
+    assert by_id[codes[0]]["grade"] == {"score": 82, "letter": "B+", "feedback": None}
+
+
+def test_served_overall_from_report_edge_cases():
+    """Direct contract of the extractor: reject shapes that would render a
+    bogus chip instead of degrading to the plain Tried state."""
+    from apollo.handlers.browse import served_overall_from_report
+
+    assert served_overall_from_report(None) is None
+    assert served_overall_from_report("not-a-dict") is None
+    assert served_overall_from_report({}) is None
+    assert served_overall_from_report({"rubric": {"overall": "F"}}) is None
+    # score must be a real number (bool is not a grade) and letter a string
+    assert served_overall_from_report({"served_overall": {"score": True, "letter": "A"}}) is None
+    assert served_overall_from_report({"served_overall": {"score": 90}}) is None
+    assert served_overall_from_report({"served_overall": {"letter": "A"}}) is None
+    # snapshot beats the raw rubric when both exist
+    assert served_overall_from_report(
+        {
+            "served_overall": {"score": 82, "letter": "B+"},
+            "rubric": {"overall": {"score": 40, "letter": "F"}},
+        }
+    ) == {"score": 82, "letter": "B+"}
+    # legacy fallback still works
+    assert served_overall_from_report({"rubric": {"overall": {"score": 60.0, "letter": "C"}}}) == {
+        "score": 60.0,
+        "letter": "C",
+    }
+
+
+def test_feedback_from_report_edge_cases():
+    """Direct contract of the feedback extractor: only a non-empty narrative
+    string is served; every other shape degrades to None."""
+    from apollo.handlers.browse import feedback_from_report
+
+    assert feedback_from_report(None) is None
+    assert feedback_from_report("not-a-dict") is None
+    assert feedback_from_report({}) is None
+    assert feedback_from_report({"narrative": None}) is None
+    assert feedback_from_report({"narrative": {"headline": "structured"}}) is None
+    assert feedback_from_report({"narrative": "   "}) is None
+    assert feedback_from_report({"narrative": "You explained value well."}) == (
+        "You explained value well."
+    )
 
 
 def test_list_problems_rejects_foreign_concept(client_factory, monkeypatch):

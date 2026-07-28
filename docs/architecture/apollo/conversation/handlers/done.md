@@ -18,7 +18,7 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-07-26
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -100,6 +100,13 @@ Ordered grade assembly (each step delegates to the owner doc):
   student-safe, or ANY exception → `None` ⇒ both prompts byte-identical to
   pre-feature. Additive, always-present `grading_provenance["grounding"]` is the
   replay-diff hook.
+- The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
+  coverage, served_overall}`. `served_overall` (2026-07-26) is a snapshot of
+  `served_rubric["overall"]` — the grade the student was actually shown (topic
+  score when it computed). Re-serving surfaces (`handlers/browse` grade cards,
+  `handlers/progress` recents) read the snapshot first and fall back to
+  `rubric.overall` for pre-snapshot rows; `rubric` itself deliberately stays
+  the RAW axis rubric for rerun/janitor consumers.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
 - **`grading_provenance.reference_question_asides_used`** (additive; brief:

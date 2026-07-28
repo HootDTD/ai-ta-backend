@@ -110,6 +110,7 @@ async def _seed_graded_attempt(
     letter: str,
     user_id: str = TEST_USER_ID,
     when: datetime | None = None,
+    served: tuple[int, str] | None = None,
 ) -> None:
     problem_database_id = await _seed_problem(
         db, concept_id=concept_id, problem_code=problem_id
@@ -135,6 +136,11 @@ async def _seed_graded_attempt(
             diagnostic_report={
                 "rubric": {"overall": {"score": score, "letter": letter}},
                 "narrative": "...",
+                **(
+                    {"served_overall": {"score": served[0], "letter": served[1]}}
+                    if served is not None
+                    else {}
+                ),
             },
             created_at=when or datetime.now(UTC),
         )
@@ -200,3 +206,28 @@ async def test_detail_recent_attempts_graded_only_newest_first(db):
     assert attempts[0]["score"] == 85
     assert attempts[0]["letter"] == "A-"
     assert attempts[0]["concept_display_name"] == "Newton's Second Law"
+
+
+async def test_detail_recent_attempts_prefer_served_overall(db):
+    """A row carrying the Done path's served_overall snapshot reports THAT
+    grade (what the student saw), not the raw rubric overall; rows without the
+    snapshot keep the legacy rubric fallback."""
+    c1 = await _seed_concept(db, slug="newton-2", name="Newton's Second Law")
+    old = datetime.now(UTC) - timedelta(days=2)
+    # legacy row: rubric only
+    await _seed_graded_attempt(
+        db, concept_id=c1, problem_id="p-legacy", score=60, letter="C", when=old
+    )
+    # snapshot row: raw rubric says 40/F, student was served 82/B+
+    await _seed_graded_attempt(
+        db, concept_id=c1, problem_id="p-served", score=40, letter="F", served=(82, "B+")
+    )
+
+    out = await handle_get_progress_detail(
+        db=db, user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID
+    )
+    attempts = {a["problem_id"]: a for a in out["detail"]["recent_attempts"]}
+    assert attempts["p-served"]["score"] == 82
+    assert attempts["p-served"]["letter"] == "B+"
+    assert attempts["p-legacy"]["score"] == 60
+    assert attempts["p-legacy"]["letter"] == "C"

@@ -517,6 +517,12 @@ async def handle_done(
         "narrative": diagnostic_narrative,
         "rubric": rubric,
         "coverage": coverage,
+        # The overall the student was actually SHOWN (topic score when it
+        # computed, legacy axis blend otherwise). `rubric` above deliberately
+        # stays the RAW rubric — rerun/janitor consumers depend on it — so any
+        # surface re-serving the grade later (browse cards, progress recents)
+        # must read this snapshot first and fall back to `rubric.overall`.
+        "served_overall": dict(served_rubric["overall"]),
     }
     sess.phase = SessionPhase.REPORT.value
     await db.commit()

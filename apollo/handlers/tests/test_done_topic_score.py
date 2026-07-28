@@ -83,12 +83,15 @@ async def _run(
     topic_score_side_effect=None,
     write_mock=None,
     use_real_xp=False,
+    capture=None,
     diagnostic_result=None,
     remediation_retrieve=None,
 ):
     db, _sess, _attempt, patches = _old_path_patches()
     db.begin_nested.return_value.__aenter__ = AsyncMock(return_value=None)
     db.begin_nested.return_value.__aexit__ = AsyncMock(return_value=False)
+    if capture is not None:
+        capture["attempt"] = _attempt
     graph = _reference_graph_with_topics()
 
     async def _find_problem_with_graph(_db, _cid, _code, *, course_id):
@@ -471,6 +474,37 @@ async def test_topic_score_raising_soft_fails_legacy_rubric_served(monkeypatch):
     # (served_rubric is rubric itself).
     assert out["rubric"] == _OLD_RUBRIC
     assert "rubric" in out  # HTTP 200 shape, no exception escaped
+
+
+# --------------------------------------------------------------------------- #
+# served_overall snapshot: the persisted diagnostic_report records the grade
+# the student was SHOWN, while `rubric` stays the raw axis rubric
+# --------------------------------------------------------------------------- #
+async def test_served_overall_snapshot_persisted(monkeypatch):
+    """Browse/progress re-serve `served_overall`; rerun consumers keep the raw
+    rubric — both must be true on the same persisted report."""
+    capture: dict = {}
+    out = await _run(monkeypatch, capture=capture)
+
+    report = capture["attempt"].diagnostic_report
+    assert report["served_overall"] == out["rubric"]["overall"]
+    # Topic score (50 in this harness) was served — the snapshot records it...
+    assert report["served_overall"]["score"] == 50
+    # ...while the persisted raw rubric keeps the axis blend untouched.
+    assert report["rubric"]["overall"]["score"] == 90
+
+
+async def test_served_overall_snapshot_on_soft_fail_equals_raw_overall(monkeypatch):
+    """When topic scoring soft-fails, the student saw the legacy overall, so
+    the snapshot must equal `rubric.overall` (still present, still a copy)."""
+    capture: dict = {}
+    out = await _run(
+        monkeypatch, topic_score_side_effect=RuntimeError("boom"), capture=capture
+    )
+
+    report = capture["attempt"].diagnostic_report
+    assert report["served_overall"] == {"score": 90, "letter": "A"}
+    assert report["served_overall"] == out["rubric"]["overall"]
 
 
 async def test_topic_score_raising_artifact_receives_none(monkeypatch):
