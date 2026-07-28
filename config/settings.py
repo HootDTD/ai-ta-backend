@@ -225,6 +225,19 @@ def interaction3_enabled() -> bool:
     return os.getenv("INTERACTION3", "false").lower() not in {"0", "false", "off", "no"}
 
 
+def interaction5_enabled() -> bool:
+    """Return True when the Apollo Hoot-assist grading cap is enabled.
+
+    INTERACTION5 (default OFF): when on — and the problem's concept passes
+    ``interaction_allowed_for_concept`` at the Done call site — the grading
+    pipeline credit-caps every rubric node a Hoot lookup aside explained for the
+    student (flat cap, no earn-back). Off, or no aside was used, grading is
+    byte-identical to the pre-feature path. Mirrors the ``interaction1/2/3``
+    truthy parsing exactly.
+    """
+    return os.getenv("INTERACTION5", "false").lower() not in {"0", "false", "off", "no"}
+
+
 def interaction_concepts() -> frozenset[str]:
     """Return the normalized concept slugs allowed to use interaction features."""
     raw = os.getenv("INTERACTION_CONCEPTS", "")
@@ -307,6 +320,7 @@ __all__ = [
     "interaction1_enabled",
     "interaction2_enabled",
     "interaction3_enabled",
+    "interaction5_enabled",
     "interaction_concepts",
     "interaction_allowed_for_concept",
     "get_embedding_dim",

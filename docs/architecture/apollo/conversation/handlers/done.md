@@ -10,6 +10,7 @@ related:
   - apollo/overseer/topic-score
   - apollo/overseer/diagnostic
   - apollo/overseer/grounding
+  - apollo/overseer/aside-penalty
   - apollo/overseer/xp
   - apollo/conversation/handlers/grading-artifact-writer
   - apollo/conversation/hoot-bridge-reference-answer
@@ -54,6 +55,13 @@ Ordered grade assembly (each step delegates to the owner doc):
    `intent == ASIDE_MESSAGE_INTENT_TAG` (`hoot-bridge-reference-answer`) — the
    INTERACTION4 hint-lane aside text never enters grading, but the student's
    untagged triggering question does (it's real signal about a gap).
+3a. **Hoot-assist cap** (INTERACTION5, `overseer/aside-penalty`): gated on
+   `interaction5_enabled()` AND `interaction_allowed_for_concept`, `_aside_texts`
+   fetches the same aside rows `_full_transcript` EXCLUDES (its exact complement)
+   and passes them to the adjudicator as `hoot_asides`; `apply_aside_caps`
+   (cap 0.5) then flat-caps every flagged node in the coverage BEFORE rubric /
+   topic-score / diagnostic / artifacts, so all downstream consumers see the same
+   capped values.
 4. `compute_rubric` (`overseer/rubric`) maps coverage into the axis rubric.
 5. **Topic score** (`_compute_topic_score_safe` wrapping `compute_topic_score` /
    `compute_centrality`, `overseer/topic-score`): best-effort, computed always.
@@ -100,6 +108,16 @@ Ordered grade assembly (each step delegates to the owner doc):
   student-safe, or ANY exception → `None` ⇒ both prompts byte-identical to
   pre-feature. Additive, always-present `grading_provenance["grounding"]` is the
   replay-diff hook.
+- **The Hoot-assist cap owns its failure domain** (`overseer/aside-penalty`):
+  both the aside fetch and the `apply_aside_caps` pass are wrapped so ANY
+  exception is logged and swallowed, leaving `coverage` the original UNCAPPED
+  verdict (the cap RHS binds atomically, so a raise never half-caps) and grading
+  proceeds. It runs AHEAD of the sole grading lane and NEVER touches the
+  `CoverageGradingError → 503` contract; the cap can only lower a grade. Additive
+  `grading_provenance["aside_penalty"] = {enabled, cap: 0.5, assisted_node_ids}`
+  is emitted ONLY when the gate was on AND asides were fetched (empty
+  `assisted_node_ids` if nothing matched or the cap pass soft-failed); off / no
+  aside → key absent, provenance byte-identical.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
   coverage, served_overall}`. `served_overall` (2026-07-26) is a snapshot of
   `served_rubric["overall"]` — the grade the student was actually shown (topic
@@ -122,9 +140,11 @@ Ordered grade assembly (each step delegates to the owner doc):
   grounding of both prompts; default OFF, independent of `INTERACTION1` (which
   gates only whether the bundle is BUILT). Read ONLY here.
 - `INTERACTION3` — weak-topic remediation citations; default OFF.
+- `INTERACTION5` (`config.settings.interaction5_enabled`) — Hoot-assist grading
+  cap; default OFF. Combined here with `interaction_allowed_for_concept`.
 - `INTERACTION_CONCEPTS` (`config.settings.interaction_allowed_for_concept`) —
-  optional comma-separated concept-slug scope for consuming course grounding;
-  unset/empty means unrestricted.
+  optional comma-separated concept-slug scope for consuming course grounding
+  and the Hoot-assist cap; unset/empty means unrestricted.
 
 ## Related
 
