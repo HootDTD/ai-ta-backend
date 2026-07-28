@@ -21,6 +21,9 @@ What it enforces (PLAN §6.1):
   8. last_verified  — (PR path, ``--check-last-verified`` + ``--base``) a changed owned
                       source file whose owning leaf's ``last_verified`` did not change.
                       Advisory unless ``--last-verified-required``.
+                      Same-day stacked PRs are tolerated: a leaf that changed in the
+                      diff and already carries the head commit's date passes (a
+                      date-granular field can't be bumped twice in one day).
 
 Extra modes:
   --check-size   leaf body >150 or _index/_overview body >60 → error; leaf >80 → warn.
@@ -612,12 +615,35 @@ def check_last_verified(repo_root, base, docs, owners, report, required=False):
             except Exception:
                 dd = ""
             if not re.search(r"^\+.*last_verified", dd, re.MULTILINE):
+                # last_verified is date-granular, so a stacked PR landing the
+                # same day as one that already bumped this leaf cannot produce
+                # a literal bump. The reconciliation the gate exists to force
+                # still happened (the leaf IS changed in this diff) — accept
+                # when its last_verified equals the head commit's author date.
+                if str(doc.fm.get("last_verified", "")).strip() == _head_commit_date(repo_root):
+                    continue
                 _emit_lv(
                     report,
                     required,
                     f"{rel} changed but {doc.relpath} last_verified not bumped",
                 )
                 flagged.add(doc_id)
+
+
+def _head_commit_date(repo_root):
+    """Author date (YYYY-MM-DD) of HEAD — deterministic across CI re-runs,
+    unlike wall-clock today()."""
+    try:
+        return subprocess.run(
+            ["git", "-C", repo_root, "log", "-1", "--format=%as", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        ).stdout.strip()
+    except Exception:
+        return ""
 
 
 def _emit_lv(report, required, msg):

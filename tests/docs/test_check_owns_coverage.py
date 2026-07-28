@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 
 import pytest
 
@@ -886,6 +887,62 @@ def test_check_last_verified_bumped_is_clean(new_repo):
     cov.check_last_verified(str(repo.root), base, docs, owners, report)
     assert not report.warnings.get("last_verified")
     assert not report.errors.get("last_verified")
+
+
+# --------------------------------------------------------------------------- #
+# same-day stacked tolerance: a leaf that changed in the diff but already carries
+# the head commit's author date passes without a literal last_verified bump.
+# --------------------------------------------------------------------------- #
+def _commit_pinned_date(repo, msg, iso_date):
+    """Commit staged + working changes with a pinned author/committer date."""
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": f"{iso_date}T00:00:00",
+        "GIT_COMMITTER_DATE": f"{iso_date}T00:00:00",
+    }
+    subprocess.run(["git", "-C", str(repo.root), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo.root), "commit", "-m", msg, "--no-gpg-sign"],
+        check=True,
+        env=env,
+    )
+
+
+def test_head_commit_date_returns_head_author_date(new_repo):
+    repo = new_repo(baseline_files())
+    _commit_pinned_date(repo, "pinned", "2026-07-25")
+    assert cov._head_commit_date(str(repo.root)) == "2026-07-25"
+
+
+def test_head_commit_date_swallows_error(monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("git unavailable")
+
+    monkeypatch.setattr(cov.subprocess, "run", boom)
+    assert cov._head_commit_date("/nonexistent") == ""
+
+
+def test_check_last_verified_same_day_stack_tolerated(new_repo):
+    repo, base = _lv_repo(new_repo)
+    repo.write("apollo/grader.py", "grade = 11\n")
+    # Doc body changes but last_verified stays at the builder default (2026-07-25),
+    # matching the head commit's pinned author date -> same-day stack tolerated.
+    repo.write(
+        "docs/architecture/apollo/grader.md",
+        leaf(
+            "apollo-grader",
+            owns=["apollo/grader.py"],
+            related=["rag-pipeline"],
+            body="# apollo-grader\n\n## Interface\n\nSame-day stacked edit.\n",
+        ),
+    )
+    _commit_pinned_date(repo, "same-day stack", "2026-07-25")
+    required = cov.detect_required_exts(str(repo.root), None)
+    report, docs, doc_ids, owners = cov.analyze(str(repo.root), "docs/architecture", required)
+    # Even in required mode the same-day stack is clean (no bump possible).
+    cov.check_last_verified(str(repo.root), base, docs, owners, report, required=True)
+    assert not report.errors.get("last_verified")
+    assert not report.warnings.get("last_verified")
 
 
 def test_check_last_verified_dedup_two_sources_one_doc(new_repo):
