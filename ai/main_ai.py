@@ -980,12 +980,18 @@ def _build_solution_from_data(data: Dict[str, Any]) -> ProposedSolution:
 def _prepare_solve_prompt(
     parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
     subject: str | None = None,
+    *,
+    system_prompt_override: str | None = None,
 ) -> Tuple[str, str, str]:
     """Run snippet scoring and build the solver prompt.
 
     Returns (system, user_base, model). All side effects (miniresponse files,
     provenance 'citation_rankings', debug dumps) are preserved exactly as in the
     original solve_with_bundle. Shared by the blocking and streaming solve paths.
+
+    ``system_prompt_override`` swaps the tutor system prompt for a caller-supplied
+    one (the Apollo "Ask Hoot" aside passes ``apollo_aside_prompt()``); ``None``
+    keeps ``tutor_prompt()`` so the standalone-chat solve path is byte-identical.
     """
     question_text = ""
     try:
@@ -1128,7 +1134,7 @@ def _prepare_solve_prompt(
         })
     scored_snippets.sort(key=lambda x: -x["score"])
 
-    system = tutor_prompt()
+    system = tutor_prompt() if system_prompt_override is None else system_prompt_override
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
 
@@ -1227,14 +1233,31 @@ def _prepare_solve_prompt(
     payload_lines.append(
         "- not_relevant: boolean — true if the question is outside the course scope, false otherwise."
     )
-    payload_lines.append(
-        "- steps: a SINGLE Markdown-formatted string (NOT an array). Follow the tutor system prompt "
-        "to determine which sections to include: for new questions use all three sections "
-        "(## Answer, ## Key Takeaway, ## Check Your Understanding); for CYU responses follow "
-        "the CYU RESPONSE RULES (brief affirmation if correct, corrective feedback + new CYU if incorrect). "
-        "Use LaTeX math ($...$ inline, $$...$$ display). Follow the LENGTH RULES in the system prompt "
-        "to size the response to the question type. No long paragraphs."
-    )
+    # The `steps` shaping instruction is the ONE place the shared payload assumes the
+    # tutor system prompt's three-section structure. When a caller supplies a
+    # `system_prompt_override` (the Apollo "Ask Hoot" aside), that structure is wrong —
+    # and a system-prompt-only "ignore the payload" instruction does NOT reliably beat
+    # this explicit line at the model level (observed: the aside emitted
+    # ## Answer / ## Key Takeaway / ## Check Your Understanding anyway). So the override
+    # path defers `steps` shaping to the override prompt instead of naming the tutor
+    # sections. `system_prompt_override is None` keeps the Hoot-chat payload
+    # byte-identical to today (guarded by tests/functions-tests/test_aside_prompt_override).
+    if system_prompt_override is None:
+        payload_lines.append(
+            "- steps: a SINGLE Markdown-formatted string (NOT an array). Follow the tutor system prompt "
+            "to determine which sections to include: for new questions use all three sections "
+            "(## Answer, ## Key Takeaway, ## Check Your Understanding); for CYU responses follow "
+            "the CYU RESPONSE RULES (brief affirmation if correct, corrective feedback + new CYU if incorrect). "
+            "Use LaTeX math ($...$ inline, $$...$$ display). Follow the LENGTH RULES in the system prompt "
+            "to size the response to the question type. No long paragraphs."
+        )
+    else:
+        payload_lines.append(
+            "- steps: a SINGLE Markdown-formatted string (NOT an array). Follow the RESPONSE SHAPE and "
+            "FORMATTING rules in the system prompt above for structure and length; do not add any section "
+            "headings or self-check the system prompt does not ask for. Use LaTeX math ($...$ inline, "
+            "$$...$$ display)."
+        )
     payload_lines.append("- final_answers: MUST be an empty object {} because you are not computing results.")
     payload_lines.append(
         "- equations_used: list of symbolic equations (variables/constants only, no numbers substituted)."
@@ -1355,10 +1378,19 @@ def _prepare_solve_prompt(
 def solve_with_bundle(
     parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
     subject: str | None = None,
+    *,
+    system_prompt_override: str | None = None,
 ) -> ProposedSolution:
-    """Solve the parsed task using only information from the provided bundle."""
+    """Solve the parsed task using only information from the provided bundle.
+
+    ``system_prompt_override`` (keyword-only) swaps the tutor system prompt for a
+    caller-supplied one; ``None`` keeps ``tutor_prompt()`` byte-identical.
+    """
     client = _client()
-    system, user_base, model = _prepare_solve_prompt(parsed_task, bundle, hint, subject)
+    system, user_base, model = _prepare_solve_prompt(
+        parsed_task, bundle, hint, subject,
+        system_prompt_override=system_prompt_override,
+    )
 
     def _chat(msgs: List[dict]) -> dict:
         kwargs = {

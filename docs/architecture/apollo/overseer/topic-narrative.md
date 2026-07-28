@@ -60,6 +60,14 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
   status/percentage. `None`/empty (the default) keeps BOTH messages
   byte-identical to the ungrounded build; the block itself arrives pre-capped
   from [grounding](grounding.md), so this builder never trims anything.
+- **Hoot-assisted topics add an encouraging note, never a claim (INTERACTION5).**
+  When one or more supplied topics carry the ledger's `hoot_assisted` flag, the
+  user message gains a `Topics Hoot answered for you` block naming ONLY those
+  topics and the system prompt gains `_HOOT_ASSIST_RULES` — one short,
+  student-voiced clause per assisted topic ("you looked this up with Hoot, so it
+  counted for less"). Hoot's lookup content is NEVER presented as the student's
+  understanding and never enters a `quote` field; the verbatim `You said` quote
+  gate is unchanged. No assisted topic (the default) → BOTH messages byte-identical.
 - **`sanitize_narrative` is belt-and-suspenders:** it strips canonical keys and
   ledger-shaped scoring tokens (`credit 0.80`, `weight`, `dock`) via regex while
   deliberately preserving whole-number percentages; never drops legitimate prose

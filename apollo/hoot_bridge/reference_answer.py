@@ -4,10 +4,13 @@ Brief: styx/plans/hoot-apollo-04-ask-hoot-hint-lane.md ("ask Hoot" hint lane).
 Gated by the `INTERACTION4` flag (default OFF; see `is_enabled` below) plus
 the call-site `INTERACTION_CONCEPTS` allowlist in handlers/intent and chat.
 
-This module composes retrieve_for_question() -> the tutor answer prompt
-(ai/prompts/tutor.py, via ai.main_ai.solve_with_bundle) -> citation
-formatting (citations/formatter.py), the same lane Hoot's /ask uses for the
-answer itself. It deliberately does NOT go through server.py's /ask route or
+This module composes retrieve_for_question() -> the compact aside-refresher
+prompt (ai/prompts/apollo_aside.py, passed as ``system_prompt_override`` into
+ai.main_ai.solve_with_bundle in place of the standalone-chat tutor prompt) ->
+citation formatting (citations/formatter.py), the same retrieval + solve lane
+Hoot's /ask uses, but with a mid-teaching-session refresher voice instead of
+Hoot's headings/self-check chat structure. It deliberately does NOT go through
+server.py's /ask route or
 ai/router wiring (prepare_router_context, bundle cache, chat-turn
 persistence) — those are welded to Hoot chat sessions Apollo does not have.
 
@@ -19,6 +22,7 @@ Heavy imports (retrieval, ai/main_ai, citations, DB models) are deferred into
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -49,6 +53,26 @@ ASIDE_COUNT_SESSION_METADATA_KEY = "reference_question_aside_count"
 
 _OUT_OF_SCOPE_TEXT = "That's outside what's covered in this course's materials."
 _NOT_FOUND_TEXT = "Not found in the approved materials."
+
+# ``ai.main_ai.format_answer`` appends a trailing "\n\nCitations: [..], [..]"
+# enumeration to every non-empty answer (main_ai.py, end of ``format_answer``).
+# For the aside card that in-text list is redundant: the structured ``citations``
+# payload is returned separately (``_structured_citations`` below) and rendered as
+# chips by the student UI. This regex matches ONLY that trailing single-line block
+# (markers never contain a newline) anchored to the end of the text, so Hoot chat —
+# which keeps the block — is untouched; the strip happens in this lane alone.
+_TRAILING_CITATIONS_BLOCK = re.compile(r"\n\nCitations:[^\n]*\Z")
+
+
+def _strip_trailing_citations_block(text: str) -> str:
+    """Remove the trailing "Citations: [..]" enumeration ``format_answer`` appends.
+
+    Aside-lane-only post-process: the structured ``citations`` payload carries the
+    same markers for the UI, so the in-text list is redundant here. Returns text
+    with no trailing block unchanged (the regex is anchored to the string end and
+    only matches the single-line block ``format_answer`` produces).
+    """
+    return _TRAILING_CITATIONS_BLOCK.sub("", text.rstrip()).rstrip()
 
 
 def is_enabled() -> bool:
@@ -231,6 +255,7 @@ async def answer_reference_question(
         parse_question,
         solve_with_bundle,
     )
+    from ai.prompts.apollo_aside import apollo_aside_prompt
     from config.contracts import ResearchBundle, ResearchMetadata
     from retrieval.context_packer import _summarize_snippets
     from retrieval.pipeline import retrieve_for_question
@@ -296,11 +321,14 @@ async def answer_reference_question(
     )
 
     parsed_task = parse_question(question)
-    solution = solve_with_bundle(parsed_task, bundle)
+    solution = solve_with_bundle(parsed_task, bundle, system_prompt_override=apollo_aside_prompt())
     final = format_answer(solution, bundle, include_background=False)
 
+    # The aside card renders `citations` as chips, so drop format_answer's
+    # redundant in-text "Citations: [..]" enumeration for this lane only.
+    text = _strip_trailing_citations_block(final.text)
     citations = _structured_citations(bundle, final.citations)
-    return ReferenceAsideResult(in_scope=True, text=final.text, citations=citations)
+    return ReferenceAsideResult(in_scope=True, text=text, citations=citations)
 
 
 __all__ = [

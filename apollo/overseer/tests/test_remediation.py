@@ -364,3 +364,38 @@ async def test_solution_documents_never_surface_in_review():
     assert decorated["topic_feedback"][0]["review"] == [
         {"doc_id": "safe", "label": "[Textbook, p. 12]", "page": 12}
     ]
+
+
+@pytest.mark.asyncio
+async def test_remediation_preserves_the_hoot_assisted_flag(monkeypatch):
+    """INTERACTION5: the additive ``hoot_assisted`` key on a feedback item must
+    survive the copy-on-success decoration (the pass only ADDS a ``review`` key)."""
+    retrieve = AsyncMock()
+    monkeypatch.setattr("apollo.overseer.remediation.retrieve_for_question", retrieve)
+    feedback = {
+        "headline": "Keep building.",
+        "topic_feedback": [
+            {
+                "canonical_key": "weak",
+                "note": "Review weak.",
+                "quote": None,
+                "hoot_assisted": True,
+            }
+        ],
+        "recap": [],
+        "next_step": "Teach it yourself.",
+    }
+
+    decorated = await add_remediation_reviews(
+        db=_DB(),  # type: ignore[arg-type]
+        search_space_id=7,
+        topic_score=_score(_topic("weak", "missing")),
+        feedback=feedback,
+        grounding_bundle={"snippets": [_snippet("chunk-1", document_id=91)]},
+    )
+
+    assert decorated is not None
+    item = decorated["topic_feedback"][0]
+    assert item["hoot_assisted"] is True
+    assert item["review"] == [{"doc_id": 91, "label": "[Textbook, p. 12]", "page": 12}]
+    retrieve.assert_not_awaited()

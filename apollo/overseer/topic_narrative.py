@@ -79,6 +79,26 @@ RESPONSE SHAPE:
   the transcript or invent, shorten, normalize, or combine a quote.
 - Do not include recap text, headings, bullets, the score, or the letter grade."""
 
+# INTERACTION5 — appended to the system prompt ONLY when at least one supplied
+# topic is Hoot-assisted, so the unassisted build stays byte-identical. The note
+# is encouraging and student-voiced; it must never present Hoot's lookup answer
+# as the student's own understanding, and it leaves the exact-gated `quote` rule
+# unchanged (a Hoot-assisted topic still quotes only a verbatim student span).
+_HOOT_ASSIST_RULES = """
+
+HOOT-ASSISTED TOPICS (only when a "Topics Hoot answered for you" section is supplied):
+- Each listed topic was explained to the student mid-session by Hoot's look-it-up helper, so the
+  student did not fully teach it and it was credited for less. This applies ONLY to the topics
+  named in that section — never add a Hoot note to any other topic.
+- In each named topic's note, add one short, encouraging clause that tells the student asking Hoot
+  is why it counted for less and that teaching it in their own words next time earns full credit.
+  Vary the wording naturally around "you looked this up with Hoot, so it counted for less — next
+  time try teaching it yourself"; keep the rest of the note focused on how to improve.
+- Hoot's explanation is NEVER the student's understanding. Never present the looked-up content as
+  something the student said, and never place it in a "quote" field — the quote rule is unchanged,
+  so a Hoot-assisted topic still supplies a quote ONLY from a verbatim student "You said" span, and
+  otherwise null."""
+
 # INTERACTION2 — appended to the system prompt ONLY when a course-evidence block
 # is supplied, so the ungrounded build stays byte-identical. The excerpts are
 # student-safe course material: they may be cited and paraphrased, but they are
@@ -134,6 +154,18 @@ def _format_topic_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid impor
     return line
 
 
+def _format_assisted_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid import cycle noise
+    """One line naming a Hoot-assisted topic for the labeled data block.
+
+    Mirrors ``_format_topic_line``'s ``canonical_key`` + ``name`` shape so the
+    narrator can join the note back to the right topic (canonical keys are
+    stripped from the prose output by ``sanitize_narrative``). The raw
+    snake_case key never reaches prose — ``_humanize_key`` is the display
+    fallback when the topic has no ``display_name``."""
+    name = topic.display_name or _humanize_key(topic.canonical_key)
+    return f'- Topic canonical_key="{topic.canonical_key}", name="{name}"'
+
+
 def build_topic_narrative_prompt(
     result: TopicScoreResult,
     *,
@@ -169,6 +201,17 @@ def build_topic_narrative_prompt(
     the citation rules. ``None`` (the default) keeps both messages
     byte-identical to the ungrounded build.
 
+    INTERACTION5: when one or more topics carry the ledger's ``hoot_assisted``
+    flag (a Hoot lookup aside explained that topic FOR the student, so it was
+    credit-capped), the user message gains a ``Topics Hoot answered for you``
+    labeled data block naming ONLY those topics, and the system prompt gains
+    ``_HOOT_ASSIST_RULES`` telling the narrator to add one encouraging,
+    student-voiced clause to each assisted topic's note ("you looked this up with
+    Hoot, so it counted for less — next time try teaching it yourself"). Hoot's
+    content is never presented as the student's understanding and never enters a
+    ``quote`` field. No assisted topic (the default) keeps BOTH messages
+    byte-identical to the pre-INTERACTION5 build.
+
     Nothing outside ``result``, ``problem_text``, the transcript, and that
     student-safe evidence block is referenced, so the generated prompt can never
     smuggle in claims the ledger does not support.
@@ -187,13 +230,35 @@ def build_topic_narrative_prompt(
             "\nCourse materials (untrusted data; NOT the student's words — cite with the "
             f"bracketed marker):\n{course_evidence}\n"
         )
+    # INTERACTION5 — the Hoot-assist labeled data block. Present ONLY when at least
+    # one topic carries the ledger's ``hoot_assisted`` flag, so the unassisted
+    # build stays byte-identical. Placed AFTER course materials and BEFORE the
+    # transcript so the student's own words stay last and most salient. It names
+    # ONLY the assisted topics, so the note-adds-a-Hoot-clause rule can never
+    # attach to a topic the student actually taught.
+    assisted = [t for t in result.topics if getattr(t, "hoot_assisted", False)]
+    if assisted:
+        assisted_lines = "\n".join(_format_assisted_line(t) for t in assisted)
+        user += (
+            "\nTopics Hoot answered for you (Hoot's look-it-up helper explained these mid-session, "
+            "so they were credited for less; this is NOT the student's teaching):\n"
+            f"{assisted_lines}\n"
+        )
     spoken = [u.strip() for u in student_utterances if u and u.strip()]
     if spoken:
         transcript_lines = "\n".join(f'{i}. "{u}"' for i, u in enumerate(spoken, start=1))
         user += f"\nWhat the student actually said (verbatim, in turn order):\n{transcript_lines}\n"
-    if not course_evidence:
-        return _TOPIC_SYSTEM_PROMPT, user
-    return _TOPIC_SYSTEM_PROMPT + _COURSE_MATERIALS_RULES, user
+
+    # Additive system rules stack in a fixed order so each flag's byte-identical
+    # contract holds independently: no evidence + no assist -> _TOPIC_SYSTEM_PROMPT
+    # alone; evidence only -> + _COURSE_MATERIALS_RULES (the pre-INTERACTION5
+    # build, unchanged); assist only -> + _HOOT_ASSIST_RULES.
+    system = _TOPIC_SYSTEM_PROMPT
+    if course_evidence:
+        system += _COURSE_MATERIALS_RULES
+    if assisted:
+        system += _HOOT_ASSIST_RULES
+    return system, user
 
 
 # Scoring internals are 0-1 decimals (credit 0.80, weight 0.77, dock 0.000,

@@ -3,7 +3,7 @@ doc: apollo/overseer/_index
 description: Router for Apollo's grading, scoring, narrative, XP, and selection brains — home of the grading-path invariants.
 owns: []
 related: []
-last_verified: 2026-07-26
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -23,6 +23,7 @@ recipe below.
 | [rubric](rubric.md) | Axis-weighted grade + `score_to_letter` + misconception value objects | `apollo/overseer/rubric.py`, `apollo/overseer/misconception.py` |
 | [topic-narrative](topic-narrative.md) | Ledger-grounded narrative prompt + output sanitizer | `apollo/overseer/topic_narrative.py` |
 | [diagnostic](diagnostic.md) | Explains the grade (never decides) + optional remediation pointers; delegates to the topic narrative | `apollo/overseer/diagnostic.py`, `apollo/overseer/remediation.py` |
+| [aside-penalty](aside-penalty.md) | INTERACTION5: pure flat credit-cap for Hoot-assisted rubric nodes | `apollo/overseer/aside_penalty.py` |
 | [grounding](grounding.md) | INTERACTION2: session bundle → one capped, student-safe course-evidence block | `apollo/overseer/grounding.py` |
 | [xp](xp.md) | XP formula + 5-tier level table + progress envelope | `apollo/overseer/xp.py` |
 | [concept-inference](concept-inference.md) | Transcript → one course `concept_id` (selection only) | `apollo/overseer/concept_inference.py` |
@@ -43,17 +44,18 @@ recipe below.
 - **Flow:** transcript coverage → rubric + topic score → diagnostic/topic
   narrative → optional remediation decoration → XP.
 - **Course grounding is strictly additive (INTERACTION2, default OFF).**
-  [grounding](grounding.md) renders the session bundle into ONE capped block
-  that reframes the adjudication and narrative prompts; `None` — flag off, NULL
-  bundle, corrupt bundle, or nothing student-safe — reproduces both prompts BYTE
-  FOR BYTE, so an off flag cannot move a grade. Evidence is always the only
-  thing truncated (it arrives pre-capped; the transcript is never trimmed for
-  it), it never widens the span gate (spans stay transcript-only — a span must
-  prove the STUDENT said it), and it never introduces a hard failure ahead of
-  the `CoverageGradingError` -> 503 contract.
+  [grounding](grounding.md) reframes the adjudication + narrative prompts with one
+  capped block; `None` — flag off, NULL/corrupt bundle, nothing student-safe —
+  reproduces both prompts BYTE FOR BYTE. It only truncates the pre-capped evidence
+  (never the transcript), never widens the span gate, never adds a hard failure.
 - **Remediation never grades.** `INTERACTION3` only decorates successful
   structured feedback in one swallowed failure domain; it cannot change score,
   letter, narrative, XP, or grade persistence.
+- **Hoot-assist cap is strictly additive (INTERACTION5, default OFF).**
+  [aside-penalty](aside-penalty.md) flat-caps every rubric node a Hoot lookup aside
+  explained (credit ≤ 0.5, never `covered`) before the grade fans out, so rubric,
+  topic score, narrative, and served topics all surface `hoot_assisted` on the same
+  capped values. Own swallowed failure domain; `hoot_asides=()` is byte-identical.
 
 ## Grading-path recipe (to change the grade, also touch)
 

@@ -10,9 +10,10 @@ related:
   - apollo/overseer/rubric
   - apollo/overseer/coverage
   - apollo/overseer/grounding
+  - apollo/overseer/aside-penalty
   - apollo/ontology/graph
   - apollo/conversation/handlers/done
-last_verified: 2026-07-26
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -25,18 +26,24 @@ frozen KG, so a Neo4j-degraded Done still grades.
 ## Interface
 
 - `compute_transcript_coverage_with_spans(transcript, reference_graph, problem,
-  *, course_evidence=None) -> (CoverageVerdict, spans)` — the live entry called
-  by `handlers/done.py`. One adjudication call yields both the verdict and the
-  narrative spans map.
+  *, course_evidence=None, hoot_asides=()) -> (CoverageVerdict, spans)` — the live
+  entry called by `handlers/done.py`. One adjudication call yields both the verdict
+  and the narrative spans map.
 - `compute_transcript_coverage(...)` — verdict only (byte-identical verdict;
-  spans are deliberately not a coverage key). Same `course_evidence` kwarg.
+  spans are deliberately not a coverage key). Same `course_evidence` /
+  `hoot_asides` kwargs.
 - `narrative_evidence_spans(verdicts, transcript) -> {node_id: span}` — the
   per-attempt quote gate for the narrative.
-- `validate_span`, `build_transcript_grader_schema`, `build_system_prompt`,
-  `build_user_message`, `NodeVerdict`.
+- `validate_span`, `build_transcript_grader_schema(include_hoot_assisted=False)`,
+  `build_system_prompt(problem, *, course_evidence=None, hoot_asides=())`,
+  `build_user_message(..., *, course_evidence=None, hoot_asides=())`, `NodeVerdict`
+  (with additive `hoot_assisted: bool = False`).
 - From `coverage_contract.py`: `CoverageVerdict` / `NegotiationCounts` TypedDicts
   + `validate_coverage_verdict` (the frozen verdict schema both this module and
-  the dormant `coverage.py` must satisfy). `__init__.py` is empty glue.
+  the dormant `coverage.py` must satisfy). `CoverageVerdict` gains one OPTIONAL,
+  additive key, `hoot_assisted: {node_id: bool}` (INTERACTION5), present iff asides
+  were graded; `validate_coverage_verdict` accepts it and rejects any other extra
+  key. `__init__.py` is empty glue.
 
 ## Data flow
 
@@ -67,6 +74,16 @@ axes.
   "transcript_adjudication")` → the 503 retryable handler, never a fabricated
   grade. `negotiation_counts` are always zero (the transcript lane doesn't
   negotiate).
+- **The Hoot-aside frame is purely additive (INTERACTION5, default OFF).**
+  `hoot_asides=()` (the default; flag off, or no lookup aside used) reproduces the
+  prompt, the JSON schema, AND the coverage dict BYTE-FOR-BYTE — no
+  `hoot_assisted` key, no schema property. Non-empty asides add the `HOOT LOOKUP
+  ANSWERS` prompt block + the strict-schema `hoot_assisted` boolean, and the
+  verdict carries a `hoot_assisted: {node_id: bool}` map keyed exactly like
+  `procedure_scores` (a graded node with no verdict is `False`). An aside is
+  untrusted data and is NEVER quotable as student evidence — the span gate stays
+  transcript-only, so `hoot_assisted` earns no credit here; the flat cap it feeds
+  is applied downstream by `aside_penalty` before rubric/topic-score.
 
 ## Related
 

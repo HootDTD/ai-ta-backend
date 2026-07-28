@@ -23,7 +23,7 @@ related:
   - database/supabase-migrations
   - reports/ai-use-pdf
   - platform/ops-db-tooling
-last_verified: 2026-07-25
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -46,7 +46,11 @@ One coherent topic: how the repo builds, tests, and gates. Config files (not
 - `database` — pinned Supabase CLI (2.109.0) drift check + clean local reset.
 - `docs` — the architecture ownership lint. Runs `scripts/docs/check_owns_coverage.py`
   (owned here, with its `owns_exclude.txt`); flipped from advisory to **required** at
-  W5 (in `ci-passed.needs`, `--last-verified-required` on the PR path).
+  W5 (in `ci-passed.needs`, `--last-verified-required` on the PR path). The
+  `last_verified` PR-path gate tolerates **same-day stacked PRs**: a leaf that changed
+  in the diff and already carries the head commit's author date (`git log -1
+  --format=%as`) passes without a literal bump — a date-granular field can't advance
+  twice in one day (ported from the student-ui gate).
 - `ci-passed` — the aggregation status; **the single required branch-protection
   check** (`docs` deliberately not in its `needs` yet).
 

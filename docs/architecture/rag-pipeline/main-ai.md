@@ -15,7 +15,7 @@ related:
   - rag-pipeline/orchestrator
   - platform/config-model-pins
   - platform/config-contracts
-last_verified: 2026-07-25
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -37,9 +37,21 @@ facade). Documented by pipeline stage since it cannot be split at doc-write time
 `_citation_pool_size`), `_importance_from_snippet`, `_pick_concept_term`; blended
 `0.6*relevance + 0.4*directness*importance`, dropped below `CITATION_SCORE_FLOOR`.
 **(4) Answer generation** — `_prepare_solve_prompt`,
-`solve_with_bundle(parsed_task, bundle, hint, subject) -> ProposedSolution` and
-the streaming twin `solve_with_bundle_stream`; `_build_solution_from_data`,
-`_is_reasoning_model`.
+`solve_with_bundle(parsed_task, bundle, hint, subject, *,
+system_prompt_override=None) -> ProposedSolution` and the streaming twin
+`solve_with_bundle_stream`; `_build_solution_from_data`, `_is_reasoning_model`.
+The keyword-only `system_prompt_override` (threaded through `_prepare_solve_prompt`)
+swaps the tutor system prompt for a caller-supplied one — the Apollo "Ask Hoot"
+aside passes `apollo_aside_prompt()` (`prompts-answer`); `None` keeps
+`tutor_prompt()` byte-identical, so the standalone-chat and streaming solve paths
+are unchanged. The override ALSO reshapes one user-payload line: the `steps`
+instruction hardcodes the tutor three-section structure (`## Answer` /
+`## Key Takeaway` / `## Check Your Understanding`) only when
+`system_prompt_override is None`; with an override it defers `steps` shaping to the
+override prompt. (A system-prompt-only "ignore the payload" instruction did not
+reliably beat that explicit line at the model level — the aside emitted tutor
+sections anyway — so the payload itself must yield.) Everything else in the payload
+is override-independent; `None` is byte-identical to today.
 **(5) Citation formatting** — `format_answer(solution, bundle, *, include_background,
 citation_label, subject) -> FinalAnswer`; `_strip_zero_width`.
 **(6) Debug writers** — `_write_proof_citations`/`_write_citations_file`/`_write_miniresponses`.

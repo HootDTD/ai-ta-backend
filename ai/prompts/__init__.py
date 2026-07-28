@@ -14,6 +14,7 @@ from .synonyms import synonyms_prompt
 from .concept_extraction import concept_extraction_prompt
 from .parse_question import parse_question_prompt
 from .tutor import tutor_prompt
+from .apollo_aside import apollo_aside_prompt
 
 __all__ = [
     "relevance_guard_prompt",
@@ -26,4 +27,5 @@ __all__ = [
     "concept_extraction_prompt",
     "parse_question_prompt",
     "tutor_prompt",
+    "apollo_aside_prompt",
 ]

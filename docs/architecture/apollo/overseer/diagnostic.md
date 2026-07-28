@@ -25,8 +25,8 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
 - `generate_diagnostic(*, coverage, reference_steps, problem_text, rubric,
   model=None, topic_score=None, student_utterances=(), course_evidence=None)
   -> (narrative, feedback_or_none)` — imported by `handlers/done.py`. Topic
-  feedback is `{headline, topic_feedback: [{canonical_key, note, quote}], recap,
-  next_step}`.
+  feedback is `{headline, topic_feedback: [{canonical_key, note, quote,
+  hoot_assisted}], recap, next_step}`.
 - `add_remediation_reviews(*, db, search_space_id, topic_score, feedback,
   grounding_bundle) -> decorated_feedback_or_none` — copy-on-success citation
   decoration for at most three `partial`/`missing` topics.
@@ -62,6 +62,10 @@ The helper returns citation-only `{doc_id, label, page}` pointers.
   otherwise it becomes null.
 - **Attribution rules** match the topic narrative: address the student as
   "you"/"your"; never present a reference detail as something the student said.
+- **`topic_feedback[].hoot_assisted` (INTERACTION5) is code-injected from the
+  ledger, never the LLM** — copied from each `TopicCredit.hoot_assisted` so the
+  flat Hoot-assist cap can't be argued away by prose. `False` for un-assisted
+  topics and absent-safe; it survives `remediation.py`'s copy of the feedback.
 - **Recap lines are deterministic:** the topic path puts the existing appender
   outputs in code-owned `recap[]`; the axis/soft-fail path appends them to the
   legacy string exactly as before.

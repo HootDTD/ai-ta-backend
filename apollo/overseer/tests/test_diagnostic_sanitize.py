@@ -151,6 +151,7 @@ def test_structured_text_fields_are_sanitized_individually(mock_openai):
                 "canonical_key": "proc_explain_causality",
                 "note": "Keep the causal link.",
                 "quote": "You linked cause and effect.",
+                "hoot_assisted": False,
             }
         ],
         "recap": [],

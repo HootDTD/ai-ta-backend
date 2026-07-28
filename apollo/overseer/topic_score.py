@@ -51,6 +51,12 @@ class TopicCredit:
     weight: float
     misconceptions: tuple[TopicMisconception, ...]
     evidence_span: str | None = None
+    # INTERACTION5: True iff a Hoot lookup aside explained this topic's content
+    # FOR the student (flat cap, no earn-back). Additive and defaulted — sourced
+    # from ``coverage["hoot_assisted"]`` in ``compute_topic_score``. An absent map
+    # leaves every topic False and the result byte-identical to the pre-feature
+    # build. Feedback/narrative surfacing (Agent D) reads this field.
+    hoot_assisted: bool = False
 
 
 @dataclass(frozen=True)
@@ -160,6 +166,9 @@ def compute_topic_score(
         return TopicScoreResult(0, score_to_letter(0), 0.0, 0.0, ())
 
     weights = _weights_for([node.node_id for node in graded_nodes], centrality)
+    # INTERACTION5: per-node Hoot-assist flags, present only when a Hoot aside was
+    # graded. Absent → every topic reads False (byte-identical to pre-feature).
+    assist_map = coverage.get("hoot_assisted", {}) or {}
     topics: list[TopicCredit] = []
     coverage_component = 0.0
     for node in graded_nodes:
@@ -174,6 +183,7 @@ def compute_topic_score(
                 weight=weights[node.node_id],
                 misconceptions=(),
                 evidence_span=(evidence_spans or {}).get(node.node_id),
+                hoot_assisted=bool(assist_map.get(node.node_id, False)),
             )
         )
 

@@ -29,6 +29,7 @@ from apollo.hoot_bridge.reference_answer import (
 )
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
+from apollo.overseer.aside_penalty import apply_aside_caps
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.grounding import (
     CourseEvidence,
@@ -63,6 +64,7 @@ from apollo.schemas.problem import Problem
 from config.settings import (
     interaction2_enabled,
     interaction3_enabled,
+    interaction5_enabled,
     interaction_allowed_for_concept,
 )
 
@@ -78,6 +80,17 @@ _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 # (read by `_attempt_misconception_scores`) are "apollo", the student's raw
 # teaching utterances (which feed the bank_pattern tier) are "student".
 _STUDENT_ROLE: str = "student"
+
+# INTERACTION5 — the Apollo learner role that authors a Hoot lookup-aside message
+# (the same "apollo" role `_attempt_misconception_scores` reads); paired with the
+# `ASIDE_MESSAGE_INTENT_TAG` intent it isolates the aside rows `_full_transcript`
+# EXCLUDES from grading.
+_APOLLO_ROLE: str = "apollo"
+
+# INTERACTION5 — the flat Hoot-assist credit cap. Single source of truth: passed
+# to `apply_aside_caps` AND reported in `grading_provenance["aside_penalty"]` so
+# the two can never drift.
+_ASIDE_CREDIT_CAP: float = 0.5
 
 
 def _graph_sim_layer3_enabled() -> bool:
@@ -222,6 +235,38 @@ async def _full_transcript(
         )
     ).all()
     return tuple((role, content) for role, content in rows)
+
+
+async def _aside_texts(
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+) -> tuple[str, ...]:
+    """INTERACTION5 — the Hoot lookup-aside answers shown to the student this
+    attempt, in turn order, that feed the Hoot-assist grading cap.
+
+    Reads ``TutoringMessage.content`` where ``role == "apollo"`` and
+    ``intent == ASIDE_MESSAGE_INTENT_TAG`` — the exact complement of
+    ``_full_transcript``'s exclusion filter: that DROPS these rows from the graded
+    dialogue (so the student is never credited with Hoot's explanation), and this
+    collects the same rows so the adjudicator can flag which rubric nodes Hoot
+    pre-explained. Ordered by ``turn_index``; returns an immutable tuple. Empty
+    when the student never used a lookup aside (the common case — the cap pass
+    then no-ops)."""
+    rows = (
+        (
+            await db.execute(
+                select(TutoringMessage.content)
+                .where(TutoringMessage.attempt_id == attempt_id)
+                .where(TutoringMessage.role == _APOLLO_ROLE)
+                .where(TutoringMessage.intent == ASIDE_MESSAGE_INTENT_TAG)
+                .order_by(TutoringMessage.turn_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return tuple(rows)
 
 
 def _compute_topic_score_safe(
@@ -389,12 +434,45 @@ async def handle_done(
     # the thing that gets cut.
     course_evidence = _course_evidence_safe(sess, concept_slug=getattr(problem, "concept_id", None))
     transcript = await _full_transcript(db, attempt_id=int(attempt.id))
+
+    # INTERACTION5 (default OFF) — the Hoot-assist grading cap. Gated on the flag
+    # AND the problem concept passing the shared allowlist. Its own failure
+    # domain, mirroring the INTERACTION3 pattern: the aside fetch is wrapped so
+    # ANY exception is logged and swallowed, leaving `hoot_asides` empty so the
+    # cap path degrades to today's grade. It runs AHEAD of the sole grading lane
+    # and must NEVER touch the CoverageGradingError -> 503 contract. Flag off / no
+    # aside used → `hoot_asides == ()` reproduces today's prompts, schema, and
+    # coverage byte-for-byte.
+    aside_cap_active = interaction5_enabled() and interaction_allowed_for_concept(
+        problem.concept_id
+    )
+    hoot_asides: tuple[str, ...] = ()
+    if aside_cap_active:
+        try:
+            hoot_asides = await _aside_texts(db, attempt_id=int(attempt.id))
+        except Exception:
+            _LOG.exception("apollo_aside_fetch_failed attempt_id=%s", attempt.id)
+            hoot_asides = ()
+
     coverage, narrative_spans = await compute_transcript_coverage_with_spans(
         transcript=transcript,
         reference_graph=reference_graph,
         problem=problem,
         course_evidence=evidence_block(course_evidence),
+        hoot_asides=hoot_asides,
     )
+
+    # Apply the flat cap to the coverage BEFORE rubric / topic-score / diagnostic
+    # / artifacts, so every downstream consumer sees the SAME capped values. Any
+    # exception here leaves `coverage` the original UNCAPPED verdict (the RHS is
+    # evaluated in full before the assignment binds, so a raise never half-caps)
+    # and grading proceeds — the cap can only ever lower a grade, never break one.
+    aside_assisted_ids: tuple[str, ...] = ()
+    if aside_cap_active and hoot_asides:
+        try:
+            coverage, aside_assisted_ids = apply_aside_caps(coverage, cap=_ASIDE_CREDIT_CAP)
+        except Exception:
+            _LOG.exception("apollo_aside_penalty_failed attempt_id=%s", attempt.id)
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
     # tutoring-message metadata and reduce them to the per-bank-code score
@@ -645,7 +723,7 @@ async def handle_done(
     # The topic/dock payload (which quotes the student) ships whenever the
     # topic score computed successfully.
     serialized_topics = serialize_topics(topic_score) if serve_topic_score else []
-    student_response["grading_provenance"] = {
+    grading_provenance: dict[str, Any] = {
         "grader_used": "llm_transcript",
         "evidence_source": "transcript",
         "score_before_dock": (topic_score.coverage_component if topic_score is not None else None),
@@ -673,5 +751,19 @@ async def handle_done(
             (getattr(sess, "metadata_", None) or {}).get(ASIDE_COUNT_SESSION_METADATA_KEY, 0)
         ),
     }
+
+    # INTERACTION5 provenance (additive; absent otherwise) — present ONLY when the
+    # gate was on AND asides were actually fetched this Done, mirroring how
+    # "grounding" is emitted. `assisted_node_ids` is the set of rubric nodes the
+    # cap lowered (empty if nothing matched, or if the cap pass soft-failed and
+    # grading proceeded uncapped). Off / no asides → key absent, provenance
+    # byte-identical to pre-feature.
+    if aside_cap_active and hoot_asides:
+        grading_provenance["aside_penalty"] = {
+            "enabled": True,
+            "cap": _ASIDE_CREDIT_CAP,
+            "assisted_node_ids": list(aside_assisted_ids),
+        }
+    student_response["grading_provenance"] = grading_provenance
 
     return student_response
