@@ -65,6 +65,7 @@ _CREATE = _MIGRATIONS / "20260717035041_create_app_schema_v1.sql"
 _RETRIEVAL = _MIGRATIONS / "20260717050000_retrieval_functions_v1.sql"
 _GRANTS = _MIGRATIONS / "20260722120000_db08b_rls_enforcement_grants.sql"
 _POLICY_GAPS = _MIGRATIONS / "20260723060000_db08c_rls_write_policy_gaps.sql"
+_GROUNDING_BUNDLE = _MIGRATIONS / "20260728120000_apollo_grounding_bundle.sql"
 _DB_NAME = "db08b_rls_enforcement"
 
 STUDENT_A = "50000000-0000-4000-8000-00000000000a"
@@ -393,6 +394,7 @@ def db08b_dsns(request: pytest.FixtureRequest) -> tuple[str, str]:
             await conn.execute(_RETRIEVAL.read_text(encoding="utf-8"))
             await conn.execute(_GRANTS.read_text(encoding="utf-8"))
             await conn.execute(_POLICY_GAPS.read_text(encoding="utf-8"))
+            await conn.execute(_GROUNDING_BUNDLE.read_text(encoding="utf-8"))
             await _seed(conn)
         finally:
             await conn.close()

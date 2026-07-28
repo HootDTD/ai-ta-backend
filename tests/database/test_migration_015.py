@@ -51,6 +51,7 @@ async def test_app_learning_activities_has_chat_modality_columns(db_session):
         "concept_id",
         "current_problem_id",
         "pending_intent",
+        "grounding_bundle",
         "history_summary",
         "history_summary_up_to_turn",
         "last_touched_at",
