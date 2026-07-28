@@ -26,14 +26,27 @@ from config.contracts import ParsedTask, ResearchBundle, ResearchMetadata
 # Prompt contract
 # ---------------------------------------------------------------------------
 
-_BANNED_STRUCTURE = ("Check Your Understanding", "Key Takeaway", "## Answer")
+# The shared user payload (ai.main_ai._prepare_solve_prompt) is byte-identical
+# whether or not an override is supplied — see
+# test_override_is_exactly_what_reaches_the_chat_call — and it hardcodes the
+# tutor three-section instruction on every solve. So the aside prompt cannot rely
+# on a divergent payload; it must NAME those sections and explicitly countermand
+# them. This asserts the override is present and forceful, not that the tokens are
+# absent (the previous, weaker contract, which the live model overrode).
+_TUTOR_SECTIONS = ("## Answer", "## Key Takeaway", "## Check Your Understanding")
 
 
-def test_aside_prompt_drops_all_chat_structure_sections():
+def test_aside_prompt_overrides_the_payload_three_section_structure():
     prompt = apollo_aside_prompt()
 
-    for banned in _BANNED_STRUCTURE:
-        assert banned not in prompt, f"aside prompt must not contain {banned!r}"
+    assert "OUTPUT FORMAT OVERRIDE" in prompt
+    assert "IGNORE it completely" in prompt
+    # The three tutor sections appear ONLY so the prompt can forbid them by name.
+    for section in _TUTOR_SECTIONS:
+        assert section in prompt, f"aside prompt must name {section!r} to forbid it"
+    # It must never carry the payload's *positive* "use all three sections" wording.
+    assert "use all three sections" not in prompt
+    assert "flowing plain prose" in prompt
 
 
 def test_aside_prompt_keeps_source_boundedness_anchors():
@@ -80,6 +93,47 @@ def test_aside_prompt_has_the_refresher_voice_and_handoff():
     assert "Apollo" in prompt
     assert "own words" in prompt
     assert "compact" in prompt
+
+
+def test_aside_prompt_enforces_single_statement_rule():
+    """Defect 1 (repetition): every fact must appear exactly once, and
+    overlapping excerpts get synthesized into one cited sentence."""
+    prompt = apollo_aside_prompt()
+
+    assert "SAY EACH FACT EXACTLY ONCE" in prompt
+    assert "State each fact exactly once" in prompt
+    # Overlapping-excerpt synthesis rather than a second restatement.
+    assert "Synthesize the overlap into ONE sentence" in prompt
+    # A worked good-vs-bad example is the strongest lever against this failure.
+    assert "GOOD vs BAD" in prompt
+
+
+def test_aside_prompt_bans_narrator_meta_references():
+    """Defect 2 (auditor register): no "This course material states"-style
+    narration of the source; say the thing and attach the citation."""
+    prompt = apollo_aside_prompt()
+
+    assert "NO NARRATOR VOICE" in prompt
+    assert "Never write narrator phrases like" in prompt
+    assert "This course material states" in prompt
+    assert "According to" in prompt
+
+
+def test_aside_prompt_forbids_citation_on_the_handback_sentence():
+    """Defect 3: the closing hand-back sentence must carry no citation marker."""
+    prompt = apollo_aside_prompt()
+
+    assert "MUST NOT contain a citation marker" in prompt
+    assert "The closing hand-back sentence makes no factual claim" in prompt
+
+
+def test_aside_prompt_drops_copy_the_wording_pressure():
+    """Root cause of the defensive re-quoting: the tutor prompt's
+    prefer-copied-wording instruction must be gone from the aside voice."""
+    prompt = apollo_aside_prompt()
+
+    assert "Prefer concrete wording copied or closely paraphrased" not in prompt
+    assert "do NOT need to copy or mirror the excerpt's wording" in prompt
 
 
 def test_aside_prompt_differs_from_the_standalone_tutor_prompt():
@@ -131,15 +185,28 @@ def test_override_none_is_byte_identical_to_no_override(monkeypatch):
 
 
 def test_override_is_exactly_what_reaches_the_chat_call(monkeypatch):
-    """A supplied override becomes the system message verbatim; the user payload
-    stays identical to the un-overridden build."""
+    """A supplied override becomes the system message verbatim, AND the user
+    payload's `steps` shaping defers to it instead of hardcoding the tutor's
+    three-section structure (which a system-prompt-only override could not
+    reliably beat at the model level)."""
     sentinel = "SENTINEL-ASIDE-SYSTEM-PROMPT"
     baseline = _solve_capturing_messages(monkeypatch)
     overridden = _solve_capturing_messages(monkeypatch, system_prompt_override=sentinel)
 
     assert overridden[0]["content"] == sentinel
-    # Only the system prompt changed — the user payload is untouched.
-    assert overridden[1] == baseline[1]
+
+    baseline_user = baseline[1]["content"]
+    overridden_user = overridden[1]["content"]
+    # Today's Hoot-chat payload (no override) still names the three tutor sections.
+    assert "## Answer, ## Key Takeaway, ## Check Your Understanding" in baseline_user
+    assert "use all three sections" in baseline_user
+    # The override payload drops that structure demand and defers to the system prompt.
+    assert "## Answer, ## Key Takeaway, ## Check Your Understanding" not in overridden_user
+    assert "use all three sections" not in overridden_user
+    assert "defer" in overridden_user or "Follow the RESPONSE SHAPE" in overridden_user
+    # The steps JSON contract (single Markdown string, LaTeX) survives on both paths.
+    assert "a SINGLE Markdown-formatted string (NOT an array)" in overridden_user
+    assert "$$...$$ display" in overridden_user
 
 
 def test_apollo_aside_prompt_flows_through_solve(monkeypatch):

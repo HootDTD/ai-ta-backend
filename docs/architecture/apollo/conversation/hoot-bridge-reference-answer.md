@@ -66,12 +66,21 @@ only persistence, written by the caller):
    both index as `"other"` — so `ProvisioningRun` is the only durable
    problem/solution pairing signal.
 4. `ai.main_ai.parse_question` → `solve_with_bundle(...,
-   system_prompt_override=apollo_aside_prompt())` → `format_answer`. The override
-   swaps Hoot's standalone-chat `tutor_prompt` for the compact aside refresher
-   (`ai/prompts/apollo_aside.py`, `rag-pipeline/prompts-answer`): a
-   mid-teaching-session lookup voice, no `## Answer`/Key-Takeaway/Check-Your-
-   Understanding structure, closing by handing the student back to teaching. Same
-   retrieval + solve lane and pinned `MAIN_MODEL`; only the system prompt differs.
+   system_prompt_override=apollo_aside_prompt())` → `format_answer` →
+   `_strip_trailing_citations_block`. The override swaps Hoot's standalone-chat
+   `tutor_prompt` for the compact aside refresher (`ai/prompts/apollo_aside.py`,
+   `rag-pipeline/prompts-answer`): a mid-teaching-session lookup voice, no
+   `## Answer`/Key-Takeaway/Check-Your-Understanding structure, one flowing
+   spoken-tutor explanation that states each fact once (no narrator meta-
+   references), closing by handing the student back to teaching. Same retrieval
+   + solve lane and pinned `MAIN_MODEL`; only the system prompt differs.
+   `format_answer` appends a trailing `Citations: [..], [..]` enumeration to
+   every non-empty answer; `_strip_trailing_citations_block` removes that ONE
+   trailing single-line block for the aside card only (the structured
+   `citations` payload below carries the same markers as UI chips, so the
+   in-text list is redundant here). The strip is a post-process on the returned
+   text — `format_answer` is the shared Hoot-chat formatter and stays untouched,
+   so Hoot chat keeps its in-text `Citations:` block byte-for-byte.
 5. `_structured_citations` (a private copy of `server.py`'s
    `_structured_citations_from_bundle`, via `citations.formatter`) — kept
    local rather than imported from `server.py`, which this module must not

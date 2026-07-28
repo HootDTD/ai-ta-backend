@@ -18,6 +18,7 @@ from apollo.hoot_bridge.reference_answer import (
     _document_id_of,
     _excluded_document_ids,
     _filter_leaked_snippets,
+    _strip_trailing_citations_block,
     _structured_citations,
     answer_reference_question,
     is_enabled,
@@ -417,3 +418,121 @@ async def test_aside_answer_uses_the_compact_refresher_system_prompt():
         )
 
     assert solve.call_args.kwargs["system_prompt_override"] == apollo_aside_prompt()
+
+
+# ---------------------------------------------------------------------------
+# Trailing "Citations: [..]" strip (aside-lane-only post-process)
+# ---------------------------------------------------------------------------
+
+# The exact live-stack shape the user rejected: body + claim markers, a
+# hand-back line, then format_answer's redundant trailing enumeration.
+_REJECTED_ASIDE_TEXT = (
+    "Intellectual capital is the information that forms the foundation from which "
+    "human beings craft their lives and secure their dignity. This course material "
+    "states that information forms the intellectual capital from which human beings "
+    "craft their lives, and describes intellectual capital as the foundation from "
+    "which we craft our lives and secure our dignity. When our information is stolen, "
+    "denied, exposed, or corrupted, our dignity itself is threatened, which means our "
+    "intellectual capital is being harmed.[Mason 1986, p. 2][Module 9 Ethics Slides, p. 2]"
+    "\n\nNow try putting that definition into your own words as you explain it to Apollo. "
+    "[Module 9 Ethics Slides, p. 2]"
+    "\n\nCitations: [Mason 1986, p. 2], [Module 9 Ethics Slides, p. 2]"
+)
+
+
+def test_strip_trailing_citations_block_removes_the_redundant_enumeration():
+    """The trailing "Citations: [..]" block is dropped; body + claim-level
+    citations + the hand-back line survive verbatim."""
+    stripped = _strip_trailing_citations_block(_REJECTED_ASIDE_TEXT)
+
+    assert "\n\nCitations:" not in stripped
+    assert not stripped.endswith("Citations: [Mason 1986, p. 2], [Module 9 Ethics Slides, p. 2]")
+    assert stripped.endswith(
+        "Now try putting that definition into your own words as you explain it to Apollo. "
+        "[Module 9 Ethics Slides, p. 2]"
+    )
+    # Claim-level markers inside the body are untouched.
+    assert "[Mason 1986, p. 2]" in stripped
+    assert "[Module 9 Ethics Slides, p. 2]" in stripped
+
+
+def test_strip_trailing_citations_block_passes_clean_text_through():
+    """Text with no trailing enumeration is returned byte-identical."""
+    clean = (
+        "Intellectual capital is the information you build your life on "
+        "[Mason 1986, p. 2].\n\nNow put that into your own words for Apollo."
+    )
+
+    assert _strip_trailing_citations_block(clean) == clean
+
+
+def test_strip_trailing_citations_block_only_touches_the_trailing_block():
+    """A "Citations:" that is NOT the trailing block (no leading blank line) is
+    left alone — only format_answer's exact trailing shape is stripped."""
+    text = "See Citations: below for details.\n\nThe answer is X [A, p. 1]."
+
+    assert _strip_trailing_citations_block(text) == text
+
+
+async def test_aside_answer_strips_trailing_citations_block_end_to_end():
+    """End-to-end: format_answer's in-text "Citations:" enumeration is stripped
+    from the aside card text, while the structured citations payload is intact."""
+    snippet = _snippet(snippet_id="safe", document_id=10, marker="[Mason 1986, p. 2]")
+    retrieval = AsyncMock(
+        return_value=([snippet], {"combined_query": "intellectual capital", "hit_count_sem": 1})
+    )
+    answer_with_block = FinalAnswer(
+        text=(
+            "Intellectual capital is the information you build your life on "
+            "[Mason 1986, p. 2].\n\nNow put that into your own words for Apollo."
+            "\n\nCitations: [Mason 1986, p. 2]"
+        ),
+        citations=["[Mason 1986, p. 2]"],
+    )
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "ai.main_ai.check_question_relevance",
+                return_value={"relevance": "full", "on_topic_portion": "intellectual capital"},
+            )
+        )
+        stack.enter_context(
+            patch("ai.main_ai.extract_and_filter_keywords", return_value=("context", []))
+        )
+        stack.enter_context(patch("ai.main_ai.parse_question", return_value=MagicMock()))
+        stack.enter_context(
+            patch("ai.main_ai.solve_with_bundle", new=MagicMock(return_value=MagicMock()))
+        )
+        stack.enter_context(patch("ai.main_ai.format_answer", return_value=answer_with_block))
+        stack.enter_context(patch("retrieval.pipeline.retrieve_for_question", new=retrieval))
+        stack.enter_context(
+            patch(
+                "retrieval.context_packer._summarize_snippets",
+                return_value=([], [], [], {}),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "apollo.hoot_bridge.reference_answer._excluded_document_ids",
+                new=AsyncMock(return_value=set()),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "apollo.hoot_bridge.reference_answer._structured_citations",
+                return_value=[{"label": "Mason 1986, p. 2"}],
+            )
+        )
+
+        result = await answer_reference_question(
+            db=MagicMock(),
+            course_id=9,
+            question="What does Mason mean by intellectual capital?",
+            problem=MagicMock(),
+        )
+
+    assert "\n\nCitations:" not in result.text
+    assert result.text.endswith("Now put that into your own words for Apollo.")
+    assert "[Mason 1986, p. 2]" in result.text  # claim-level citation preserved
+    assert result.citations == [{"label": "Mason 1986, p. 2"}]

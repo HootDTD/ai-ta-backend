@@ -44,7 +44,14 @@ The keyword-only `system_prompt_override` (threaded through `_prepare_solve_prom
 swaps the tutor system prompt for a caller-supplied one — the Apollo "Ask Hoot"
 aside passes `apollo_aside_prompt()` (`prompts-answer`); `None` keeps
 `tutor_prompt()` byte-identical, so the standalone-chat and streaming solve paths
-are unchanged.
+are unchanged. The override ALSO reshapes one user-payload line: the `steps`
+instruction hardcodes the tutor three-section structure (`## Answer` /
+`## Key Takeaway` / `## Check Your Understanding`) only when
+`system_prompt_override is None`; with an override it defers `steps` shaping to the
+override prompt. (A system-prompt-only "ignore the payload" instruction did not
+reliably beat that explicit line at the model level — the aside emitted tutor
+sections anyway — so the payload itself must yield.) Everything else in the payload
+is override-independent; `None` is byte-identical to today.
 **(5) Citation formatting** — `format_answer(solution, bundle, *, include_background,
 citation_label, subject) -> FinalAnswer`; `_strip_zero_width`.
 **(6) Debug writers** — `_write_proof_citations`/`_write_citations_file`/`_write_miniresponses`.
