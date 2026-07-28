@@ -13,7 +13,7 @@ related:
   - rag-pipeline/main-ai
   - rag-pipeline/prompts-parse-relevance
   - rag-pipeline/prompts-answer
-last_verified: 2026-07-25
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -38,9 +38,9 @@ cohesive-catalog exception to the 1-2-file rule. Consumer: `ai/main_ai.py` only.
 
 - **`ai/prompts/__init__.py` is the barrel** — it re-exports ALL prompt functions
   across all three prompt docs (`relevance_guard_prompt`,
-  `score_and_answer_snippet_prompt`, `parse_question_prompt`, `tutor_prompt`, plus
-  the six above). Editing any prompt doc's public surface must keep this barrel
-  in sync.
+  `score_and_answer_snippet_prompt`, `parse_question_prompt`, `tutor_prompt`,
+  `apollo_aside_prompt`, plus the six above). Editing any prompt doc's public
+  surface must keep this barrel in sync.
 
 ## Related
 

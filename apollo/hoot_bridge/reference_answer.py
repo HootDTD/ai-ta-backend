@@ -4,10 +4,13 @@ Brief: styx/plans/hoot-apollo-04-ask-hoot-hint-lane.md ("ask Hoot" hint lane).
 Gated by the `INTERACTION4` flag (default OFF; see `is_enabled` below) plus
 the call-site `INTERACTION_CONCEPTS` allowlist in handlers/intent and chat.
 
-This module composes retrieve_for_question() -> the tutor answer prompt
-(ai/prompts/tutor.py, via ai.main_ai.solve_with_bundle) -> citation
-formatting (citations/formatter.py), the same lane Hoot's /ask uses for the
-answer itself. It deliberately does NOT go through server.py's /ask route or
+This module composes retrieve_for_question() -> the compact aside-refresher
+prompt (ai/prompts/apollo_aside.py, passed as ``system_prompt_override`` into
+ai.main_ai.solve_with_bundle in place of the standalone-chat tutor prompt) ->
+citation formatting (citations/formatter.py), the same retrieval + solve lane
+Hoot's /ask uses, but with a mid-teaching-session refresher voice instead of
+Hoot's headings/self-check chat structure. It deliberately does NOT go through
+server.py's /ask route or
 ai/router wiring (prepare_router_context, bundle cache, chat-turn
 persistence) — those are welded to Hoot chat sessions Apollo does not have.
 
@@ -231,6 +234,7 @@ async def answer_reference_question(
         parse_question,
         solve_with_bundle,
     )
+    from ai.prompts.apollo_aside import apollo_aside_prompt
     from config.contracts import ResearchBundle, ResearchMetadata
     from retrieval.context_packer import _summarize_snippets
     from retrieval.pipeline import retrieve_for_question
@@ -296,7 +300,9 @@ async def answer_reference_question(
     )
 
     parsed_task = parse_question(question)
-    solution = solve_with_bundle(parsed_task, bundle)
+    solution = solve_with_bundle(
+        parsed_task, bundle, system_prompt_override=apollo_aside_prompt()
+    )
     final = format_answer(solution, bundle, include_background=False)
 
     citations = _structured_citations(bundle, final.citations)

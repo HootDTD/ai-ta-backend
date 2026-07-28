@@ -8,7 +8,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/handlers/done
   - apollo/conversation/session-init
-last_verified: 2026-07-27
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -65,8 +65,13 @@ only persistence, written by the caller):
    `material_kind` cannot do this — authored-set problem and solution docs
    both index as `"other"` — so `ProvisioningRun` is the only durable
    problem/solution pairing signal.
-4. `ai.main_ai.parse_question` → `solve_with_bundle` (the tutor prompt lane,
-   `ai/prompts/tutor.py`, pinned `MAIN_MODEL`) → `format_answer`.
+4. `ai.main_ai.parse_question` → `solve_with_bundle(...,
+   system_prompt_override=apollo_aside_prompt())` → `format_answer`. The override
+   swaps Hoot's standalone-chat `tutor_prompt` for the compact aside refresher
+   (`ai/prompts/apollo_aside.py`, `rag-pipeline/prompts-answer`): a
+   mid-teaching-session lookup voice, no `## Answer`/Key-Takeaway/Check-Your-
+   Understanding structure, closing by handing the student back to teaching. Same
+   retrieval + solve lane and pinned `MAIN_MODEL`; only the system prompt differs.
 5. `_structured_citations` (a private copy of `server.py`'s
    `_structured_citations_from_bundle`, via `citations.formatter`) — kept
    local rather than imported from `server.py`, which this module must not

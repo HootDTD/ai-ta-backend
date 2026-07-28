@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ai.prompts.apollo_aside import apollo_aside_prompt
 from apollo.hoot_bridge.reference_answer import (
     ReferenceAsideResult,
     _document_id_of,
@@ -357,3 +358,62 @@ async def test_excluded_solution_snippets_never_reach_answer_llm():
     assert [snippet.id for snippet in answer_bundle.snippets] == ["safe"]
     assert answer_bundle.allowed_markers == ["[Safe p. 1]"]
     assert result.text == "A network effect grows with adoption."
+
+
+async def test_aside_answer_uses_the_compact_refresher_system_prompt():
+    """The aside lane must swap the tutor prompt for apollo_aside_prompt() —
+    the override is what reaches the solver, never the standalone-chat prompt."""
+    snippet = _snippet(snippet_id="safe", document_id=10, marker="[Safe p. 1]")
+    retrieval = AsyncMock(
+        return_value=([snippet], {"combined_query": "network effect", "hit_count_sem": 1})
+    )
+    solve = MagicMock(return_value=MagicMock())
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "ai.main_ai.check_question_relevance",
+                return_value={
+                    "relevance": "full",
+                    "on_topic_portion": "network effect",
+                    "off_topic_portion": "",
+                    "reason": "in scope",
+                },
+            )
+        )
+        stack.enter_context(
+            patch(
+                "ai.main_ai.extract_and_filter_keywords",
+                return_value=("context", [{"term": "network effect"}]),
+            )
+        )
+        stack.enter_context(patch("ai.main_ai.parse_question", return_value=MagicMock()))
+        stack.enter_context(patch("ai.main_ai.solve_with_bundle", new=solve))
+        stack.enter_context(
+            patch(
+                "ai.main_ai.format_answer",
+                return_value=FinalAnswer(text="A network effect.", citations=[]),
+            )
+        )
+        stack.enter_context(patch("retrieval.pipeline.retrieve_for_question", new=retrieval))
+        stack.enter_context(
+            patch(
+                "retrieval.context_packer._summarize_snippets",
+                return_value=([], [], [], {}),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "apollo.hoot_bridge.reference_answer._excluded_document_ids",
+                new=AsyncMock(return_value=set()),
+            )
+        )
+
+        await answer_reference_question(
+            db=MagicMock(),
+            course_id=9,
+            question="What is a network effect?",
+            problem=MagicMock(),
+        )
+
+    assert solve.call_args.kwargs["system_prompt_override"] == apollo_aside_prompt()

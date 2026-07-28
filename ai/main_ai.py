@@ -980,12 +980,18 @@ def _build_solution_from_data(data: Dict[str, Any]) -> ProposedSolution:
 def _prepare_solve_prompt(
     parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
     subject: str | None = None,
+    *,
+    system_prompt_override: str | None = None,
 ) -> Tuple[str, str, str]:
     """Run snippet scoring and build the solver prompt.
 
     Returns (system, user_base, model). All side effects (miniresponse files,
     provenance 'citation_rankings', debug dumps) are preserved exactly as in the
     original solve_with_bundle. Shared by the blocking and streaming solve paths.
+
+    ``system_prompt_override`` swaps the tutor system prompt for a caller-supplied
+    one (the Apollo "Ask Hoot" aside passes ``apollo_aside_prompt()``); ``None``
+    keeps ``tutor_prompt()`` so the standalone-chat solve path is byte-identical.
     """
     question_text = ""
     try:
@@ -1128,7 +1134,7 @@ def _prepare_solve_prompt(
         })
     scored_snippets.sort(key=lambda x: -x["score"])
 
-    system = tutor_prompt()
+    system = tutor_prompt() if system_prompt_override is None else system_prompt_override
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
 
@@ -1355,10 +1361,19 @@ def _prepare_solve_prompt(
 def solve_with_bundle(
     parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
     subject: str | None = None,
+    *,
+    system_prompt_override: str | None = None,
 ) -> ProposedSolution:
-    """Solve the parsed task using only information from the provided bundle."""
+    """Solve the parsed task using only information from the provided bundle.
+
+    ``system_prompt_override`` (keyword-only) swaps the tutor system prompt for a
+    caller-supplied one; ``None`` keeps ``tutor_prompt()`` byte-identical.
+    """
     client = _client()
-    system, user_base, model = _prepare_solve_prompt(parsed_task, bundle, hint, subject)
+    system, user_base, model = _prepare_solve_prompt(
+        parsed_task, bundle, hint, subject,
+        system_prompt_override=system_prompt_override,
+    )
 
     def _chat(msgs: List[dict]) -> dict:
         kwargs = {

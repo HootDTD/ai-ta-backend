@@ -4,10 +4,12 @@ description: The two answer-generation prompts — the product's never-hallucina
 owns:
   - ai/prompts/tutor.py
   - ai/prompts/score_and_answer_snippet.py
+  - ai/prompts/apollo_aside.py
 related:
   - rag-pipeline/main-ai
   - rag-pipeline/context-packer
-last_verified: 2026-07-25
+  - apollo/conversation/hoot-bridge-reference-answer
+last_verified: 2026-07-28
 stub: false
 ---
 
@@ -29,6 +31,14 @@ priorities (never hallucinate, always cite). Consumer: `ai/main_ai.py`.
   `score_and_answer_snippet_prompt()`: the merged per-snippet citation scorer +
   answer extractor (intent-aware scoring; base everything strictly on
   `snippet_text`) driving `main_ai._score_and_answer_snippet`.
+- `apollo_aside.py` — `APOLLO_ASIDE_PROMPT` + `apollo_aside_prompt()`: the compact
+  aside refresher for the INTERACTION4 "Ask Hoot" lookup, passed as
+  `solve_with_bundle(system_prompt_override=…)` by
+  [hoot-bridge-reference-answer](../apollo/conversation/hoot-bridge-reference-answer.md).
+  Keeps the tutor prompt's source-boundedness / citation / scope / LaTeX rules and
+  the `{not_relevant, steps}` JSON contract verbatim, but drops all standalone-chat
+  structure (headings, Check-Your-Understanding, Key-Takeaway, length tables) for
+  60-150-word plain prose that ends by handing the student back to teaching Apollo.
 
 ## Invariants & gotchas
 
