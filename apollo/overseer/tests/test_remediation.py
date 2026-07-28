@@ -6,7 +6,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from apollo.overseer.remediation import add_remediation_reviews, select_weak_topics
+from apollo.overseer.remediation import (
+    _as_mapping,
+    _citation_pointers,
+    _is_solution_bearing,
+    _pointer,
+    add_remediation_reviews,
+    select_weak_topics,
+)
 from apollo.overseer.topic_score import TopicCredit, TopicScoreResult
 from config.contracts import BundleSnippet
 
@@ -94,6 +101,110 @@ def test_weak_topic_selection_reuses_scorecard_bands_and_caps_at_three():
         "missing-1",
         "missing-2",
     ]
+
+
+def test_mapping_and_pointer_edge_cases():
+    raw = {
+        "id": "slides-chunk",
+        "page": False,
+        "citation_marker": "",
+        "metadata": {"kind": "slides"},
+    }
+
+    assert _as_mapping(raw) is raw
+    assert _pointer(raw) == {"doc_id": "slides-chunk", "label": "[Slides]", "page": None}
+    assert _is_solution_bearing({"id": "odd", "metadata": "not-a-mapping"}) is False
+
+    with pytest.raises(TypeError, match="BundleSnippet values or dictionaries"):
+        _as_mapping(object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="no document identifier"):
+        _pointer({"id": "", "page": 1, "metadata": {}})
+
+
+def test_pointer_kind_fallback_deduplicates_and_caps_results(monkeypatch):
+    monkeypatch.setattr("apollo.overseer.remediation.get_citation_label", lambda: "Course Pack")
+    snippets = [
+        {"id": "one", "page": 2, "citation_marker": "", "metadata": {"kind": "custom"}},
+        {"id": "one", "page": 2, "citation_marker": "", "metadata": {"kind": "custom"}},
+        {"id": "two", "page": 3, "citation_marker": "[Notes, p. 3]", "metadata": {}},
+        {"id": "three", "page": 4, "citation_marker": "[Notes, p. 4]", "metadata": {}},
+        {"id": "four", "page": 5, "citation_marker": "[Notes, p. 5]", "metadata": {}},
+    ]
+
+    assert _citation_pointers(snippets) == [
+        {"doc_id": "one", "label": "[Course Pack, p. 2]", "page": 2},
+        {"doc_id": "two", "label": "[Notes, p. 3]", "page": 3},
+        {"doc_id": "three", "label": "[Notes, p. 4]", "page": 4},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_weak_topics_returns_none():
+    assert (
+        await add_remediation_reviews(
+            db=_DB(),  # type: ignore[arg-type]
+            search_space_id=7,
+            topic_score=_score(_topic("covered", "covered")),
+            feedback=_feedback("covered"),
+            grounding_bundle=None,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("feedback", "message"),
+    [
+        ({}, "no topic_feedback list"),
+        ({"topic_feedback": ["invalid"]}, "invalid topic item"),
+    ],
+)
+async def test_invalid_feedback_shape_raises(feedback, message):
+    with pytest.raises(ValueError, match=message):
+        await add_remediation_reviews(
+            db=_DB(),  # type: ignore[arg-type]
+            search_space_id=7,
+            topic_score=_score(_topic("weak", "missing")),
+            feedback=feedback,
+            grounding_bundle=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_present_bundle_requires_snippets_list():
+    with pytest.raises(ValueError, match="grounding bundle has no snippets list"):
+        await add_remediation_reviews(
+            db=_DB(),  # type: ignore[arg-type]
+            search_space_id=7,
+            topic_score=_score(_topic("weak", "missing")),
+            feedback=_feedback("weak"),
+            grounding_bundle={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_fresh_retrieval_requires_feedback_for_every_weak_topic():
+    with pytest.raises(ValueError, match="weak topic has no structured feedback item"):
+        await add_remediation_reviews(
+            db=_DB(),  # type: ignore[arg-type]
+            search_space_id=7,
+            topic_score=_score(_topic("missing-from-feedback", "missing")),
+            feedback=_feedback("another-topic"),
+            grounding_bundle=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_bundle_decoration_requires_feedback_for_every_weak_topic():
+    with pytest.raises(ValueError, match="weak topic has no structured feedback item"):
+        await add_remediation_reviews(
+            db=_DB(),  # type: ignore[arg-type]
+            search_space_id=7,
+            topic_score=_score(_topic("missing-from-feedback", "missing")),
+            feedback=_feedback("another-topic"),
+            grounding_bundle={"snippets": [_snippet("chunk-1")]},
+        )
 
 
 @pytest.mark.asyncio

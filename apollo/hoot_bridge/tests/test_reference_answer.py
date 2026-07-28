@@ -14,8 +14,10 @@ import pytest
 
 from apollo.hoot_bridge.reference_answer import (
     ReferenceAsideResult,
+    _document_id_of,
     _excluded_document_ids,
     _filter_leaked_snippets,
+    _structured_citations,
     answer_reference_question,
     is_enabled,
 )
@@ -128,6 +130,61 @@ def test_interaction4_defaults_off(monkeypatch):
     assert is_enabled() is False
 
 
+def test_malformed_document_id_is_treated_as_unknown():
+    snippet = _snippet(snippet_id="bad-id", document_id=10, marker="[Textbook p. 1]")
+    snippet.metadata["document_id"] = "not-an-integer"
+
+    assert _document_id_of(snippet) is None
+    assert _filter_leaked_snippets([snippet], {10}) == [snippet]
+
+
+def test_structured_citations_maps_only_used_markers():
+    used = _snippet(snippet_id="used", document_id=10, marker="[Textbook p. 1]")
+    used.metadata.update(
+        {
+            "bbox": [1, 2, 3, 4],
+            "ocr_confidence": 0.98,
+            "ocr_provider": "test-ocr",
+            "page_asset": "page-1.png",
+            "raw_latex": "x^2",
+            "teacher_upload_id": 55,
+            "week": 3,
+        }
+    )
+    unused = _snippet(snippet_id="unused", document_id=11, marker="[Textbook p. 2]")
+    formatter = MagicMock(return_value=("formatted", [{"label": "Textbook p. 1"}]))
+
+    with patch("citations.formatter.format_citations", new=formatter):
+        citations = _structured_citations(
+            SimpleNamespace(snippets=[used, unused]),
+            [" [Textbook p. 1] ", None],  # type: ignore[list-item]
+        )
+
+    assert citations == [{"label": "Textbook p. 1"}]
+    entries, id_to_row, store_meta = formatter.call_args.args
+    assert entries == [{"id": "used", "snippet": used}]
+    assert id_to_row["used"] == {
+        "store_key": "55",
+        "store_kind": "other",
+        "source_path": "document-10.pdf",
+        "page": 1,
+        "bbox": [1, 2, 3, 4],
+    }
+    assert store_meta["55"] == {
+        "kind": "other",
+        "week": 3,
+        "average_confidence": 0.98,
+        "ocr_provider": "test-ocr",
+        "teacher_upload_id": 55,
+        "page_asset": "page-1.png",
+        "raw_latex": "x^2",
+    }
+
+
+def test_structured_citations_ignores_non_string_markers():
+    assert _structured_citations(SimpleNamespace(snippets=[]), [None, "  "]) == []  # type: ignore[list-item]
+
+
 async def test_keyword_extraction_failure_is_swallowed():
     """Keyword hints are optional; retrieval still runs with an empty list."""
     retrieval = AsyncMock(return_value=([], {"combined_query": "network effect"}))
@@ -171,6 +228,69 @@ async def test_keyword_extraction_failure_is_swallowed():
         citations=[],
     )
     assert retrieval.await_args.kwargs["keywords"] == []
+
+
+async def test_partial_relevance_uses_on_topic_portion_and_normalizes_keywords():
+    extraction = MagicMock(
+        return_value=(
+            "context",
+            [
+                " network effect ",
+                {"keyword": "adoption"},
+                {"name": "value"},
+                {"term": "  "},
+                42,
+            ],
+        )
+    )
+    retrieval = AsyncMock(return_value=([], {}))
+
+    with (
+        patch(
+            "ai.main_ai.check_question_relevance",
+            return_value={
+                "relevance": "partial",
+                "on_topic_portion": "How do network effects work?",
+            },
+        ),
+        patch("ai.main_ai.extract_and_filter_keywords", new=extraction),
+        patch("retrieval.pipeline.retrieve_for_question", new=retrieval),
+        patch(
+            "apollo.hoot_bridge.reference_answer._excluded_document_ids",
+            new=AsyncMock(return_value=set()),
+        ),
+    ):
+        result = await answer_reference_question(
+            db=MagicMock(),
+            course_id=9,
+            question="How do network effects work, and what is for lunch?",
+            problem=MagicMock(),
+        )
+
+    assert result.text == "Not found in the approved materials."
+    extraction.assert_called_once_with("How do network effects work?")
+    assert retrieval.await_args.kwargs["keywords"] == ["network effect", "adoption", "value"]
+
+
+async def test_retrieval_errors_propagate_to_the_caller():
+    with (
+        patch(
+            "ai.main_ai.check_question_relevance",
+            return_value={"relevance": "full"},
+        ),
+        patch("ai.main_ai.extract_and_filter_keywords", return_value=("", [])),
+        patch(
+            "retrieval.pipeline.retrieve_for_question",
+            new=AsyncMock(side_effect=RuntimeError("retrieval unavailable")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="retrieval unavailable"):
+            await answer_reference_question(
+                db=MagicMock(),
+                course_id=9,
+                question="What is a network effect?",
+                problem=MagicMock(),
+            )
 
 
 async def test_excluded_solution_snippets_never_reach_answer_llm():
