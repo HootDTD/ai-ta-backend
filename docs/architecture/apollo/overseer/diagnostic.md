@@ -10,7 +10,7 @@ related:
   - apollo/overseer/topic-score
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-07-26
+last_verified: 2026-07-28
 stub: false
 ---
 

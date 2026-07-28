@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -134,7 +134,8 @@ async def _excluded_document_ids(db: AsyncSession, *, course_id: int, problem: P
     if problem_database_id is not None:
         problem_row = await db.get(ProblemRow, problem_database_id)
         if problem_row is not None:
-            problem_document_id = (problem_row.provenance or {}).get("document_id")
+            provenance = cast("dict[str, Any]", problem_row.provenance or {})
+            problem_document_id = provenance.get("document_id")
             if problem_document_id is not None:
                 paired = (
                     await db.execute(

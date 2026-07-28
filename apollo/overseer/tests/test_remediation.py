@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from typing import Literal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -26,7 +27,12 @@ class _DB:
         yield
 
 
-def _topic(key: str, status: str, *, display_name: str | None = None) -> TopicCredit:
+def _topic(
+    key: str,
+    status: Literal["covered", "partial", "missing"],
+    *,
+    display_name: str | None = None,
+) -> TopicCredit:
     credits = {"covered": 1.0, "partial": 0.4, "missing": 0.0}
     return TopicCredit(
         canonical_key=key,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from typing import Any
@@ -64,7 +65,8 @@ def _is_solution_bearing(snippet: BundleSnippet | dict[str, Any]) -> bool:
 
 def _pointer(snippet: BundleSnippet | dict[str, Any]) -> dict[str, Any]:
     item = _as_mapping(snippet)
-    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    raw_metadata = item.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     page = item.get("page")
     page = page if isinstance(page, int) and not isinstance(page, bool) and page > 0 else None
 
@@ -86,7 +88,7 @@ def _pointer(snippet: BundleSnippet | dict[str, Any]) -> dict[str, Any]:
 
 
 def _citation_pointers(
-    snippets: list[BundleSnippet | dict[str, Any]],
+    snippets: Sequence[BundleSnippet | dict[str, Any]],
 ) -> list[dict[str, Any]]:
     pointers: list[dict[str, Any]] = []
     seen: set[tuple[Any, str, int | None]] = set()
