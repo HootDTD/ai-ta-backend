@@ -153,6 +153,7 @@ def test_structured_success_returns_feedback_and_flattened_narrative(mock_client
                 "canonical_key": "p1",
                 "note": "Make the continuity step explicit.",
                 "quote": "I applied continuity.",
+                "hoot_assisted": False,
             }
         ],
         "recap": [],

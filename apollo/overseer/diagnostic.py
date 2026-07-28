@@ -291,6 +291,11 @@ def _parse_topic_feedback(
                 "canonical_key": canonical_key,
                 "note": sanitize_narrative(note, canonical_keys=ledger_keys),
                 "quote": gated_quote,
+                # INTERACTION5: additive, code-injected from the ledger (never the
+                # LLM) so the flat Hoot-assist cap can't be argued away by prose.
+                # False when the topic was not Hoot-assisted; absent-safe for the
+                # pre-feature payload shape (survives remediation's deepcopy).
+                "hoot_assisted": bool(getattr(topic, "hoot_assisted", False)),
             }
         )
         received_keys.append(canonical_key)

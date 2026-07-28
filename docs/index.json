@@ -2,7 +2,7 @@
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
   "generated_at": "2026-07-28",
-  "repo": "ai-ta-backend",
+  "repo": "aside-tutor",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -18,6 +18,7 @@
     "ai/main_ai.py": "rag-pipeline/main-ai",
     "ai/orchestrator.py": "rag-pipeline/orchestrator",
     "ai/prompts/__init__.py": "rag-pipeline/prompts-keyword",
+    "ai/prompts/apollo_aside.py": "rag-pipeline/prompts-answer",
     "ai/prompts/concept_extraction.py": "rag-pipeline/prompts-keyword",
     "ai/prompts/extract_keywords.py": "rag-pipeline/prompts-keyword",
     "ai/prompts/general_term_filter.py": "rag-pipeline/prompts-keyword",
@@ -84,6 +85,7 @@
     "apollo/ontology/graph.py": "apollo/ontology/graph",
     "apollo/ontology/nodes.py": "apollo/ontology/nodes",
     "apollo/overseer/__init__.py": "apollo/overseer/transcript-coverage",
+    "apollo/overseer/aside_penalty.py": "apollo/overseer/aside-penalty",
     "apollo/overseer/concept_inference.py": "apollo/overseer/concept-inference",
     "apollo/overseer/coverage.py": "apollo/overseer/coverage",
     "apollo/overseer/coverage_contract.py": "apollo/overseer/transcript-coverage",
@@ -733,6 +735,14 @@
       "kind": "router",
       "description": "Router for Apollo's grading, scoring, narrative, XP, and selection brains \u2014 home of the grading-path invariants.",
       "owns": []
+    },
+    "apollo/overseer/aside-penalty": {
+      "path": "docs/architecture/apollo/overseer/aside-penalty.md",
+      "kind": "leaf",
+      "description": "INTERACTION5 pure credit-cap transform \u2014 flat-caps rubric nodes a Hoot lookup aside pre-explained, before the grade fans out.",
+      "owns": [
+        "apollo/overseer/aside_penalty.py"
+      ]
     },
     "apollo/overseer/concept-inference": {
       "path": "docs/architecture/apollo/overseer/concept-inference.md",
@@ -1802,7 +1812,8 @@
       "description": "The two answer-generation prompts \u2014 the product's never-hallucinate / always-cite contract.",
       "owns": [
         "ai/prompts/tutor.py",
-        "ai/prompts/score_and_answer_snippet.py"
+        "ai/prompts/score_and_answer_snippet.py",
+        "ai/prompts/apollo_aside.py"
       ]
     },
     "rag-pipeline/prompts-keyword": {
@@ -2039,6 +2050,7 @@
     "apollo/overseer/_index": {
       "path": "docs/architecture/apollo/overseer/_index.md",
       "children": [
+        "apollo/overseer/aside-penalty",
         "apollo/overseer/concept-inference",
         "apollo/overseer/coverage",
         "apollo/overseer/diagnostic",
