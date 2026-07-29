@@ -1,12 +1,17 @@
-"""Drift guard: app-layer allowlists agree with migration 026, plus file-level
-sanity on the migration text.
+"""Drift guard: app-layer allowlists agree with migration 026 (frozen legacy
+chain — file-level DDL sanity only, per DB-03), plus ENTITY_KINDS agreement
+with the DB-13 target DDL. migration 026 is FROZEN (database/migrations/
+README.md); it is no longer the schema authority for ENTITY_KINDS — see
+supabase/migrations/20260717035041_create_app_schema_v1.sql.
 
 Mirrors ``test_attempt_result_values.py`` (migration<->model agreement, no DB
 needed). ``ENTITY_KINDS`` is the one tuple tied to a SQL CHECK (on
-``apollo_kg_entities.kind``) and is asserted equal to the migration's set.
-``MASTERY_EVENT_KINDS`` / ``FINDING_KINDS`` are OPEN enums (no SQL CHECK) —
-documentation tuples, NOT asserted against the SQL (asserting an open enum
-would be wrong).
+``app.learner_entities.kind`` in the target DDL — migration 026's frozen
+``apollo_kg_entities.kind`` CHECK still admits 'misconception', which DB-13/A6
+intentionally dropped from the target) and is asserted equal to the target
+migration's set. ``MASTERY_EVENT_KINDS`` / ``FINDING_KINDS`` are OPEN enums (no
+SQL CHECK) — documentation tuples, NOT asserted against the SQL (asserting an
+open enum would be wrong).
 """
 
 from __future__ import annotations
@@ -22,6 +27,9 @@ from apollo.persistence.models import (
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "database" / "migrations"
 _MIGRATION_026 = _MIGRATIONS_DIR / "026_apollo_learner_model.sql"
+
+_SUPABASE_MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "supabase" / "migrations"
+_APP_SCHEMA_V1 = _SUPABASE_MIGRATIONS_DIR / "20260717035041_create_app_schema_v1.sql"
 
 _NEW_TABLES = (
     "apollo_kg_entities",
@@ -48,11 +56,19 @@ def _migration_sql_only() -> str:
     return "\n".join(lines)
 
 
-def _kind_allowlist() -> set[str]:
-    """Values inside `kind IN ( ... )` of apollo_kg_entities in migration 026."""
-    sql = _migration_text()
-    match = re.search(r"kind\s+IN\s*\(([^)]*)\)", sql, re.IGNORECASE)
-    assert match, "could not find `kind IN (...)` in migration 026"
+def _target_entity_kind_allowlist() -> set[str]:
+    """Values inside app.learner_entities' ``kind IN ( ... )`` CHECK in the
+    DB-13 target DDL. Anchored on the constraint name
+    (``learner_entities__kind__check``) since create_app_schema_v1.sql has
+    several unrelated ``kind IN (...)`` CHECKs (uploads, chat_messages,
+    provisioning_runs)."""
+    sql = _APP_SCHEMA_V1.read_text(encoding="utf-8")
+    match = re.search(
+        r"learner_entities__kind__check\s*CHECK\s*\(kind\s+IN\s*\(([^)]*)\)\)",
+        sql,
+        re.IGNORECASE,
+    )
+    assert match, "could not find learner_entities__kind__check in create_app_schema_v1.sql"
     return set(re.findall(r"'([^']+)'", match.group(1)))
 
 
@@ -60,10 +76,11 @@ def test_migration_026_file_exists():
     assert _MIGRATION_026.exists(), f"missing migration file: {_MIGRATION_026}"
 
 
-def test_entity_kinds_match_migration_check():
-    assert _kind_allowlist() == set(ENTITY_KINDS), (
-        "migration 026 kind CHECK and models.ENTITY_KINDS disagree: "
-        f"migration={sorted(_kind_allowlist())} model={sorted(ENTITY_KINDS)}"
+def test_entity_kinds_match_target_ddl_check():
+    assert _target_entity_kind_allowlist() == set(ENTITY_KINDS), (
+        "create_app_schema_v1.sql learner_entities__kind__check and "
+        "models.ENTITY_KINDS disagree: "
+        f"migration={sorted(_target_entity_kind_allowlist())} model={sorted(ENTITY_KINDS)}"
     )
 
 

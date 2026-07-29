@@ -1,7 +1,6 @@
 """DB-backed curriculum loader (WU-3D §8A runtime cutover).
 
-The SELECTION path reads concepts from the ``apollo_concepts`` rows, scoped to a
-course via ``apollo_subjects.search_space_id``, instead of globbing the
+The selection path reads ``app.concepts`` directly by ``course_id`` instead of globbing the
 filesystem registry. The filesystem layout under ``apollo/subjects/<s>/concepts``
 remains the AUTHORING source only — ``scripts/seed_apollo_concept_registry.py``
 converts it to rows; this module is the runtime mirror of that read.
@@ -22,7 +21,7 @@ from pathlib import Path
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, ConceptProblem, Subject
+from apollo.persistence.models import Concept, Problem
 from apollo.subjects import (
     CanonicalSymbols,
     ConceptDefinition,
@@ -48,7 +47,7 @@ class ConceptRow:
 
 
 class ConceptNotFoundError(LookupError):
-    """Raised when a concept_id has no apollo_concepts row (e.g. deleted course).
+    """Raised when a scoped concept row does not exist.
 
     Internal error — deliberately NOT registered as an HTTP handler. It only
     fires when a session's concept_id points at a deleted concept (which the
@@ -57,16 +56,12 @@ class ConceptNotFoundError(LookupError):
 
 
 async def list_course_concepts(db: AsyncSession, *, search_space_id: int) -> list[ConceptRow]:
-    """The course's TEACHABLE concepts, scoped via ``apollo_subjects.search_space_id``.
-
-    JOINs ``apollo_concepts`` to ``apollo_subjects`` on ``subject_id`` and filters
-    by the course's ``search_space_id``, ordered by ``apollo_concepts.id``
-    (deterministic). Returns ``[]`` when the course has no curriculum.
+    """The course's teachable concepts, read directly by target ``course_id``.
 
     A correlated ``EXISTS`` additionally drops any concept with NO teachable
     problem, using the EXACT predicate the downstream pool query
     (``overseer.problem_selector.list_problems_for_concept``) applies —
-    ``ConceptProblem.tier == 2 AND quarantined_at IS NULL``. This keeps the
+    ``Problem.tier == 2 AND quarantined_at IS NULL``. This keeps the
     inference candidate set and the selectable pool in lockstep: without it an
     autoprovisioned decoy concept (an empty ``provisional.inventory`` /
     tier-1-only / fully-quarantined concept) would be a candidate that
@@ -76,13 +71,13 @@ async def list_course_concepts(db: AsyncSession, *, search_space_id: int) -> lis
     """
     result = await db.execute(
         select(Concept.id, Concept.slug, Concept.display_name)
-        .join(Subject, Concept.subject_id == Subject.id)
         .where(
-            Subject.search_space_id == search_space_id,
+            Concept.course_id == search_space_id,
             exists().where(
-                ConceptProblem.concept_id == Concept.id,
-                ConceptProblem.tier == 2,
-                ConceptProblem.quarantined_at.is_(None),
+                Problem.concept_id == Concept.id,
+                Problem.course_id == search_space_id,
+                Problem.tier == 2,
+                Problem.quarantined_at.is_(None),
             ),
         )
         .order_by(Concept.id)
@@ -118,9 +113,8 @@ async def list_registered_concepts(
 
     result = await db.execute(
         select(Concept.id, Concept.slug, Concept.display_name, Concept.description)
-        .join(Subject, Concept.subject_id == Subject.id)
         .where(
-            Subject.search_space_id == search_space_id,
+            Concept.course_id == search_space_id,
             Concept.slug != PROVISIONAL_CONCEPT_SLUG,
         )
         .order_by(Concept.id)
@@ -136,8 +130,10 @@ async def list_registered_concepts(
     ]
 
 
-async def load_concept_definition(db: AsyncSession, *, concept_id: int) -> ConceptDefinition:
-    """Build a ``ConceptDefinition`` from the ``apollo_concepts`` row's columns.
+async def load_concept_definition(
+    db: AsyncSession, *, concept_id: int, search_space_id: int
+) -> ConceptDefinition:
+    """Build a ``ConceptDefinition`` from a course-scoped target concept row.
 
     Re-validates the JSONB/TEXT columns through the same pydantic models
     ``load_concept`` used. ``subject_id``/``concept_id`` fields are set to the
@@ -146,24 +142,33 @@ async def load_concept_definition(db: AsyncSession, *, concept_id: int) -> Conce
     ``ConceptNotFoundError`` if the row is absent.
     """
     concept = (
-        await db.execute(select(Concept).where(Concept.id == concept_id))
+        await db.execute(
+            select(Concept).where(
+                Concept.id == concept_id,
+                Concept.course_id == search_space_id,
+            )
+        )
     ).scalar_one_or_none()
     if concept is None:
-        raise ConceptNotFoundError(f"no apollo_concepts row for concept_id={concept_id}")
+        raise ConceptNotFoundError(
+            f"no scoped concept row for course_id={search_space_id}, concept_id={concept_id}"
+        )
 
-    subject = (
-        await db.execute(select(Subject).where(Subject.id == concept.subject_id))
-    ).scalar_one_or_none()
-    subject_slug = str(subject.slug) if subject is not None else str(concept.subject_id)
+    canonical_symbols = {
+        **dict(concept.symbol_metadata or {}),
+        "symbols": list(concept.canonical_symbols or []),
+    }
 
     return ConceptDefinition(
-        subject_id=subject_slug,
+        subject_id=str(concept.subject_slug),
         concept_id=str(concept.slug),
-        canonical_symbols=CanonicalSymbols.model_validate(concept.canonical_symbols),
+        canonical_symbols=CanonicalSymbols.model_validate(canonical_symbols),
         normalization_map=dict(concept.normalization_map),
         parser_prompt_template=str(concept.parser_prompt_template),
-        solver_hints=SolverHints.model_validate(concept.solver_hints),
-        forbidden_named_laws=ForbiddenNamedLaws.model_validate(concept.forbidden_named_laws),
+        solver_hints=SolverHints.model_validate(concept.solver_config),
+        forbidden_named_laws=ForbiddenNamedLaws(
+            named_laws=list(concept.forbidden_named_laws or [])
+        ),
         problems_dir=_NO_FILESYSTEM_PROBLEMS_DIR,
     )
 

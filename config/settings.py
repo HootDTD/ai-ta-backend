@@ -1,22 +1,20 @@
-from __future__ import annotations
-
 """Lightweight runtime configuration helpers."""
 
-import os
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
+from __future__ import annotations
 
+import os
+from dataclasses import dataclass
+from pathlib import Path
 
 _WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0", "off", "false", "no"}
 _PRIORITY = {"default": 0, "meta": 1, "env": 2, "cli": 3}
 
-_SUBJECT_NAME: Optional[str] = None
+_SUBJECT_NAME: str | None = None
 _SUBJECT_SOURCE: str = "default"
 _SUBJECT_PRIORITY: int = -1
 _SUBJECT_LOGGED = False
-_CITATION_LABEL: Optional[str] = None
-_RUNTIME_DIR: Optional[Path] = None
+_CITATION_LABEL: str | None = None
+_RUNTIME_DIR: Path | None = None
 
 
 def _sanitize_subject(name: str | None) -> str:
@@ -153,10 +151,10 @@ class RequestConfig:
     subject_source: str = "default"
     subject_priority: int = -1
     citation_label: str = "Textbook"
-    runtime_dir: Optional[Path] = None
+    runtime_dir: Path | None = None
 
     @classmethod
-    def from_env(cls) -> "RequestConfig":
+    def from_env(cls) -> RequestConfig:
         """Create a config seeded from environment variables."""
         cfg = cls()
 
@@ -199,11 +197,57 @@ class RequestConfig:
 # pgvector / SurfSense integration settings
 # ---------------------------------------------------------------------------
 
+
 def use_pgvector_retrieval() -> bool:
     """Return True when the new pgvector retrieval path is enabled."""
-    return os.getenv("USE_PGVECTOR_RETRIEVAL", "false").lower() not in {
-        "0", "false", "off", "no"
-    }
+    return os.getenv("USE_PGVECTOR_RETRIEVAL", "false").lower() not in {"0", "false", "off", "no"}
+
+
+def interaction1_enabled() -> bool:
+    """Return True when session-scoped Apollo grounding is enabled."""
+    return os.getenv("INTERACTION1", "false").lower() not in {"0", "false", "off", "no"}
+
+
+def interaction2_enabled() -> bool:
+    """Return True when the Apollo grading path may consume course grounding.
+
+    Independent of ``INTERACTION1`` (which only decides whether a session's
+    grounding bundle is BUILT): a bundle may exist and go unused, and this flag
+    may be on while every session's bundle is NULL. Default OFF — with it off
+    the adjudication and narrative prompts are byte-identical to the pre-feature
+    build.
+    """
+    return os.getenv("INTERACTION2", "false").lower() not in {"0", "false", "off", "no"}
+
+
+def interaction3_enabled() -> bool:
+    """Return True when Apollo Done remediation citations are enabled."""
+    return os.getenv("INTERACTION3", "false").lower() not in {"0", "false", "off", "no"}
+
+
+def interaction5_enabled() -> bool:
+    """Return True when the Apollo Hoot-assist grading cap is enabled.
+
+    INTERACTION5 (default OFF): when on — and the problem's concept passes
+    ``interaction_allowed_for_concept`` at the Done call site — the grading
+    pipeline credit-caps every rubric node a Hoot lookup aside explained for the
+    student (flat cap, no earn-back). Off, or no aside was used, grading is
+    byte-identical to the pre-feature path. Mirrors the ``interaction1/2/3``
+    truthy parsing exactly.
+    """
+    return os.getenv("INTERACTION5", "false").lower() not in {"0", "false", "off", "no"}
+
+
+def interaction_concepts() -> frozenset[str]:
+    """Return the normalized concept slugs allowed to use interaction features."""
+    raw = os.getenv("INTERACTION_CONCEPTS", "")
+    return frozenset(slug for item in raw.split(",") if (slug := item.strip().casefold()))
+
+
+def interaction_allowed_for_concept(slug: str | None) -> bool:
+    """Return True when interaction features are unrestricted or allow this concept."""
+    allowlist = interaction_concepts()
+    return not allowlist or (slug or "").casefold() in allowlist
 
 
 def get_embedding_dim() -> int:
@@ -225,6 +269,7 @@ def get_supabase_db_url() -> str:
 # Neo4j (ApolloV3 KG layer)
 # ---------------------------------------------------------------------------
 
+
 def get_neo4j_uri() -> str:
     return os.getenv("NEO4J_URI", "")
 
@@ -243,103 +288,19 @@ def get_neo4j_database() -> str:
 
 def neo4j_configured() -> bool:
     """True when all four NEO4J_* vars are present (used by health checks/tests)."""
-    return all([
-        get_neo4j_uri(),
-        get_neo4j_username(),
-        get_neo4j_password(),
-        get_neo4j_database(),
-    ])
-
-
-# ---------------------------------------------------------------------------
-# Hoot Q&A surface (Apollo-only deployments)
-# ---------------------------------------------------------------------------
-
-
-def hoot_qa_enabled() -> bool:
-    """DEFAULT-ON kill switch ``HOOT_QA_ENABLED`` for the Hoot Q&A surface.
-
-    ``HOOT_QA_ENABLED=0`` turns the retrieval Q&A pipeline off at the HTTP
-    boundary (``POST /ask`` 403s) for Apollo-only deployments — the MGMT 38200
-    pilot runs prod with Hoot off while staging keeps it on. Everything else
-    (teacher uploads, indexing, Apollo) stays live: course materials still
-    feed Apollo provisioning. Read per-request so tests and Railway env
-    changes take effect without module reloads.
-    """
-    return (os.getenv("HOOT_QA_ENABLED", "1") or "1").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Apollo NLI resolution flags
-# ---------------------------------------------------------------------------
-
-
-def apollo_nli_misc_positive_certify() -> bool:
-    """DEFAULT-OFF flag ``APOLLO_NLI_MISC_POSITIVE_CERTIFY``.
-
-    When ON, the NLI resolution tier POSITIVELY resolves a student utterance to
-    the ``misc.*`` candidate whose hypothesis it entails at/above the
-    misconception-veto threshold (instead of only vetoing reference credit and
-    returning no match). Reference credit stays blocked in that case regardless
-    of the flag — this only adds the positive resolution. Unset or any
-    non-truthy value means OFF (byte-identical veto-only behavior); truthy is
-    ``1``/``true``/``yes`` (same acceptance set as ``APOLLO_NLI_ENABLED``).
-    Flipping this ON is a grading-behavior change — a human decision."""
-    raw = os.getenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY")
-    if raw is None:
-        return False
-    return raw.strip().lower() in ("1", "true", "yes")
-
-
-def apollo_abstention_composite_enabled() -> bool:
-    """DEFAULT-OFF flag ``APOLLO_ABSTENTION_COMPOSITE`` (spec §10).
-
-    When ON, the graph-grader abstention gate is replaced by the CONTENT-based
-    composite signal: grade iff the resolver credited >=
-    :func:`apollo_composite_coverage_min` of the problem's expected reference
-    set (``GradeResult.node_coverage_score`` — already reference-denominated),
-    regardless of ``unresolved_rate``/``normalization_confidence`` (the volume
-    signals the §10 decision memo proved cannot separate strong attempts from
-    misconception controls). Detected contradiction findings are recorded in
-    the artifact's ``abstention.composite`` block for audit but do NOT force
-    abstention on their own — a detected misconception is informative
-    feedback, not grading uncertainty.
-
-    Unset or any non-truthy value means OFF (byte-identical to the existing
-    ``unresolved_rate``/``normalization_confidence`` gates); truthy is
-    ``1``/``true``/``yes`` (same acceptance set as the other ``APOLLO_*``
-    flags). Flipping this ON is a grading-behavior change — a human decision."""
-    raw = os.getenv("APOLLO_ABSTENTION_COMPOSITE")
-    if raw is None:
-        return False
-    return raw.strip().lower() in ("1", "true", "yes")
-
-
-def apollo_composite_coverage_min() -> float:
-    """The §10 composite gate's coverage threshold (``APOLLO_COMPOSITE_COVERAGE_MIN``).
-
-    Grade iff ``node_coverage_score >= this value`` when
-    :func:`apollo_abstention_composite_enabled` is True. Default ``0.6``
-    (spec §10); malformed/missing values fall back to the default."""
-    raw = os.getenv("APOLLO_COMPOSITE_COVERAGE_MIN")
-    if raw is None:
-        return 0.6
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return 0.6
+    return all(
+        [
+            get_neo4j_uri(),
+            get_neo4j_username(),
+            get_neo4j_password(),
+            get_neo4j_database(),
+        ]
+    )
 
 
 def rerankers_enabled() -> bool:
     """Return True when the optional reranking step is active."""
-    return os.getenv("RERANKERS_ENABLED", "false").lower() not in {
-        "0", "false", "off", "no"
-    }
+    return os.getenv("RERANKERS_ENABLED", "false").lower() not in {"0", "false", "off", "no"}
 
 
 def get_reranker_model() -> str:
@@ -356,18 +317,17 @@ __all__ = [
     "RequestConfig",
     # pgvector settings
     "use_pgvector_retrieval",
+    "interaction1_enabled",
+    "interaction2_enabled",
+    "interaction3_enabled",
+    "interaction5_enabled",
+    "interaction_concepts",
+    "interaction_allowed_for_concept",
     "get_embedding_dim",
     "get_embedding_model",
     "get_supabase_db_url",
     "rerankers_enabled",
     "get_reranker_model",
-    # Apollo NLI resolution flags
-    "apollo_nli_misc_positive_certify",
-    # Apollo abstention composite gate (spec §10)
-    "apollo_abstention_composite_enabled",
-    "apollo_composite_coverage_min",
-    # Hoot Q&A surface (Apollo-only deployments)
-    "hoot_qa_enabled",
     # Neo4j (ApolloV3)
     "get_neo4j_uri",
     "get_neo4j_username",

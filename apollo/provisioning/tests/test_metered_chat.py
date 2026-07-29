@@ -5,7 +5,7 @@ The metered client is the ONLY programmatic token signal in the §8B pipeline
 it). These tests inject a deterministic fake OpenAI client whose
 ``chat.completions.create`` returns a fake response carrying ``usage`` +
 ``choices[0].message.content``, and a plain ``_FakeIngestRun`` standing in for
-the ``apollo_ingest_runs`` ORM row. They pin: content pass-through, cheap/main
+the content-ingest ORM row. They pin: content pass-through, cheap/main
 model routing + explicit override, additive ``+=`` accumulation of
 calls/tokens/cost onto the run row, the ``scrape_chat_fn`` positional adapter,
 the cumulative-ceiling ``CostBudgetExceeded`` raise (counts accrued BEFORE the
@@ -77,7 +77,7 @@ class _FakeClient:
 
 @dataclass
 class _FakeIngestRun:
-    """A plain stand-in for the apollo_ingest_runs ORM row (the five aggregates)."""
+    """A plain stand-in for the content-ingest ORM row (the five aggregates)."""
 
     id: int = 1
     llm_calls: int = 0
@@ -117,10 +117,10 @@ def test_cheap_routes_to_mini_model(monkeypatch):
 
 
 def test_main_routes_to_main_model(monkeypatch):
-    monkeypatch.delenv("MAIN_MODEL", raising=False)
+    monkeypatch.setattr("config.models.MAIN_MODEL", "gpt-main-sentinel")
     metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
     metered.main(purpose="p", messages=[{"role": "user", "content": "x"}])
-    assert client.calls[0]["model"] == "gpt-4o"
+    assert client.calls[0]["model"] == "gpt-main-sentinel"
 
 
 def test_explicit_model_overrides_routing():
@@ -304,7 +304,7 @@ def test_cheap_uses_env_cheap_model_override(monkeypatch):
 # Reasoning effort (reversed-provisioning matcher/derivation retries).
 # --------------------------------------------------------------------------- #
 def test_main_reasoning_effort_sends_effort_and_omits_temperature(monkeypatch):
-    monkeypatch.setenv("MAIN_MODEL", "gpt-5.1")
+    monkeypatch.setattr("config.models.MAIN_MODEL", "gpt-5.1")
     metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
     metered.main(
         purpose="p",
@@ -336,7 +336,7 @@ def test_main_without_effort_is_unchanged():
 
 
 def test_reasoning_effort_ignored_for_non_reasoning_model(monkeypatch):
-    monkeypatch.delenv("MAIN_MODEL", raising=False)  # default gpt-4o
+    monkeypatch.setattr("config.models.MAIN_MODEL", "gpt-4o")  # non-reasoning model
     metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
     metered.main(
         purpose="p",
@@ -349,7 +349,7 @@ def test_reasoning_effort_ignored_for_non_reasoning_model(monkeypatch):
 
 
 def test_reasoning_effort_sent_for_gpt5(monkeypatch):
-    monkeypatch.setenv("MAIN_MODEL", "gpt-5.1")
+    monkeypatch.setattr("config.models.MAIN_MODEL", "gpt-5.1")
     metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
     metered.main(
         purpose="p",

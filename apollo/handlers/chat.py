@@ -16,89 +16,74 @@ explicit handlers for restart/next/return-to-hoot.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.agent.apollo_llm import draft_reply
-from apollo.clarification import CandidateEmbeddingCache, default_embedder
-from apollo.clarification.candidate_assembly import load_problem_candidates
-from apollo.clarification.leak_guard import guard_clarification_reply
-from apollo.clarification.rescorer import default_clarification_judge
-from apollo.clarification.resolve_turn import resolve_pending_clarifications
-from apollo.clarification.turn import run_clarification_detection
 from apollo.errors import ParserCouldNotExtractError
-from apollo.handlers.done_inputs import _find_problem_payload
-from apollo.handlers.history import load_windowed_history
 from apollo.handlers.intent import (
     INTENT_CONFIDENCE_THRESHOLD,
     classify_intent,
     confirmation_prompt_for,
     detect_confirmation,
 )
-from apollo.knowledge_graph.store import _EMPTY_SUMMARY, KGStore
+from apollo.hoot_bridge.reference_answer import (
+    ASIDE_COUNT_SESSION_METADATA_KEY,
+    ASIDE_MESSAGE_INTENT_TAG,
+    MAX_ASIDES_PER_SESSION,
+    MESSAGE_KIND_REFERENCE_ASIDE,
+    answer_reference_question,
+)
+from apollo.hoot_bridge.reference_answer import (
+    is_enabled as _interaction4_enabled,
+)
+from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
-from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
+from apollo.persistence.models import ProblemAttempt, TutoringMessage, TutoringSession
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import plan_next_question
 from apollo.subjects.curriculum_db import load_concept_definition
+from config.settings import interaction_allowed_for_concept
 
 _LOG = logging.getLogger(__name__)
 
-_CLARIFICATION_CACHE = CandidateEmbeddingCache()
-
-# The live clarification loop flag (default OFF everywhere, incl. prod + staging). When OFF,
-# handle_chat is byte-identical to the pre-clarification path: the block is skipped, no
-# extra LLM/embedding round-trips, draft_reply gets clarification_hints=None. Flip ON only
-# after rollout/cost review (same posture as APOLLO_GRAPH_SIM_* in done.py).
-_CLARIFICATION_ENABLED_FLAG: str = "APOLLO_CLARIFICATION_ENABLED"
-_UNIFIED_QUESTIONING_FLAG: str = "APOLLO_UNIFIED_QUESTIONING_ENABLED"
-# Per-turn NLI node budget: when more than this many nodes are parsed in a
-# single utterance, NLI is skipped for that turn (degrades to lexical-only).
-# Synchronous model inference runs per residual node, so uncapped utterances
-# can block the event loop under load.  Raise the cap only after profiling.
-_NLI_CHAT_NODE_CAP_FLAG: str = "APOLLO_NLI_CHAT_MAX_NODES"
-_NLI_CHAT_NODE_CAP_DEFAULT: int = 15
-
-
-def _clarification_enabled() -> bool:
-    return os.environ.get(_CLARIFICATION_ENABLED_FLAG, "").lower() in ("1", "true", "yes")
+# INTERACTION4 "ask Hoot" hint lane (apollo/hoot_bridge/reference_answer.py).
+# Persona-side framing lives here, not in the bridge: the bridge returns a
+# subject-agnostic Hoot answer, and Apollo never claims it as its own
+# knowledge (brief: the aside is "visually and structurally outside the
+# persona").
+_REFERENCE_QUESTION_RESUME_LINE = "Okay, so how does that fit into what you were teaching me?"
+_REFERENCE_QUESTION_CAP_REDIRECT = (
+    "I think I've looked enough things up for this session — let's keep teaching so I can "
+    "really learn it. What were you saying?"
+)
+_REFERENCE_QUESTION_APOLOGY = (
+    "Hmm, I couldn't look that up right now. Let's keep going — what were you saying?"
+)
 
 
-def _unified_questioning_enabled() -> bool:
-    return os.environ.get(_UNIFIED_QUESTIONING_FLAG, "").lower() in ("1", "true", "yes")
-
-
-def _nli_chat_node_cap() -> int:
-    """Read ``APOLLO_NLI_CHAT_MAX_NODES`` from env; default 15 on missing or malformed."""
-    raw = os.environ.get(_NLI_CHAT_NODE_CAP_FLAG)
-    try:
-        return int(raw) if raw is not None else _NLI_CHAT_NODE_CAP_DEFAULT
-    except (ValueError, TypeError):
-        return _NLI_CHAT_NODE_CAP_DEFAULT
-
-
-async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
-    """Locate a problem in the DB bank by concept_id + problem_code. Mirrors
+async def _find_problem(
+    db: AsyncSession, concept_id: int, problem_id: int, *, course_id: int
+) -> Problem:
+    """Locate a problem in the DB bank by concept_id + target surrogate id. Mirrors
     done.py's helper. Kept inline rather than hoisted into problem_selector to
     keep that module's contract (problem listing) narrow."""
-    for p in await list_problems_for_concept(db, concept_id=concept_id):
-        if p.id == problem_code:
+    for p in await list_problems_for_concept(db, concept_id=concept_id, search_space_id=course_id):
+        if p.database_id == problem_id:
             return p
-    raise RuntimeError(f"problem {problem_code!r} not in bank for cluster {concept_id!r}")
+    raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
 
 
 async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
     result = await db.execute(
-        select(Message.turn_index)
-        .where(Message.session_id == session_id)
-        .order_by(Message.turn_index.desc())
+        select(TutoringMessage.turn_index)
+        .where(TutoringMessage.session_id == session_id)
+        .order_by(TutoringMessage.turn_index.desc())
         .limit(1)
     )
     latest = result.scalar_one_or_none()
@@ -106,13 +91,15 @@ async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
 
 
 async def _load_history(
-    db: AsyncSession, session_id: int, attempt_id: int,
+    db: AsyncSession,
+    session_id: int,
+    attempt_id: int,
 ) -> list[dict[str, str]]:
     result = await db.execute(
-        select(Message)
-        .where(Message.session_id == session_id)
-        .where(Message.attempt_id == attempt_id)
-        .order_by(Message.turn_index)
+        select(TutoringMessage)
+        .where(TutoringMessage.session_id == session_id)
+        .where(TutoringMessage.attempt_id == attempt_id)
+        .order_by(TutoringMessage.turn_index)
     )
     rows = result.scalars().all()
     out = []
@@ -126,6 +113,7 @@ async def _persist_turn(
     db: AsyncSession,
     *,
     session_id: int,
+    course_id: int,
     attempt_id: int,
     student_msg: str,
     apollo_msg: str,
@@ -133,8 +121,9 @@ async def _persist_turn(
     """Append the (student, apollo) turn pair atomically."""
     next_idx = await _next_turn_index(db, session_id)
     db.add(
-        Message(
+        TutoringMessage(
             session_id=session_id,
+            course_id=course_id,
             attempt_id=attempt_id,
             role="student",
             content=student_msg,
@@ -142,8 +131,9 @@ async def _persist_turn(
         )
     )
     db.add(
-        Message(
+        TutoringMessage(
             session_id=session_id,
+            course_id=course_id,
             attempt_id=attempt_id,
             role="apollo",
             content=apollo_msg,
@@ -164,7 +154,9 @@ async def _read_graph_or_empty(store: KGStore, *, attempt_id: int, stage: str):
     except KG_DEGRADED_ERRORS as exc:
         _LOG.warning(
             "apollo_neo4j_degraded stage=%s attempt_id=%s error=%s",
-            stage, attempt_id, exc,
+            stage,
+            attempt_id,
+            exc,
         )
         return KGGraph()
 
@@ -184,12 +176,15 @@ async def _write_kg_or_skip(
     endpoints to exist)."""
     try:
         nodes_added = await store.write_nodes(
-            attempt_id=attempt_id, nodes=nodes, source=source,
+            attempt_id=attempt_id,
+            nodes=nodes,
+            source=source,
         )
     except KG_DEGRADED_ERRORS as exc:
         _LOG.warning(
             "apollo_neo4j_degraded stage=write_nodes attempt_id=%s error=%s",
-            attempt_id, exc,
+            attempt_id,
+            exc,
         )
         return 0
     try:
@@ -197,31 +192,17 @@ async def _write_kg_or_skip(
     except KG_DEGRADED_ERRORS as exc:
         _LOG.warning(
             "apollo_neo4j_degraded stage=write_edges attempt_id=%s error=%s",
-            attempt_id, exc,
+            attempt_id,
+            exc,
         )
     return nodes_added
-
-
-async def _summarize_or_empty(store: KGStore, *, attempt_id: int) -> str:
-    """Degraded-mode KG summary: `summarize_for_apollo` reads through
-    `read_graph`, so a degraded Neo4j call falls back to the store's own
-    empty-KG summary constant — identical to what a real empty graph would
-    produce, so Apollo's context is byte-identical to "nothing taught yet"."""
-    try:
-        return await store.summarize_for_apollo(attempt_id=attempt_id)
-    except KG_DEGRADED_ERRORS as exc:
-        _LOG.warning(
-            "apollo_neo4j_degraded stage=summarize_for_apollo attempt_id=%s error=%s",
-            attempt_id, exc,
-        )
-        return _EMPTY_SUMMARY
 
 
 async def _handle_pending_done(
     *,
     db: AsyncSession,
     neo: Neo4jClient | None,
-    sess: ApolloSession,
+    sess: TutoringSession,
     attempt_id: int,
     message: str,
     store: KGStore,
@@ -251,13 +232,16 @@ async def _handle_pending_done(
     await _persist_turn(
         db,
         session_id=sess.id,
+        course_id=sess.course_id,
         attempt_id=attempt_id,
         student_msg=message,
         apollo_msg=apollo_reply,
     )
 
     graph = await _read_graph_or_empty(
-        store, attempt_id=attempt_id, stage="handle_pending_done",
+        store,
+        attempt_id=attempt_id,
+        stage="handle_pending_done",
     )
     return {
         "apollo_reply": apollo_reply,
@@ -267,10 +251,157 @@ async def _handle_pending_done(
     }
 
 
+async def _execute_reference_question(
+    *,
+    db: AsyncSession,
+    sess: TutoringSession,
+    attempt_id: int,
+    message: str,
+    store: KGStore,
+    problem: Problem,
+) -> dict[str, Any]:
+    """Direct-execute a `reference_question` intent: route the utterance
+    through Hoot's QA bridge and return it as an aside, or a plain
+    persona reply on cap / failure. Never confirmation-gated (unlike
+    `done`) and never raises — a failure in the composed path apologizes
+    and falls through as an ordinary teaching-shaped turn, never a 5xx.
+    """
+    current_count = int((sess.metadata_ or {}).get(ASIDE_COUNT_SESSION_METADATA_KEY, 0))
+    if current_count >= MAX_ASIDES_PER_SESSION:
+        await _persist_turn(
+            db,
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            student_msg=message,
+            apollo_msg=_REFERENCE_QUESTION_CAP_REDIRECT,
+        )
+        graph = await _read_graph_or_empty(
+            store, attempt_id=attempt_id, stage="reference_question_capped"
+        )
+        return {
+            "apollo_reply": _REFERENCE_QUESTION_CAP_REDIRECT,
+            "kg_entries_added": 0,
+            "kg": graph.model_dump(mode="json"),
+        }
+
+    try:
+        result = await answer_reference_question(
+            db=db,
+            course_id=int(sess.course_id),
+            question=message,
+            problem=problem,
+        )
+    except Exception:  # noqa: BLE001 - never a 5xx on a chat turn
+        _LOG.warning(
+            "apollo_reference_question_failed session_id=%s attempt_id=%s",
+            sess.id,
+            attempt_id,
+            exc_info=True,
+        )
+        await _persist_turn(
+            db,
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            student_msg=message,
+            apollo_msg=_REFERENCE_QUESTION_APOLOGY,
+        )
+        graph = await _read_graph_or_empty(
+            store, attempt_id=attempt_id, stage="reference_question_failed"
+        )
+        return {
+            "apollo_reply": _REFERENCE_QUESTION_APOLOGY,
+            "kg_entries_added": 0,
+            "kg": graph.model_dump(mode="json"),
+        }
+
+    next_count = current_count + 1
+    sess.metadata_ = {**(sess.metadata_ or {}), ASIDE_COUNT_SESSION_METADATA_KEY: next_count}
+
+    next_idx = await _next_turn_index(db, sess.id)
+    db.add(
+        TutoringMessage(
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            role="student",
+            content=message,
+            turn_index=next_idx,
+        )
+    )
+    db.add(
+        TutoringMessage(
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            role="apollo",
+            content=result.text,
+            turn_index=next_idx + 1,
+            intent=ASIDE_MESSAGE_INTENT_TAG,
+        )
+    )
+    db.add(
+        TutoringMessage(
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt_id,
+            role="apollo",
+            content=_REFERENCE_QUESTION_RESUME_LINE,
+            turn_index=next_idx + 2,
+        )
+    )
+    await db.commit()
+
+    graph = await _read_graph_or_empty(store, attempt_id=attempt_id, stage="reference_question")
+    return {
+        "apollo_reply": _REFERENCE_QUESTION_RESUME_LINE,
+        "kg_entries_added": 0,
+        "kg": graph.model_dump(mode="json"),
+        "message_kind": MESSAGE_KIND_REFERENCE_ASIDE,
+        "aside": {
+            "text": result.text,
+            "citations": result.citations,
+            "in_scope": result.in_scope,
+        },
+        "intent_executed": {"intent": "reference_question", "aside_count": next_count},
+    }
+
+
+async def _maybe_execute_reference_aside(
+    *,
+    db: AsyncSession,
+    sess: TutoringSession,
+    attempt_id: int,
+    message: str,
+    store: KGStore,
+    problem: Problem,
+    ask_hoot: bool,
+) -> dict[str, Any] | None:
+    """Execute the hint lane only for an explicit Ask Hoot request.
+
+    Requests rejected by either rollout gate fall through to the ordinary
+    teaching turn. The utterance is still classified for the other existing
+    intents, but normal typed turns can never enter the aside executor.
+    """
+    if not ask_hoot:
+        return None
+    if not (_interaction4_enabled() and interaction_allowed_for_concept(problem.concept_id)):
+        return None
+    return await _execute_reference_question(
+        db=db,
+        sess=sess,
+        attempt_id=attempt_id,
+        message=message,
+        store=store,
+        problem=problem,
+    )
+
+
 async def _maybe_intent_confirmation(
     *,
     db: AsyncSession,
-    sess: ApolloSession,
+    sess: TutoringSession,
     attempt_id: int,
     message: str,
     history: list[dict[str, str]],
@@ -308,12 +439,15 @@ async def _maybe_intent_confirmation(
     await _persist_turn(
         db,
         session_id=sess.id,
+        course_id=sess.course_id,
         attempt_id=attempt_id,
         student_msg=message,
         apollo_msg=prompt,
     )
     graph = await _read_graph_or_empty(
-        store, attempt_id=attempt_id, stage="maybe_intent_confirmation",
+        store,
+        attempt_id=attempt_id,
+        stage="maybe_intent_confirmation",
     )
     return {
         "apollo_reply": prompt,
@@ -332,11 +466,12 @@ async def handle_chat(
     neo: Neo4jClient | None,
     session_id: int,
     message: str,
+    ask_hoot: bool = False,
 ) -> dict[str, Any]:
     store = KGStore(db, neo)
 
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     current_attempt = (
         (
@@ -353,7 +488,26 @@ async def handle_chat(
     if current_attempt is None:
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
 
-    concept = await load_concept_definition(db, concept_id=sess.concept_id)
+    concept = await load_concept_definition(
+        db, concept_id=sess.concept_id, search_space_id=sess.course_id
+    )
+    # Resolved up front so an explicit Ask Hoot request can use it for the
+    # leakage-exclusion lookup before the normal teaching path.
+    problem = await _find_problem(
+        db, sess.concept_id, sess.current_problem_id, course_id=sess.course_id
+    )
+
+    aside_response = await _maybe_execute_reference_aside(
+        db=db,
+        sess=sess,
+        attempt_id=current_attempt.id,
+        message=message,
+        store=store,
+        problem=problem,
+        ask_hoot=ask_hoot,
+    )
+    if aside_response is not None:
+        return aside_response
 
     # ---- Intent state machine (item #5) -------------------------------
     # Step 1: if a pending intent exists, see if this turn confirms it.
@@ -395,7 +549,9 @@ async def handle_chat(
     # parsing) and project it into a GraphContext the parser threads in so it
     # can emit edges referencing prior-turn node ids.
     prior_graph = await _read_graph_or_empty(
-        store, attempt_id=current_attempt.id, stage="prior_graph",
+        store,
+        attempt_id=current_attempt.id,
+        stage="prior_graph",
     )
     graph_context = build_graph_context(prior_graph)
     try:
@@ -428,192 +584,61 @@ async def handle_chat(
         source="parser",
     )
 
-    history_summary, raw_window = await load_windowed_history(
-        db=db,
-        session=sess,
-        attempt_id=int(current_attempt.id),
-    )
-
-    # v1 (diff-at-Done): per turn = nodify + dumb reply. No sufficiency,
-    # misconception, OLM-invite, or output filter. Apollo is fed only the
-    # student's own KG + the problem, so it cannot leak an un-taught concept
-    # (structural anti-leak replaces the deleted filter).
     student_graph = await _read_graph_or_empty(
-        store, attempt_id=current_attempt.id, stage="student_graph",
+        store,
+        attempt_id=current_attempt.id,
+        stage="student_graph",
     )
-    problem = await _find_problem(db, sess.concept_id, sess.current_problem_id)
-    kg_summary = await _summarize_or_empty(store, attempt_id=current_attempt.id)
-    history_for_llm = raw_window + [{"role": "user", "content": message}]
-
-    # next_idx is needed before the clarification block (asked_turn = next_idx + 1).
     next_idx = await _next_turn_index(db, session_id)
 
     # One-call reference-driven question controller. The same model assesses
     # the full student transcript and writes Apollo's answer-safe next reply.
     # The opportunity ledger still caps each reference node at one question;
     # when no eligible target remains, grade automatically.
-    if _unified_questioning_enabled():
-        full_transcript = [
-            ("student" if item["role"] == "user" else "apollo", item["content"])
-            for item in history_pre
-        ] + [("student", message)]
-        decision = await plan_next_question(
-            db,
-            attempt_id=int(current_attempt.id),
-            session_id=session_id,
-            problem=problem,
-            transcript=full_transcript,
-            turn_index=next_idx,
-        )
-        # Current covered-topic snapshot (tally status "understood") for the UI
-        # celebration. Serialize once; sent on both the ask reply and the
-        # auto-done turn so the last newly-covered topics still animate before
-        # the report. Purely additive — grading/questioning are unchanged.
-        covered_topics = [
-            {"node_id": topic.node_id, "display_name": topic.display_name}
-            for topic in decision.covered_topics
-        ]
-        if decision.action == "ask":
-            validated = decision.question or "Can you explain that part one more time?"
-        else:
-            validated = "Thanks — I have enough to grade what you taught me."
+    full_transcript = [
+        ("student" if item["role"] == "user" else "apollo", item["content"]) for item in history_pre
+    ] + [("student", message)]
+    decision = await plan_next_question(
+        db,
+        course_id=int(sess.course_id),
+        attempt_id=int(current_attempt.id),
+        session_id=session_id,
+        problem=problem,
+        transcript=full_transcript,
+        turn_index=next_idx,
+    )
+    covered_topics = [
+        {"node_id": topic.node_id, "display_name": topic.display_name}
+        for topic in decision.covered_topics
+    ]
+    if decision.action == "ask":
+        validated = decision.question or "Can you explain that part one more time?"
+    else:
+        validated = "Thanks — I have enough to grade what you taught me."
 
-        await _persist_turn(
-            db,
-            session_id=session_id,
-            attempt_id=int(current_attempt.id),
-            student_msg=message,
-            apollo_msg=validated,
-        )
-        if decision.action == "done":
-            from apollo.handlers.done import handle_done  # noqa: PLC0415
+    await _persist_turn(
+        db,
+        session_id=session_id,
+        course_id=sess.course_id,
+        attempt_id=int(current_attempt.id),
+        student_msg=message,
+        apollo_msg=validated,
+    )
+    if decision.action == "done":
+        from apollo.handlers.done import handle_done  # noqa: PLC0415
 
-            done_result = await handle_done(db=db, neo=neo, session_id=session_id)
-            return {
-                "apollo_reply": validated,
-                "kg_entries_added": nodes_added,
-                "kg": student_graph.model_dump(mode="json"),
-                "covered_topics": covered_topics,
-                "intent_executed": {"intent": "done", "result": done_result},
-            }
+        done_result = await handle_done(db=db, neo=neo, session_id=session_id)
         return {
             "apollo_reply": validated,
             "kg_entries_added": nodes_added,
             "kg": student_graph.model_dump(mode="json"),
             "covered_topics": covered_topics,
-            "question_target": decision.target_node_id,
+            "intent_executed": {"intent": "done", "result": done_result},
         }
-
-    # ---- Clarification loop: detect ambiguous residual ideas, weave answer-blind
-    # probes into Apollo's reply (spec §6). Gated (default OFF) + fail-safe — never blocks
-    # teaching. A savepoint isolates the clarification writes so a DB fault here cannot poison
-    # the outer transaction that commits the message pair below.
-    clarification_hints: list[str] = []
-    if _clarification_enabled():
-        try:
-            async with db.begin_nested():
-                problem_payload = await _find_problem_payload(
-                    db,
-                    concept_id=sess.concept_id,
-                    problem_code=sess.current_problem_id,
-                )
-                inputs = await load_problem_candidates(
-                    db,
-                    search_space_id=int(sess.search_space_id),
-                    concept_id=sess.concept_id,
-                    problem_payload=problem_payload,
-                )
-                await resolve_pending_clarifications(
-                    db=db,
-                    attempt_id=current_attempt.id,
-                    student_message=message,
-                    candidates=inputs.candidates,
-                    judge=default_clarification_judge,
-                    answered_turn=next_idx,
-                    neo=neo,
-                )
-                # NLI context (budget-gated): reuse done_grading's process
-                # singleton so the transformer model loads once per process.
-                # Per-turn cost is synchronous model inference per residual
-                # node; cap node count via APOLLO_NLI_CHAT_MAX_NODES (default
-                # 15) to avoid blocking the event loop for large utterances.
-                from apollo.handlers import done_grading as _dg  # noqa: PLC0415
-
-                _nli_ctx = _dg._nli_context()
-                _nli_cap = _nli_chat_node_cap()
-                if _nli_ctx is not None and len(nodes) > _nli_cap:
-                    _LOG.info(
-                        "nli_chat_skipped_budget nodes=%d cap=%d session_id=%s",
-                        len(nodes),
-                        _nli_cap,
-                        session_id,
-                    )
-                    _nli_ctx = None
-                clarification_hints = await run_clarification_detection(
-                    db=db,
-                    parsed_nodes=nodes,
-                    candidates=inputs.candidates,
-                    symbolic_mappings=inputs.symbolic_mappings,
-                    embedder=default_embedder,
-                    cache=_CLARIFICATION_CACHE,
-                    attempt_id=current_attempt.id,
-                    session_id=session_id,
-                    user_id=str(sess.user_id),
-                    search_space_id=int(sess.search_space_id),
-                    concept_id=sess.concept_id,
-                    asked_turn=next_idx + 1,
-                    nli_ctx=_nli_ctx,
-                )
-        except Exception as exc:  # noqa: BLE001 - savepoint rolled back; never block teaching
-            _LOG.warning("clarification_setup_failed session_id=%s error=%s", session_id, exc)
-            clarification_hints = []
-
-    validated = draft_reply(
-        history=history_for_llm,
-        kg_summary=kg_summary,
-        problem_text=problem.problem_text,
-        history_summary=history_summary,
-        clarification_hints=clarification_hints or None,
-    )
-
-    if clarification_hints:
-        validated = guard_clarification_reply(
-            draft=validated,
-            concept=concept,
-            history=history_for_llm,
-            kg_summary=kg_summary,
-            regenerate_without_probes=lambda: draft_reply(
-                history=history_for_llm,
-                kg_summary=kg_summary,
-                problem_text=problem.problem_text,
-                history_summary=history_summary,
-            ),
-        )
-
-    # Persist the (student, apollo) pair in one commit. No filter → no
-    # mid-turn rejection → no orphan risk.
-    db.add(
-        Message(
-            session_id=session_id,
-            attempt_id=current_attempt.id,
-            role="student",
-            content=message,
-            turn_index=next_idx,
-        )
-    )
-    db.add(
-        Message(
-            session_id=session_id,
-            attempt_id=current_attempt.id,
-            role="apollo",
-            content=validated,
-            turn_index=next_idx + 1,
-        )
-    )
-    await db.commit()
-
     return {
         "apollo_reply": validated,
         "kg_entries_added": nodes_added,
         "kg": student_graph.model_dump(mode="json"),
+        "covered_topics": covered_topics,
+        "question_target": decision.target_node_id,
     }

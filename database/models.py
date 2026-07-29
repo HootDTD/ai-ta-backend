@@ -1,4 +1,5 @@
 """SQLAlchemy ORM models for AI-TA's pgvector-backed retrieval system."""
+
 from __future__ import annotations
 
 import os
@@ -7,20 +8,24 @@ from enum import StrEnum
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
+    TIMESTAMP,
     BigInteger,
     Boolean,
-    TIMESTAMP,
+    CheckConstraint,
     Column,
     Float,
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, relationship
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.orm import DeclarativeBase, declared_attr, relationship
 
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "3072"))
 
@@ -52,59 +57,71 @@ class DocumentType(StrEnum):
 
 
 class DocumentStatus:
-    """Helper for document processing status stored as JSONB."""
+    """Typed document processing states stored in ``app.documents.status``."""
 
     READY = "ready"
-    PENDING = "pending"
+    PENDING = "queued"
     PROCESSING = "processing"
     FAILED = "failed"
 
     @staticmethod
-    def ready() -> dict:
-        return {"state": DocumentStatus.READY}
+    def ready() -> str:
+        return DocumentStatus.READY
 
     @staticmethod
-    def pending() -> dict:
-        return {"state": DocumentStatus.PENDING}
+    def pending() -> str:
+        return DocumentStatus.PENDING
 
     @staticmethod
-    def processing() -> dict:
-        return {"state": DocumentStatus.PROCESSING}
+    def processing() -> str:
+        return DocumentStatus.PROCESSING
 
     @staticmethod
-    def failed(reason: str) -> dict:
-        return {"state": DocumentStatus.FAILED, "reason": reason[:500]}
+    def failed(reason: str) -> str:
+        del reason
+        return DocumentStatus.FAILED
 
     @staticmethod
-    def get_state(status: dict | None) -> str | None:
-        if status is None:
-            return None
-        return status.get("state") if isinstance(status, dict) else None
+    def get_state(status: str | None) -> str | None:
+        return status
 
     @staticmethod
-    def is_state(status: dict | None, state: str) -> bool:
+    def is_state(status: str | None, state: str) -> bool:
         return DocumentStatus.get_state(status) == state
 
     @staticmethod
-    def get_failure_reason(status: dict | None) -> str | None:
-        if not isinstance(status, dict):
-            return None
-        if status.get("state") == DocumentStatus.FAILED:
-            return status.get("reason")
-        return None
+    def get_failure_reason(status: str | None, failure_reason: str | None = None) -> str | None:
+        return failure_reason if status == DocumentStatus.FAILED else None
 
 
-class SearchSpace(BaseModel, TimestampMixin):
+class Course(BaseModel, TimestampMixin):
     """One AI-TA class/course (e.g. 'AAE 33300')."""
 
-    __tablename__ = "aita_search_spaces"
+    __tablename__ = "courses"
+    __table_args__ = (
+        CheckConstraint("current_week BETWEEN 1 AND 16"),
+        CheckConstraint(
+            "0 <= retrieval_weight_min AND retrieval_weight_min <= retrieval_weight_max "
+            "AND retrieval_weight_max <= 1"
+        ),
+        {"schema": "app"},
+    )
+
+    id = Column(BigInteger, primary_key=True, index=True)
 
     name = Column(String(200), nullable=False, index=True)
     slug = Column(String(200), nullable=False, index=True, unique=True)
     subject_name = Column(String(200), nullable=False)
 
-    weight_overrides = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
-    metadata_ = Column("metadata", JSONB, nullable=True)
+    current_week = Column(SmallInteger, nullable=False, default=1, server_default=text("1"))
+    retrieval_weights = Column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    retrieval_weight_min = Column(Float, nullable=False, default=0.0, server_default=text("0"))
+    retrieval_weight_max = Column(Float, nullable=False, default=1.0, server_default=text("1"))
+    metadata_ = Column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     updated_at = Column(
         TIMESTAMP(timezone=True),
@@ -115,17 +132,20 @@ class SearchSpace(BaseModel, TimestampMixin):
     )
 
     documents = relationship(
-        "AITADocument",
-        back_populates="search_space",
-        order_by="AITADocument.id",
+        "Document",
+        back_populates="course",
+        order_by="Document.id",
         cascade="all, delete-orphan",
     )
 
 
-class AITADocument(BaseModel, TimestampMixin):
+class Document(BaseModel, TimestampMixin):
     """A single educational document indexed for retrieval."""
 
-    __tablename__ = "aita_documents"
+    __tablename__ = "documents"
+    __table_args__ = {"schema": "app"}
+
+    id = Column(BigInteger, primary_key=True, index=True)
 
     title = Column(String, nullable=False, index=True)
     document_type = Column(String, nullable=False, default=DocumentType.EDUCATIONAL_FILE)
@@ -135,17 +155,20 @@ class AITADocument(BaseModel, TimestampMixin):
     content_hash = Column(String, nullable=False, index=True, unique=True)
     unique_identifier_hash = Column(String, nullable=True, index=True, unique=True)
     embedding = Column(Vector(EMBEDDING_DIM))
-    document_metadata = Column(JSONB, nullable=True)
+    metadata_ = Column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     page_count = Column(Integer, nullable=True)
     week = Column(Integer, nullable=True, index=True)
 
     status = Column(
-        JSONB,
+        String(20),
         nullable=False,
         default=DocumentStatus.ready,
-        server_default=text('\'{"state": "ready"}\'::jsonb'),
+        server_default=text("'ready'"),
         index=True,
     )
+    failure_reason = Column(Text, nullable=True)
 
     updated_at = Column(
         TIMESTAMP(timezone=True),
@@ -155,22 +178,29 @@ class AITADocument(BaseModel, TimestampMixin):
         index=True,
     )
 
-    search_space_id = Column(
-        Integer, ForeignKey("aita_search_spaces.id", ondelete="CASCADE"), nullable=False, index=True
+    course_id = Column(
+        BigInteger, ForeignKey("app.courses.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    search_space = relationship("SearchSpace", back_populates="documents")
+    course = relationship("Course", back_populates="documents")
     chunks = relationship(
-        "AITAChunk",
+        "DocumentChunk",
         back_populates="document",
         cascade="all, delete-orphan",
     )
 
 
-class AITAChunk(BaseModel, TimestampMixin):
+class DocumentChunk(BaseModel, TimestampMixin):
     """A single layout-aware chunk from a document."""
 
-    __tablename__ = "aita_chunks"
+    __tablename__ = "document_chunks"
+    __table_args__ = {"schema": "internal"}
+
+    id = Column(BigInteger, primary_key=True, index=True)
+
+    course_id = Column(
+        BigInteger, ForeignKey("app.courses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     content = Column(Text, nullable=False)
     embedding = Column(Vector(EMBEDDING_DIM))
@@ -180,20 +210,21 @@ class AITAChunk(BaseModel, TimestampMixin):
     figure_id = Column(String, nullable=True)
 
     document_id = Column(
-        Integer, ForeignKey("aita_documents.id", ondelete="CASCADE"), nullable=False, index=True
+        BigInteger, ForeignKey("app.documents.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    document = relationship("AITADocument", back_populates="chunks")
+    document = relationship("Document", back_populates="chunks")
 
 
 class CourseMembership(Base):
     """User membership to a course search space."""
 
     __tablename__ = "course_memberships"
+    __table_args__ = {"schema": "app"}
 
     user_id = Column(UUID(as_uuid=False), primary_key=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         primary_key=True,
         nullable=False,
         index=True,
@@ -214,16 +245,17 @@ class CourseMembership(Base):
     )
 
 
-class CourseInviteLink(Base):
+class CourseInvite(Base):
     """Shareable invite link for course enrollment."""
 
-    __tablename__ = "course_invite_links"
+    __tablename__ = "course_invites"
+    __table_args__ = {"schema": "app"}
 
     id = Column(BigInteger, primary_key=True, index=True)
     code = Column(String, nullable=False, unique=True, index=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -248,55 +280,16 @@ class CourseInviteLink(Base):
     )
 
 
-class TeacherCourse(Base):
-    """Per-course teacher settings (week + retrieval weights)."""
-
-    __tablename__ = "teacher_courses"
-
-    id = Column(BigInteger, primary_key=True, index=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-        index=True,
-    )
-    current_week = Column(Integer, nullable=False, default=1)
-    weights = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
-    weight_bounds = Column(
-        JSONB,
-        nullable=False,
-        default=lambda: {"min": 0.0, "max": 1.0},
-        # Escape the JSON colons (\:) so SQLAlchemy's text() doesn't parse
-        # `:0` / `:1` as bind parameters — without this, create_all() emits the
-        # malformed default `{"min"NULL.0,"max"NULL.0}`. Renders as
-        # '{"min":0.0,"max":1.0}'::jsonb.
-        server_default=text(r"""'{"min"\:0.0,"max"\:1.0}'::jsonb"""),
-    )
-    created_at = Column(
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        index=True,
-    )
-    updated_at = Column(
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-        index=True,
-    )
-
-
-class TeacherUpload(Base):
+class Upload(Base):
     """Teacher-uploaded weekly notes/slides metadata."""
 
-    __tablename__ = "teacher_uploads"
+    __tablename__ = "uploads"
+    __table_args__ = {"schema": "app"}
 
     id = Column(BigInteger, primary_key=True, index=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -304,9 +297,9 @@ class TeacherUpload(Base):
     kind = Column(String(20), nullable=False, index=True)
     title = Column(String, nullable=False)
     source_name = Column(String, nullable=True)
-    doc_id = Column(
-        Integer,
-        ForeignKey("aita_documents.id", ondelete="SET NULL"),
+    document_id = Column(
+        BigInteger,
+        ForeignKey("app.documents.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -319,7 +312,7 @@ class TeacherUpload(Base):
         server_default=text("'{}'::jsonb"),
     )
     ocr_provider = Column(String(50), nullable=True)
-    ocr_summary = Column(
+    ocr_details = Column(
         JSONB,
         nullable=False,
         default=dict,
@@ -333,7 +326,9 @@ class TeacherUpload(Base):
     page_count = Column(Integer, nullable=True)
     is_latest = Column(Boolean, nullable=False, default=True, index=True)
     uploaded_by = Column(UUID(as_uuid=False), nullable=True, index=True)
-    metadata_ = Column("metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    metadata_ = Column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     uploaded_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
@@ -355,15 +350,22 @@ class TeacherUpload(Base):
     )
 
 
-class TeacherUploadJob(Base):
+class UploadJob(Base):
     """Durable background work queue for teacher upload ingestion."""
 
-    __tablename__ = "teacher_upload_jobs"
+    __tablename__ = "upload_jobs"
+    __table_args__ = {"schema": "internal"}
 
     id = Column(BigInteger, primary_key=True, index=True)
     upload_id = Column(
         BigInteger,
-        ForeignKey("teacher_uploads.id", ondelete="CASCADE"),
+        ForeignKey("app.uploads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -387,22 +389,43 @@ class TeacherUploadJob(Base):
     )
 
 
-class ChatSession(Base):
-    """Persisted chat session for memory + reporting."""
+class LearningActivity(Base):
+    """Interaction supertype shared by chat and tutoring persistence."""
 
-    __tablename__ = "chat_sessions"
+    __tablename__ = "learning_activities"
+    __table_args__ = {"schema": "app"}
 
-    id = Column(BigInteger, primary_key=True, index=True)
-    chat_id = Column(String(200), nullable=False, unique=True, index=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+        index=True,
+    )
+    modality = Column(Text, nullable=False)
+    external_id = Column(Text, nullable=True, unique=True, index=True)
     user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    meta = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    metadata_ = Column(
+        "metadata",
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'"),
+    )
     memory_summary = Column(Text, nullable=False, default="", server_default=text("''"))
+    status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
+    phase = Column(Text, nullable=True)
+    concept_id = Column(BigInteger, nullable=True)
+    current_problem_id = Column(BigInteger, nullable=True)
+    pending_intent = Column(Text, nullable=True)
+    history_summary = Column(Text, nullable=True)
+    history_summary_up_to_turn = Column(Integer, nullable=True)
+    last_touched_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
@@ -416,30 +439,52 @@ class ChatSession(Base):
         onupdate=lambda: datetime.now(UTC),
         index=True,
     )
-    topic_centroid_vector = Column(Vector(3072), nullable=True)
+    __mapper_args__ = {
+        "polymorphic_on": modality,
+        "polymorphic_abstract": True,
+    }
 
-    turns = relationship(
-        "ChatTurn",
+
+class ChatSession(LearningActivity):
+    """Chat-modality view of ``app.learning_activities``."""
+
+    __mapper_args__ = {"polymorphic_identity": "chat"}
+
+    messages = relationship(
+        "ChatMessage",
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="ChatTurn.turn_index",
+        order_by="ChatMessage.turn_index",
     )
 
 
-class ChatTurn(Base):
-    """Chat turn rows for a session."""
+class ChatMessage(Base):
+    """One persisted message in a RAG chat session."""
 
-    __tablename__ = "chat_turns"
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        UniqueConstraint("learning_activity_id", "external_id"),
+        UniqueConstraint("learning_activity_id", "turn_index"),
+        {"schema": "app"},
+    )
 
     id = Column(BigInteger, primary_key=True, index=True)
-    chat_session_id = Column(
+    course_id = Column(
         BigInteger,
-        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
+    chat_session_id = Column(
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind = Column(Text, nullable=False, default="message", server_default=text("'message'"))
     turn_index = Column(Integer, nullable=False, index=True)
-    turn_id = Column(String(100), nullable=False, index=True)
+    external_id = Column(Text, nullable=False, index=True)
     role = Column(String(20), nullable=False, index=True)
     content = Column(Text, nullable=False, default="", server_default=text("''"))
     created_at = Column(
@@ -453,12 +498,12 @@ class ChatTurn(Base):
     tool_inputs = Column(JSONB, nullable=True)
     attachments = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     citations = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
-    # §10 RQ5 hedge (WU-5B4): write-only <=8 concept terms from
-    # extract_and_filter_keywords, persisted for offline class-level backfill.
-    # No read path in v1. Mirrors the attachments/citations JSONB-array shape.
-    keywords = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    # §10 RQ5 hedge (WU-5B4): <=8 concept terms for offline class-level backfill.
+    keywords = Column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("'{}'::text[]")
+    )
 
-    session = relationship("ChatSession", back_populates="turns")
+    session = relationship("ChatSession", back_populates="messages")
 
 
 class ChatSessionSnippet(Base):
@@ -471,10 +516,19 @@ class ChatSessionSnippet(Base):
     __tablename__ = "chat_session_snippets"
 
     chat_session_id = Column(
-        BigInteger, ForeignKey("chat_sessions.id", ondelete="CASCADE"), primary_key=True
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     chunk_id = Column(
-        BigInteger, ForeignKey("aita_chunks.id", ondelete="CASCADE"), primary_key=True
+        BigInteger, ForeignKey("internal.document_chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     original_score = Column(Float, nullable=False)
     first_seen_turn = Column(Integer, nullable=False)
@@ -487,7 +541,8 @@ class ChatSessionSnippet(Base):
     )
 
     __table_args__ = (
-        Index("ix_css_session_lru", "chat_session_id", "last_used_turn"),
+        Index("ix_css_session_lru", "learning_activity_id", "last_used_turn"),
+        {"schema": "internal"},
     )
 
 
@@ -498,13 +553,21 @@ class ChatRouterDecision(Base):
     of the router.
     """
 
-    __tablename__ = "chat_router_decisions"
+    __tablename__ = "chat_routing_decisions"
+    __table_args__ = {"schema": "internal"}
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     turn_id = Column(Text, nullable=False)
     chat_session_id = Column(
+        "learning_activity_id",
         BigInteger,
-        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -532,15 +595,16 @@ class ChatRouterDecision(Base):
 
 __all__ = [
     "Base",
-    "SearchSpace",
-    "AITADocument",
-    "AITAChunk",
+    "Course",
+    "Document",
+    "DocumentChunk",
     "CourseMembership",
-    "CourseInviteLink",
-    "TeacherCourse",
-    "TeacherUpload",
+    "CourseInvite",
+    "Upload",
+    "UploadJob",
+    "LearningActivity",
     "ChatSession",
-    "ChatTurn",
+    "ChatMessage",
     "ChatSessionSnippet",
     "ChatRouterDecision",
     "DocumentType",

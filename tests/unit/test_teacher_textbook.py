@@ -40,7 +40,7 @@ def _make_storage(tmp_path, total_weeks: int = 3) -> TeacherWeeklyStorage:
 
 
 def _fake_upload_row(**overrides):
-    """A lightweight stand-in for a TeacherUpload ORM row, carrying every
+    """A lightweight stand-in for a Upload ORM row, carrying every
     attribute ``_build_upload_record`` reads."""
     defaults = dict(
         id=1,
@@ -51,14 +51,14 @@ def _fake_upload_row(**overrides):
         uploaded_at=None,
         source_name="wk1.pdf",
         page_count=5,
-        doc_id="10",
+        document_id="10",
         metadata_={},
         error_message=None,
         warning_count=0,
         started_at=None,
         completed_at=None,
         ocr_provider=None,
-        ocr_summary={},
+        ocr_details={},
         is_latest=True,
     )
     defaults.update(overrides)
@@ -343,14 +343,10 @@ def test_list_course_returns_textbook_section(tmp_path, monkeypatch):
         yield _Session()
 
     async def _fake_load_space(_session, _ssid):
-        return SimpleNamespace(name="E2E Fluids", slug="e2e-fluids")
-
-    async def _fake_get_course(_session, *, search_space_id):
-        return SimpleNamespace(current_week=1)
+        return SimpleNamespace(name="E2E Fluids", slug="e2e-fluids", current_week=1)
 
     monkeypatch.setattr(tw, "get_async_session", _fake_get_async_session)
     monkeypatch.setattr(storage, "_load_search_space", _fake_load_space)
-    monkeypatch.setattr(storage, "_get_or_create_teacher_course", _fake_get_course)
 
     payload = storage.list_course_by_search_space(2)
 

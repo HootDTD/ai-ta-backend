@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -72,39 +71,15 @@ sys.modules["openai"] = openai_stub
 
 
 @pytest.fixture(autouse=True)
-def _mock_supabase(monkeypatch):
-    """Route vendors.supabase_client through the shared in-memory mock.
-
-    The PostgREST-style mock now lives in tests/support/supabase_mock.py (shared
-    with tests/functions-tests/conftest.py). The root suite uses the no-auto-id
-    variant to preserve its historical insert/upsert behaviour.
-    """
+def _test_env(monkeypatch):
+    """Baseline env for the suite (fake OpenAI + local Supabase coordinates)."""
     monkeypatch.setenv("TEST_FAKE_OPENAI", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("SUPABASE_URL", "http://localhost:54321")
     monkeypatch.setenv("SUPABASE_API_KEY", "test-key")
     monkeypatch.setenv("SUPABASE_DB_URL", "sqlite+aiosqlite:///:memory:")
 
-    from tests.support.supabase_mock import SupabaseMock
 
-    mock = SupabaseMock(auto_id=False)
-    mock.install(monkeypatch)
-    yield
-    mock.reset()
-
-
-@pytest.fixture(autouse=True)
-def _force_nli_off(monkeypatch):
-    """Force ``APOLLO_NLI_ENABLED=0`` for the whole (non-apollo) suite.
-
-    The NLI tier is now DEFAULT-ON in production (``nli_config.nli_enabled``), but
-    the real adjudicator pulls ``transformers``/``torch`` and downloads a model on
-    first use. Integration tests under ``tests/database/`` drive the real
-    Done-grade path (``handle_done`` → ``_nli_context``), so without this guard
-    they would build + download the model in CI. Mirrors ``apollo/conftest.py``'s
-    guard; a test that exercises NLI sets the flag itself (a function-scoped
-    ``monkeypatch.setenv`` runs after this and wins)."""
-    monkeypatch.setenv("APOLLO_NLI_ENABLED", "0")
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +96,12 @@ def _force_nli_off(monkeypatch):
 # ---------------------------------------------------------------------------
 
 PGVECTOR_IMAGE = "pgvector/pgvector:pg16"
+# DB-06 installs pgvector in ``extensions``. Keep that schema visible on every
+# harness connection because pgvector's SQLAlchemy type and distance operators
+# compile unqualified; this covers both metadata DDL and per-test ORM queries.
+PGVECTOR_CONNECT_ARGS = {
+    "server_settings": {"search_path": "public,extensions"},
+}
 
 # NOTE: we deliberately do NOT call pgvector.asyncpg.register_vector here.
 # pgvector's SQLAlchemy `Vector` type already serializes lists to the pgvector
@@ -160,9 +141,18 @@ def _pg_url() -> str:
         # No vector codec on the setup engine: its first connection is the one
         # that runs CREATE EXTENSION, so the `vector` type doesn't exist yet at
         # connect time. DDL is plain text and needs no codec anyway.
-        engine = create_async_engine(url, poolclass=NullPool)
+        engine = create_async_engine(
+            url,
+            poolclass=NullPool,
+            connect_args=PGVECTOR_CONNECT_ARGS,
+        )
         async with engine.begin() as conn:
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS internal"))
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS extensions"))
+            await conn.execute(
+                text("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions")
+            )
             await conn.run_sync(Base.metadata.create_all)
         await engine.dispose()
 
@@ -187,7 +177,11 @@ async def db_session(_pg_url):
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.pool import NullPool
 
-    engine = create_async_engine(_pg_url, poolclass=NullPool)
+    engine = create_async_engine(
+        _pg_url,
+        poolclass=NullPool,
+        connect_args=PGVECTOR_CONNECT_ARGS,
+    )
 
     conn = await engine.connect()
     trans = await conn.begin()

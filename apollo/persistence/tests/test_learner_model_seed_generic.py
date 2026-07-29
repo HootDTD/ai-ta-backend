@@ -9,9 +9,12 @@ subject/concept, not just bernoulli, WITHOUT a Postgres/Docker harness:
     ``select``/``flush``/``commit`` queries are exercised — a true mock DB, no
     network, no remote writes;
   * a synthetic two-concept subject is authored into ``tmp_path`` and
-    ``_SUBJECTS_ROOT`` is monkeypatched, proving multi-concept resolution + the
-    generic opposes-link (a misconception opposing a REAL reference key, with NO
-    authored-definition file) without coupling to the macroeconomics deliverable;
+    ``_SUBJECTS_ROOT`` is monkeypatched, proving multi-concept resolution
+    without coupling to the macroeconomics deliverable. Each fixture concept
+    still carries a ``misconceptions.json`` (with a REAL-reference-key
+    ``opposes``) purely as inert fixture data — DB-13 made the generic
+    seeder never read that file, so it mints no misconception entity and
+    ``misconceptions_linked`` is always 0;
   * backward compatibility is pinned against the REAL bernoulli source dir via
     the default ``subject_slug='fluid_mechanics'``.
 
@@ -27,7 +30,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import Column, Integer, MetaData, Table, select
+from sqlalchemy import Column, Integer, MetaData, Table, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import scripts.seed_apollo_learner_model as seeder
@@ -37,10 +40,11 @@ from apollo.persistence.learner_model_seed import (
 )
 from apollo.persistence.models import (
     Concept,
-    ConceptProblem,
     EntityPrereq,
-    KGEntity,
-    Subject,
+    LearnerEntity,
+)
+from apollo.persistence.models import (
+    Problem as ProblemRecord,
 )
 from database.models import Base
 from scripts.seed_apollo_learner_model import (
@@ -55,32 +59,43 @@ _BERNOULLI_DIR = (
     _REPO / "apollo" / "subjects" / "fluid_mechanics" / "concepts" / "bernoulli_principle"
 )
 
-# Tables the seeder touches via create_all. ConceptProblem is created with raw
+# Tables the seeder touches via create_all. ProblemRecord is created with raw
 # DDL instead (its provenance column carries a Postgres-only ``'{}'::jsonb``
 # server_default that SQLite's DDL compiler rejects); the raw table matches the
-# columns the ConceptProblem ORM maps so ``select(ConceptProblem)`` works.
+# columns the ProblemRecord ORM maps so ``select(ProblemRecord)`` works.
 _SEED_TABLES: list[Table] = [
-    Subject.__table__,  # type: ignore[list-item]  # SA stubs expose __table__ as FromClause
     Concept.__table__,  # type: ignore[list-item]
-    KGEntity.__table__,  # type: ignore[list-item]
+    LearnerEntity.__table__,  # type: ignore[list-item]
     EntityPrereq.__table__,  # type: ignore[list-item]
 ]
 
 _CONCEPT_PROBLEMS_DDL = """
-CREATE TABLE apollo_concept_problems (
+CREATE TABLE problems (
     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    course_id BIGINT NOT NULL,
     concept_id BIGINT NOT NULL,
     problem_code TEXT NOT NULL,
     difficulty TEXT NOT NULL,
-    payload JSON NOT NULL,
+    problem_text TEXT NOT NULL,
+    given_values JSON NOT NULL DEFAULT '{}',
+    target_unknown TEXT NOT NULL DEFAULT '',
+    reference_solution JSON NOT NULL,
+    payload_extra JSON NOT NULL DEFAULT '{}',
     tier SMALLINT NOT NULL DEFAULT 1,
     solution_source TEXT,
     provenance JSON NOT NULL DEFAULT '{}',
     quarantined_at TIMESTAMP,
-    search_space_id INTEGER,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
+
+
+def _sqlite_engine(url: str):
+    return create_async_engine(
+        url,
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -91,15 +106,18 @@ CREATE TABLE apollo_concept_problems (
 @pytest_asyncio.fixture
 async def db_url() -> AsyncGenerator[str, None]:
     """A shared-cache in-memory SQLite URL with the seeder's ORM tables + an
-    aita_search_spaces stub. The seeder opens its OWN engine on this URL, so a
+    courses stub. The seeder opens its OWN engine on this URL, so a
     shared-cache name keeps the schema visible across connections."""
     # Unique shared-cache name per test so each gets a FRESH in-memory schema
     # (cache=shared keeps a named in-memory DB alive process-globally; a fixed
     # name would leak the schema across tests).
     name = f"memseed_{uuid.uuid4().hex}"
     url = f"sqlite+aiosqlite:///file:{name}?mode=memory&cache=shared&uri=true"
-    engine = create_async_engine(url)
-    spaces = Table("aita_search_spaces", MetaData(), Column("id", Integer, primary_key=True))
+    engine = create_async_engine(
+        url,
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
+    spaces = Table("courses", MetaData(), Column("id", Integer, primary_key=True))
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: spaces.create(sc))
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=_SEED_TABLES))
@@ -115,12 +133,12 @@ async def db_url() -> AsyncGenerator[str, None]:
 
 
 async def _insert_course(url: str, space_id: int) -> None:
-    engine = create_async_engine(url)
+    engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
             await s.execute(
-                seeder.text("INSERT INTO aita_search_spaces (id) VALUES (:i)"),
+                text("INSERT INTO courses (id) VALUES (:i)"),
                 {"i": space_id},
             )
             await s.commit()
@@ -128,54 +146,45 @@ async def _insert_course(url: str, space_id: int) -> None:
         await engine.dispose()
 
 
-async def _insert_subject(url: str, *, slug: str, space_id: int) -> int:
-    engine = create_async_engine(url)
-    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    try:
-        async with Session() as s:
-            subject = Subject(slug=slug, display_name=slug.title(), search_space_id=space_id)
-            s.add(subject)
-            await s.flush()
-            sid: int = int(subject.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
-            await s.commit()
-            return sid
-    finally:
-        await engine.dispose()
+async def _insert_subject(url: str, *, slug: str, space_id: int) -> tuple[int, str]:
+    """Return the folded course/subject label used by the concept insert."""
+    del url
+    return space_id, slug
 
 
 async def _insert_concept_with_problems(
-    url: str, *, subject_id: int, slug: str, problems: list[dict]
+    url: str, *, subject_id: tuple[int, str], slug: str, problems: list[dict]
 ) -> int:
-    engine = create_async_engine(url)
+    engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
-            concept = Concept(subject_id=subject_id, slug=slug, display_name=slug.title())
+            course_id, subject_slug = subject_id
+            concept = Concept(
+                course_id=course_id,
+                subject_slug=subject_slug,
+                subject_display_name=subject_slug.title(),
+                slug=slug,
+                display_name=slug.title(),
+            )
             s.add(concept)
             await s.flush()
             cid: int = int(concept.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
             for p in problems:
-                s.add(
-                    ConceptProblem(
-                        concept_id=cid,
-                        problem_code=p["id"],
-                        difficulty=p.get("difficulty", "intro"),
-                        payload=p,
-                    )
-                )
+                s.add(ProblemRecord.from_pydantic_payload(p, course_id=course_id, concept_id=cid))
             await s.commit()
             return cid
     finally:
         await engine.dispose()
 
 
-async def _fetch_entities(url: str, concept_id: int) -> list[KGEntity]:
-    engine = create_async_engine(url)
+async def _fetch_entities(url: str, concept_id: int) -> list[LearnerEntity]:
+    engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
             return list(
-                (await s.execute(select(KGEntity).where(KGEntity.concept_id == concept_id)))
+                (await s.execute(select(LearnerEntity).where(LearnerEntity.concept_id == concept_id)))
                 .scalars()
                 .all()
             )
@@ -184,20 +193,21 @@ async def _fetch_entities(url: str, concept_id: int) -> list[KGEntity]:
 
 
 async def _fetch_problems(url: str, concept_id: int) -> list[dict]:
-    engine = create_async_engine(url)
+    engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
             rows = (
                 (
                     await s.execute(
-                        select(ConceptProblem).where(ConceptProblem.concept_id == concept_id)
+                        select(ProblemRecord).where(ProblemRecord.concept_id == concept_id)
                     )
                 )
                 .scalars()
                 .all()
             )
-            return [dict(r.payload) for r in rows]
+            concept_slug = await s.scalar(select(Concept.slug).where(Concept.id == concept_id))
+            return [r.to_pydantic_payload(concept_slug=str(concept_slug or "")) for r in rows]
     finally:
         await engine.dispose()
 
@@ -442,10 +452,11 @@ def test_authored_definitions_for_reads_disk_file(tmp_path):
     assert specs[0].payload["statement"] == "zed"
 
 
-def test_collect_entity_specs_generic_concept_opposes_real_reference_key(monkeypatch, tmp_path):
-    """The generic opposes guarantee: every misconception's opposes_entity_key is
-    a key minted by the concept's own sources (reference nodes / symbols /
-    concept dag) — NO authored-definition file needed."""
+def test_collect_entity_specs_never_reads_misconceptions_json(monkeypatch, tmp_path):
+    """DB-13: misconceptions.json is NEVER read by the generic seeder — the
+    app-schema kind CHECK has no 'misconception', so _collect_entity_specs
+    mints only reference/symbol/dag/authored-definition entities. The
+    concept's own reference key (cond.final_goods_only) still mints normally."""
     monkeypatch.setattr(seeder, "_SUBJECTS_ROOT", tmp_path)
     _make_macro_subject(tmp_path)
     cdir = _concept_dir("macroeconomics", "gdp_components")
@@ -454,12 +465,9 @@ def test_collect_entity_specs_generic_concept_opposes_real_reference_key(monkeyp
     specs = _collect_entity_specs("gdp_components", cdir, problems)
     by_key = {s.canonical_key: s for s in specs}
 
-    # The misconception opposes cond.final_goods_only, which IS minted.
-    assert "misc.includes_transfers" in by_key
+    assert "misc.includes_transfers" not in by_key
+    assert not any(s.kind == "misconception" for s in specs)
     assert "cond.final_goods_only" in by_key
-    assert by_key["misc.includes_transfers"].payload["opposes_entity_key"] == (
-        "cond.final_goods_only"
-    )
     # No bernoulli-style authored definition leaked in.
     assert "def.pressure_velocity_tradeoff" not in by_key
     # Dedup: the shared cond/eq across the two problems mints one entity each.
@@ -497,21 +505,17 @@ async def test_seed_macro_all_concepts_under_subject(monkeypatch, tmp_path, db_u
     # Both concepts were seeded.
     assert stats["concepts_seeded"] == 2
     assert stats["entities_inserted"] > 0
-    assert stats["misconceptions_linked"] == 2  # one per concept
+    # DB-13: misconceptions.json is never read by the generic seeder, so no
+    # misconception entity is ever minted to link.
+    assert stats["misconceptions_linked"] == 0
 
-    # Concept A got its misconception with a RESOLVED opposes_entity_id.
     ents_a = await _fetch_entities(db_url, cid_a)
-    misc_a = next(e for e in ents_a if e.kind == "misconception")
-    assert misc_a.payload["opposes_entity_key"] == "cond.final_goods_only"
-    opposes_id = misc_a.payload["opposes_entity_id"]
-    target = next(e for e in ents_a if e.id == opposes_id)
-    assert target.canonical_key == "cond.final_goods_only"
+    assert not any(e.kind == "misconception" for e in ents_a)
+    assert any(e.canonical_key == "cond.final_goods_only" for e in ents_a)
 
-    # Concept B too (def.real_basis is a real reference node here).
     ents_b = await _fetch_entities(db_url, cid_b)
-    misc_b = next(e for e in ents_b if e.kind == "misconception")
-    assert misc_b.payload["opposes_entity_key"] == "def.real_basis"
-    assert misc_b.payload["opposes_entity_id"] is not None
+    assert not any(e.kind == "misconception" for e in ents_b)
+    assert any(e.canonical_key == "def.real_basis" for e in ents_b)
 
 
 @pytest.mark.asyncio
@@ -588,8 +592,9 @@ def _load_bernoulli_problem(n: int) -> dict:
 async def test_seed_backward_compat_bernoulli_default_subject(db_url):
     """A bare seed() (default subject_slug='fluid_mechanics', no concept_slug)
     reads the REAL bernoulli dir and mints the known counts: 14 concept + 8
-    variable entities, 16 prereqs, both misconceptions opposes-linked (one of
-    which opposes the authored def.pressure_velocity_tradeoff)."""
+    variable entities, 16 prereqs. DB-13: misconceptions.json is never read by
+    the generic seeder, so no misconception entity is minted or opposes-linked
+    (bernoulli's two misconceptions are simply inert data on disk now)."""
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="fluid_mechanics", space_id=1)
     cid = await _insert_concept_with_problems(
@@ -602,7 +607,7 @@ async def test_seed_backward_compat_bernoulli_default_subject(db_url):
     stats = await seed(db_url, write_disk=False)  # all defaults
 
     assert stats["concepts_seeded"] == 1
-    assert stats["misconceptions_linked"] == 2
+    assert stats["misconceptions_linked"] == 0
 
     ents = await _fetch_entities(db_url, cid)
     by_kind: dict[str, int] = {}
@@ -610,21 +615,17 @@ async def test_seed_backward_compat_bernoulli_default_subject(db_url):
         by_kind[e.kind] = by_kind.get(e.kind, 0) + 1
     assert by_kind["concept"] == 14
     assert by_kind["variable"] == 8
+    assert "misconception" not in by_kind
 
     keys = {e.canonical_key for e in ents}
     # The authored definition (not a reference node) is still minted for bernoulli.
     assert "def.pressure_velocity_tradeoff" in keys
-
-    # density_ignored opposes a real reference key; pressure_velocity opposes the
-    # authored definition — both resolve to a real entity id.
-    misc = {e.canonical_key: e for e in ents if e.kind == "misconception"}
-    assert misc["misc.density_ignored"].payload["opposes_entity_key"] == ("cond.incompressibility")
-    pv = misc["misc.pressure_velocity_same_direction"]
-    assert pv.payload["opposes_entity_key"] == "def.pressure_velocity_tradeoff"
-    assert pv.payload["opposes_entity_id"] is not None
+    # The misconceptions themselves never mint entity rows.
+    assert "misc.density_ignored" not in keys
+    assert "misc.pressure_velocity_same_direction" not in keys
 
     # 16 prereq edges.
-    engine = create_async_engine(db_url)
+    engine = _sqlite_engine(db_url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
@@ -632,8 +633,8 @@ async def test_seed_backward_compat_bernoulli_default_subject(db_url):
                 (
                     await s.execute(
                         select(EntityPrereq)
-                        .join(KGEntity, KGEntity.id == EntityPrereq.from_entity_id)
-                        .where(KGEntity.concept_id == cid)
+                        .join(LearnerEntity, LearnerEntity.id == EntityPrereq.from_entity_id)
+                        .where(LearnerEntity.concept_id == cid)
                     )
                 )
                 .scalars()
@@ -683,7 +684,7 @@ async def test_seed_idempotent_second_run_inserts_nothing(monkeypatch, tmp_path,
 async def test_seed_errors_when_subject_missing(db_url):
     """A course with no matching subject raises SeedError."""
     await _insert_course(db_url, 1)
-    with pytest.raises(seeder.SeedError, match="no 'macroeconomics' subject"):
+    with pytest.raises(seeder.SeedError, match="no any concept under subject 'macroeconomics'"):
         await seed(db_url, subject_slug="macroeconomics", write_disk=False)
 
 
@@ -711,8 +712,8 @@ async def test_seed_errors_when_concept_slug_absent(monkeypatch, tmp_path, db_ur
 
 @pytest.mark.asyncio
 async def test_seed_errors_when_no_courses(db_url):
-    """No aita_search_spaces rows -> SeedError (no course to attribute the seed)."""
-    with pytest.raises(seeder.SeedError, match="no aita_search_spaces"):
+    """No courses rows -> SeedError (no course to attribute the seed)."""
+    with pytest.raises(seeder.SeedError, match="no app.courses"):
         await seed(db_url, subject_slug="macroeconomics", write_disk=False)
 
 
@@ -825,9 +826,23 @@ async def test_seed_explicit_search_space_id_and_source_override(monkeypatch, tm
 @pytest.mark.asyncio
 async def test_seed_write_disk_mirrors_annotation_to_json(monkeypatch, tmp_path, db_url):
     """write_disk=True writes the annotated payload back to the concept dir's
-    problem_*.json (additive entity_key / declared_paths / layer1_seeded)."""
+    problem_*.json as UTF-8 (additive entity_key / declared_paths /
+    layer1_seeded)."""
     monkeypatch.setattr(seeder, "_SUBJECTS_ROOT", tmp_path)
     _make_macro_subject(tmp_path)
+
+    # Keep non-ASCII units literal so this test detects a locale-default
+    # (cp1252 on Windows) write instead of allowing ensure_ascii escaping to
+    # hide it.
+    problem = _macro_problem("gdp_identity")
+    problem["problem_text"] = "Compute a flow ratio in m³/s from areas in m²."
+    disk_file = (
+        tmp_path / "macroeconomics" / "concepts" / "gdp_components" / "problems" / "problem_01.json"
+    )
+    disk_file.write_text(
+        json.dumps(problem, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="macroeconomics", space_id=1)
@@ -835,26 +850,28 @@ async def test_seed_write_disk_mirrors_annotation_to_json(monkeypatch, tmp_path,
         db_url,
         subject_id=subject_id,
         slug="gdp_components",
-        problems=[_macro_problem("gdp_identity")],
+        problems=[problem],
     )
 
     await seed(
         db_url, subject_slug="macroeconomics", concept_slug="gdp_components", write_disk=True
     )
 
-    disk_file = (
-        tmp_path / "macroeconomics" / "concepts" / "gdp_components" / "problems" / "problem_01.json"
-    )
+    raw = disk_file.read_bytes()
+    assert "m³/s".encode() in raw
+    assert "m²".encode() in raw
     on_disk = json.loads(disk_file.read_text(encoding="utf-8"))
+    assert on_disk["problem_text"] == problem["problem_text"]
     assert on_disk["layer1_seeded"] is True
     assert "declared_paths" in on_disk
     assert all(step["entity_key"] for step in on_disk["reference_solution"])
 
 
 @pytest.mark.asyncio
-async def test_seed_raises_on_unknown_opposes_key(monkeypatch, tmp_path, db_url):
-    """A misconception opposing a key the seed does NOT mint raises SeedError in
-    the second (opposes-link) pass."""
+async def test_seed_ignores_dangling_misconception_opposes_key(monkeypatch, tmp_path, db_url):
+    """DB-13: misconceptions.json is never read by the generic seeder, so a
+    misconception opposing a key the seed does NOT mint is simply inert data —
+    seed() succeeds (it no longer reaches the opposes-link pass at all)."""
     monkeypatch.setattr(seeder, "_SUBJECTS_ROOT", tmp_path)
     # Author a concept whose misconception opposes a non-existent key.
     _write_concept_dir(
@@ -887,8 +904,8 @@ async def test_seed_raises_on_unknown_opposes_key(monkeypatch, tmp_path, db_url)
         problems=[_macro_problem("p1")],
     )
 
-    with pytest.raises(seeder.SeedError, match="opposes unknown key"):
-        await seed(db_url, subject_slug="brokensub", write_disk=False)
+    stats = await seed(db_url, subject_slug="brokensub", write_disk=False)
+    assert stats["misconceptions_linked"] == 0
 
 
 def test_disk_problem_paths_missing_dir_returns_empty(tmp_path):

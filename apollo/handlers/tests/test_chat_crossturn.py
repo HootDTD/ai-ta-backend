@@ -2,9 +2,8 @@
 graph into `parse_utterance`, enabling cross-turn edge linking; cross-turn
 node de-dup means a re-asserted prior id is not double-created.
 
-NO Neo4j, NO live LLM. The parser (`parse_utterance`), the reply
-(`draft_reply`), the intent classifier (`classify_intent`), history
-(`load_windowed_history`), and the problem lookup (`_find_problem`) are mocked
+NO Neo4j, NO live LLM. The parser (`parse_utterance`), unified question
+planner, intent classifier (`classify_intent`), and problem lookup (`_find_problem`) are mocked
 at the `apollo.handlers.chat` boundary. The `KGStore` is replaced with a mock
 whose `read_graph`/`write_nodes`/`write_edges`/`summarize_for_apollo` are
 controlled per-test. SQLite stands in for Postgres. Test attempt_ids/ids use
@@ -25,13 +24,13 @@ from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.ontology import KGGraph, build_node
 from apollo.parser.graph_context import GraphContext
 from apollo.persistence.models import (
-    ApolloSession,
-    KGNegotiation,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
+from apollo.smart_questions import QuestionDecision
 from database.models import Base
 
 # ---------------------------------------------------------------------------
@@ -41,24 +40,26 @@ from database.models import Base
 
 @pytest_asyncio.fixture
 async def db_session_attempt():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
-        KGNegotiation.__table__,
+        TutoringMessage.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             user_id=TEST_USER_ID,
             search_space_id=TEST_SPACE_ID,
             concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
             pending_intent=None,
         )
         s.add(sess)
@@ -66,8 +67,10 @@ async def db_session_attempt():
         await s.refresh(sess)
         attempt = ProblemAttempt(
             session_id=sess.id,
-            problem_id="bernoulli_horizontal_pipe_find_p2",
+            problem_id=1,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
         )
         s.add(attempt)
         await s.commit()
@@ -107,12 +110,18 @@ def _patches(store):
     return [
         patch("apollo.handlers.chat.KGStore", return_value=store),
         patch("apollo.handlers.chat.parse_utterance"),
-        patch("apollo.handlers.chat.draft_reply", return_value="ok i think i follow"),
+        patch(
+            "apollo.handlers.chat.plan_next_question",
+            new=AsyncMock(
+                return_value=QuestionDecision(
+                    action="ask", question="ok i think i follow", target_node_id="eq.a"
+                )
+            ),
+        ),
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
-        patch("apollo.handlers.chat.load_windowed_history", new=AsyncMock(return_value=(None, []))),
         # WU-3D: concept now resolves from the DB; _find_problem is async.
         patch(
             "apollo.handlers.chat._find_problem",
@@ -147,7 +156,7 @@ async def test_chat_threads_graph_context_into_parser(db_session_attempt):
     prior = KGGraph(nodes=[_eq("eq_prev", attempt_id, label="continuity")])
     store = _fake_store(prior_graph=prior)
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
@@ -166,7 +175,7 @@ async def test_chat_passes_built_context_not_none(db_session_attempt):
     prior = KGGraph(nodes=[_eq("eq_prev", attempt_id)])
     store = _fake_store(prior_graph=prior)
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
@@ -182,7 +191,7 @@ async def test_chat_empty_prior_graph_passes_empty_context(db_session_attempt):
     db, session_id, attempt_id = db_session_attempt
     store = _fake_store(prior_graph=KGGraph())
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
@@ -207,7 +216,7 @@ async def test_chat_does_not_recreate_prior_node(db_session_attempt):
     # store reports 1 created (the new one) — reused not counted.
     store = _fake_store(prior_graph=prior, nodes_added=1)
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
         mock_parse.return_value = ([reused, new], [])
         from apollo.handlers.chat import handle_chat
 
@@ -222,18 +231,63 @@ async def test_chat_does_not_recreate_prior_node(db_session_attempt):
 
 
 @pytest.mark.asyncio
-async def test_chat_response_envelope_unchanged(db_session_attempt):
+async def test_chat_response_uses_unified_envelope(db_session_attempt):
     db, session_id, attempt_id = db_session_attempt
     store = _fake_store(prior_graph=KGGraph())
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
         resp = await handle_chat(db=db, neo=MagicMock(), session_id=session_id, message="hi")
-    assert set(resp.keys()) == {"apollo_reply", "kg_entries_added", "kg"}
+    assert set(resp.keys()) == {
+        "apollo_reply",
+        "kg_entries_added",
+        "kg",
+        "covered_topics",
+        "question_target",
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_unconditionally_uses_unified_planner(db_session_attempt):
+    db, session_id, _attempt_id = db_session_attempt
+    store = _fake_store(prior_graph=KGGraph())
+    ps = _patches(store)
+
+    with ps[0], ps[1] as mock_parse, ps[2] as planner, ps[3], ps[4], ps[5]:
+        mock_parse.return_value = ([], [])
+        from apollo.handlers.chat import handle_chat
+
+        response = await handle_chat(db=db, neo=MagicMock(), session_id=session_id, message="hi")
+
+    planner.assert_awaited_once()
+    assert response["apollo_reply"] == "ok i think i follow"
     for gone in ("sufficiency", "misconception", "olm_invite"):
-        assert gone not in resp
+        assert gone not in response
+
+
+@pytest.mark.asyncio
+async def test_find_problem_returns_match_and_raises_on_missing_id():
+    """Direct unit coverage of _find_problem: the surrogate-id scan over
+    list_problems_for_concept returns the matching problem, and the
+    NO-FALLBACK branch raises RuntimeError when no id matches. The DB handle
+    is never touched (the listing call is mocked), so a MagicMock suffices."""
+    from apollo.handlers.chat import _find_problem
+
+    match = MagicMock(database_id=7)
+    other = MagicMock(database_id=3)
+    db = MagicMock()
+    with patch(
+        "apollo.handlers.chat.list_problems_for_concept",
+        new=AsyncMock(return_value=[other, match]),
+    ) as listing:
+        found = await _find_problem(db, 1, 7, course_id=99)
+        assert found is match
+        listing.assert_awaited_with(db, concept_id=1, search_space_id=99)
+
+        with pytest.raises(RuntimeError):
+            await _find_problem(db, 1, 999, course_id=99)
 
 
 @pytest.mark.asyncio
@@ -246,7 +300,7 @@ async def test_chat_writes_edges_after_nodes(db_session_attempt):
         side_effect=lambda **k: order.append("edges") or WriteEdgesResult(written=0)
     )
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 

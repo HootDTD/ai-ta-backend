@@ -26,8 +26,6 @@ RESOLUTION_METHODS: tuple[str, ...] = (
     "symbolic",
     "derived",
     "alias",
-    "clarification",
-    "nli",  # recall-only fallback (cap 0.88) — see nli_resolution.py
     "fuzzy",
     "llm",
     "unresolved",
@@ -40,8 +38,6 @@ METHOD_CONFIDENCE_CAP: dict[str, float] = {
     "symbolic": 0.98,
     "derived": 0.95,
     "alias": 0.92,
-    "clarification": 0.90,
-    "nli": 0.88,
     "fuzzy": 0.80,
     "llm": 0.75,
     "unresolved": 0.00,
@@ -54,7 +50,7 @@ METHOD_CONFIDENCE_CAP: dict[str, float] = {
 # G4 (variable_mapping contract): ``variable_mapping`` MUST be here — it is a
 # real ontology ``NodeType`` (nodes.py), the schema ``EntryType`` accepts it, and
 # the mint map ``persistence.learner_model_seed._ENTRY_TYPE_TO_KIND_PREFIX``
-# emits it (``varmap.*`` steps). A WU-AAS-authored ``ConceptProblem.payload``
+# emits it (``varmap.*`` steps). A WU-AAS-authored problem document
 # whose ``reference_solution`` carries a ``variable_mapping`` step therefore
 # reaches the graph-sim chain, and its ABSENCE from THIS map is what raised
 # ``KeyError: 'variable_mapping'`` in ``candidates_from_reference_solution`` /
@@ -97,14 +93,6 @@ def unknown_reference_entry_types(problem: dict) -> tuple[str, ...]:
             seen.add(str(entry_type))
     return tuple(sorted(seen))
 
-# Node types the NLI tier attempts. Excludes `equation` (exact/symbolic/derived
-# already cover it) and `variable_mapping` (surface is a bare `term` — degenerate
-# for sentence-level inference).
-NLI_NODE_TYPES: frozenset[str] = frozenset(
-    {"procedure_step", "condition", "definition", "simplification"}
-)
-
-
 @dataclass(frozen=True)
 class Candidate:
     """One resolution target in the closed candidate set for an attempt.
@@ -146,7 +134,7 @@ def candidates_from_reference_solution(
         if node_type is None:
             # G4 tolerance: an entry_type outside the map degrades to NO candidate
             # (the step is not a resolution target) rather than KeyError-ing the
-            # whole attempt. run_graph_simulation records the marker separately.
+            # whole attempt. Unknown entry types simply contribute no candidate.
             continue
         canonical_key = step["entity_key"]
         content = step.get("content", {}) or {}

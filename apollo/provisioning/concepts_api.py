@@ -2,7 +2,7 @@
 
 Teachers write their course's concept list directly (name + description)
 instead of relying on scrape-minted concepts. An authored concept is a bare
-``apollo_concepts`` row — that is already a first-class citizen everywhere it
+``app.concepts`` row — that is already a first-class citizen everywhere it
 matters:
 
 - reversed provisioning's closed-list matcher targets EVERY non-provisional
@@ -32,7 +32,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.auth_deps import require_course_teacher, require_user
-from apollo.persistence.models import Concept, ConceptProblem, KGEntity, Subject
+from apollo.persistence.models import Concept, LearnerEntity, Problem
 from apollo.provisioning.concept_match import norm_slug
 from apollo.provisioning.scrape import PROVISIONAL_CONCEPT_SLUG
 from apollo.provisioning.tag_mint_persist import resolve_or_create_concept
@@ -73,8 +73,7 @@ async def _course_concept_or_404(db: AsyncSession, concept_id: int) -> tuple[Con
     invisible to this API (404, not 403, to avoid leaking its existence)."""
     row = (
         await db.execute(
-            select(Concept, Subject.search_space_id)
-            .join(Subject, Subject.id == Concept.subject_id)
+            select(Concept, Concept.course_id)
             .where(Concept.id == concept_id)
         )
     ).first()
@@ -107,16 +106,18 @@ async def list_teacher_concepts(
     auth = await require_user(request)
     await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
 
-    problem_count = func.count(ConceptProblem.id)
-    teachable_count = func.count(ConceptProblem.id).filter(
-        ConceptProblem.tier == 2, ConceptProblem.quarantined_at.is_(None)
+    problem_count = func.count(Problem.id)
+    teachable_count = func.count(Problem.id).filter(
+        Problem.tier == 2, Problem.quarantined_at.is_(None)
     )
     result = await db.execute(
         select(Concept, problem_count, teachable_count)
-        .join(Subject, Subject.id == Concept.subject_id)
-        .outerjoin(ConceptProblem, ConceptProblem.concept_id == Concept.id)
+        .outerjoin(
+            Problem,
+            (Problem.concept_id == Concept.id) & (Problem.course_id == search_space_id),
+        )
         .where(
-            Subject.search_space_id == search_space_id,
+            Concept.course_id == search_space_id,
             Concept.slug != PROVISIONAL_CONCEPT_SLUG,
         )
         .group_by(Concept.id)
@@ -150,8 +151,7 @@ async def create_teacher_concept(
         (
             await db.execute(
                 select(Concept.slug)
-                .join(Subject, Subject.id == Concept.subject_id)
-                .where(Subject.search_space_id == body.search_space_id)
+                .where(Concept.course_id == body.search_space_id)
             )
         )
         .scalars()
@@ -206,11 +206,11 @@ async def update_teacher_concept(
     counts = (
         await db.execute(
             select(
-                func.count(ConceptProblem.id),
-                func.count(ConceptProblem.id).filter(
-                    ConceptProblem.tier == 2, ConceptProblem.quarantined_at.is_(None)
+                func.count(Problem.id),
+                func.count(Problem.id).filter(
+                    Problem.tier == 2, Problem.quarantined_at.is_(None)
                 ),
-            ).where(ConceptProblem.concept_id == concept_id)
+            ).where(Problem.concept_id == concept_id, Problem.course_id == search_space_id)
         )
     ).one()
     return _concept_payload(concept, problem_count=int(counts[0]), teachable_count=int(counts[1]))
@@ -228,11 +228,13 @@ async def delete_teacher_concept(
 
     problem_count = (
         await db.execute(
-            select(func.count(ConceptProblem.id)).where(ConceptProblem.concept_id == concept_id)
+            select(func.count(Problem.id)).where(
+                Problem.concept_id == concept_id, Problem.course_id == search_space_id
+            )
         )
     ).scalar_one()
     entity_count = (
-        await db.execute(select(func.count(KGEntity.id)).where(KGEntity.concept_id == concept_id))
+        await db.execute(select(func.count(LearnerEntity.id)).where(LearnerEntity.concept_id == concept_id))
     ).scalar_one()
     if int(problem_count) or int(entity_count):
         raise HTTPException(

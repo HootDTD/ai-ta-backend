@@ -1,10 +1,14 @@
 """Campaign-plan Task B1 — student scorecard renderer (spec 2026-07-01 §2).
 
 ``render_scorecard`` is a PURE TEMPLATE over an already-built canonical
-grading artifact payload (the dict shape ``apollo.grading.artifact_build``'s
-``build_graph_artifact``/``build_llm_artifact`` produce, or the identical
-JSONB-column shape of a persisted ``GradingArtifact`` row). It performs NO
-computation beyond formatting: band assignment is a threshold lookup on the
+grading artifact payload -- the dict shape ``apollo.grading.artifact_build``'s
+``build_graph_artifact``/``build_llm_artifact`` produce. (This is no longer a
+literal 1:1 mirror of a persisted ``GradingRun`` row's JSONB columns since the
+DB-14/A7 artifacts-only merge restructured storage onto ``internal.
+grading_runs`` -- ``campaign.cast.student.SqlArtifactReader._row_to_payload``
+is what reconstructs this exact dict shape back off a ``GradingRun`` row for
+campaign callers.) It performs NO computation beyond formatting: band
+assignment is a threshold lookup on the
 artifact's already-computed ``scores.composite``; the rubric blocks are
 straight reshapes of the node/misconception/clarification ledgers the
 artifact already carries. Nothing here is graded, resolved, or generated —

@@ -6,19 +6,24 @@ order), ``tag_and_mint``:
 
   1. LLM-drafts the concept tag (slug + display name) + prereq edges via the
      injected ``chat_fn`` (cheap_chat-shaped, MOCKED in Tier-1);
-  2. resolves the slug to a BIGINT ``apollo_concepts.id`` (creating it if absent);
+  2. resolves the slug to a BIGINT ``app.concepts.id`` (creating it if absent);
   3. AUTHORS the concept's ``canonical_symbols``/``normalization_map`` from the
      approved problem's symbol set (first-writer-wins UNION — NOT derived from a
      promoted problem, which is circular because gate 4 runs BEFORE promotion);
-  4. mints reference + misconception ``EntitySpec``s by REUSING two frozen §8 seed
-     converters (``reference_solution_to_entities`` /
-     ``misconceptions_to_entities``), resolving EACH entity candidate through
-     3B2c's ``resolve_candidate`` dedup ladder BEFORE upsert (a ``merged`` verdict
-     reuses the matched id instead of inserting);
+  4. mints reference ``EntitySpec``s by REUSING the frozen §8 seed converter
+     (``reference_solution_to_entities``), resolving EACH entity candidate
+     through 3B2c's ``resolve_candidate`` dedup ladder BEFORE upsert (a
+     ``merged`` verdict reuses the matched id instead of inserting).
+     Misconception ``EntitySpec``s are also minted via the frozen
+     ``misconceptions_to_entities`` converter, but DB-13 excludes them from the
+     dedup/upsert pass entirely — they never become ``LearnerEntity`` rows,
+     surfacing only as observability (``MintPlan.misconception_keys``);
   5. inserts the prereq edges from the LLM tag draft (NOT from the frozen
      ``concept_dag_to_prereqs`` converter — auto-provisioning drafts prereqs at
-     tag time, before any concept-DAG exists) and links each misconception's
-     ``opposes_entity_key`` to its entity id.
+     tag time, before any concept-DAG exists) and attempts to link each
+     minted misconception's ``opposes_entity_key`` to its entity id (a
+     permanent no-op post-DB-13: no misconception entity row ever exists to
+     link against).
 
 The two §8 converters that the seed script uses but this auto-provisioning path
 does NOT — ``concept_dag_to_prereqs`` (prereqs are LLM-drafted here) and
@@ -39,10 +44,15 @@ KG-enrichment edges the LLM routinely draws to a problem given (not a minted
 reference step), so such an edge is DROPPED (logged), not fatal — see step 5b.
 NO network: ``chat_fn``/``embed_fn`` are injected (mocked in Tier-1).
 
-Misconception-storage DEVIATION (orchestrator-signed, ADJ #2): auto-minted
-misconceptions are stored as ``apollo_kg_entities kind='misconception'`` (a valid
-ENTITY_KIND) via the frozen ``misconceptions_to_entities`` converter — NOT the
-literal §8B.2 ``apollo_misconceptions`` table (whose NOT-NULL Socratic
+DB-13 supersedes the misconception-storage DEVIATION below: the app-schema
+``learner_entities__kind__check`` no longer allows 'misconception', so
+auto-minted misconceptions are NEVER persisted as ``LearnerEntity`` rows —
+they exist only as in-memory ``EntitySpec``s / ``MintPlan.misconception_keys``
+observability. Preserved for history — the original deviation (orchestrator-
+signed, ADJ #2): auto-minted misconceptions used to be stored as
+``apollo_kg_entities kind='misconception'`` (a valid ENTITY_KIND at the time)
+via the frozen ``misconceptions_to_entities`` converter — NOT the literal
+§8B.2 ``apollo_misconceptions`` table (whose NOT-NULL Socratic
 ``probe_question``/``rt_steps`` v1 auto-provisioning cannot responsibly author).
 """
 
@@ -64,7 +74,7 @@ from apollo.persistence.learner_model_seed import (
     misconceptions_to_entities,
     reference_solution_to_entities,
 )
-from apollo.persistence.models import Concept, KGEntity
+from apollo.persistence.models import Concept, LearnerEntity
 from apollo.provisioning.dedup import resolve_candidate
 from apollo.provisioning.tag_mint_persist import (
     author_concept_symbols,
@@ -221,10 +231,10 @@ def _normalize_equation(symbolic: str) -> str:
         return re.sub(r"\s+", "", raw)
 
 
-def _equivalence_signature(spec: EntitySpec | KGEntity) -> tuple[str, str, str]:
+def _equivalence_signature(spec: EntitySpec | LearnerEntity) -> tuple[str, str, str]:
     """The deterministic, CASE-SENSITIVE equivalence key content-duplicate entities
     are folded on (G4.3). Computed identically for a fresh ``EntitySpec`` candidate
-    AND a PERSISTED ``KGEntity`` row (both expose ``kind``/``display_name``/
+    AND a PERSISTED ``LearnerEntity`` row (both expose ``kind``/``display_name``/
     ``payload``), so it drives BOTH the within-mint collapse and the cross-mint
     content-equality pre-match against prior uploads' entities.
 
@@ -514,8 +524,11 @@ async def tag_and_mint(
     page_ref = (problem.get("provenance") or {}).get("page")
     ref_specs = reference_solution_to_entities(problem)
     ref_specs, collapse_alias = _collapse_equivalent_candidates(ref_specs, page_ref=page_ref)
+    # DB-13: misconception EntitySpecs are observability-only (misconception_keys
+    # below) — the app-schema kind CHECK has no 'misconception', so they are
+    # NEVER added to all_specs / resolved / upserted as LearnerEntity rows.
     misc_specs = misconceptions_to_entities({"misconceptions": pair.misconceptions})
-    all_specs: list[EntitySpec] = [*ref_specs, *misc_specs]
+    all_specs: list[EntitySpec] = ref_specs
 
     key_to_id: dict[str, int] = {}
     minted_entity_ids: dict[str, int] = {}
@@ -539,7 +552,7 @@ async def tag_and_mint(
     # absent), so it never fuses two nodes of one problem; ``setdefault`` keeps the
     # earliest (lowest-id) entity as the survivor (first-writer-wins), matching the
     # ladder. Content-matched candidates skip ``resolve_candidate`` (hence write no
-    # ``apollo_dedup_decisions`` row — like the within-mint collapse) and surface on
+    # dedup-decision row — like the within-mint collapse) and surface on
     # ``MintPlan.merged_entity_keys``.
     prior_by_signature: dict[tuple[str, str, str], int] = {}
     for _ent in await load_concept_entities(db, concept_id=concept_id):
@@ -572,6 +585,7 @@ async def tag_and_mint(
 
         entity_id, _inserted = await upsert_entity(
             db,
+            course_id=search_space_id,
             concept_id=concept_id,
             spec=spec,
             scope_summary=scope_summary,
@@ -734,7 +748,13 @@ async def tag_and_mint(
     # Persist the surviving edges. ``insert_prereqs`` re-applies the concept-scope
     # guard at the writer boundary (defense-in-depth); after the pre-filter above it
     # has nothing left to drop, so its dropped-return is empty here.
-    await insert_prereqs(db, concept_id=concept_id, key_to_id=key_to_id, pairs=prereq_pairs)
+    await insert_prereqs(
+        db,
+        course_id=search_space_id,
+        concept_id=concept_id,
+        key_to_id=key_to_id,
+        pairs=prereq_pairs,
+    )
 
     return MintPlan(
         concept_id=concept_id,

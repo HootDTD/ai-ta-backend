@@ -40,10 +40,6 @@ from apollo.errors import (
     SessionFrozenError,
     TranscriptAuditUnavailableError,
 )
-from apollo.graph_compare.validator import (
-    ReferenceGraphInvalidError,
-    StudentGraphInvalidError,
-)
 from apollo.handlers.browse import handle_list_problems
 from apollo.handlers.chat import handle_chat
 from apollo.handlers.done import handle_done
@@ -56,7 +52,7 @@ from apollo.handlers.negotiate import (
     handle_paraphrase,
     handle_skip,
 )
-from apollo.handlers.progress import handle_get_progress, handle_get_progress_detail
+from apollo.handlers.progress import handle_get_progress_detail
 from apollo.hoot_bridge.session_init import init_session_direct, init_session_from_hoot
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.projections.classroom import (
@@ -146,6 +142,7 @@ class SessionCreateRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    ask_hoot: bool = False
 
 
 class NextRequest(BaseModel):
@@ -210,7 +207,13 @@ async def chat(
     neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
-    return await handle_chat(db=db, neo=neo, session_id=session_id, message=body.message)
+    return await handle_chat(
+        db=db,
+        neo=neo,
+        session_id=session_id,
+        message=body.message,
+        ask_hoot=body.ask_hoot,
+    )
 
 
 @router.post("/sessions/{session_id}/done")
@@ -269,12 +272,10 @@ async def end(
 @router.get("/progress")
 async def progress(
     request: Request,
-    search_space_id: int | None = None,
+    search_space_id: int,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    if search_space_id is None:
-        return await handle_get_progress(db=db, user_id=auth.user_id)
     await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
     return await handle_get_progress_detail(
         db=db, user_id=auth.user_id, search_space_id=search_space_id
@@ -422,7 +423,9 @@ async def classroom_struggles(
     auth = await require_user(request)
     await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
     return await struggle_signals(
-        db, search_space_id=search_space_id, window_days=window_days,
+        db,
+        search_space_id=search_space_id,
+        window_days=window_days,
     )
 
 
@@ -638,32 +641,6 @@ async def resolution_invalid_output_handler(
     )
 
 
-async def student_graph_invalid_handler(
-    request: Request, exc: StudentGraphInvalidError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=422,
-        content=_err_payload(
-            "student_graph_invalid",
-            str(exc),
-            reasons=list(exc.reasons),
-        ),
-    )
-
-
-async def reference_graph_invalid_handler(
-    request: Request, exc: ReferenceGraphInvalidError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=409,
-        content=_err_payload(
-            "reference_graph_invalid",
-            str(exc),
-            reasons=list(exc.reasons),
-        ),
-    )
-
-
 async def context_overflow_handler(request: Request, exc) -> JSONResponse:
     """Item #2: surface token-budget overflow as 503 instead of silently
     truncating Apollo's context."""
@@ -700,5 +677,3 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(ResolutionUnavailableError, resolution_unavailable_handler)
     app.add_exception_handler(TranscriptAuditUnavailableError, transcript_audit_unavailable_handler)
     app.add_exception_handler(ResolutionInvalidOutputError, resolution_invalid_output_handler)
-    app.add_exception_handler(StudentGraphInvalidError, student_graph_invalid_handler)
-    app.add_exception_handler(ReferenceGraphInvalidError, reference_graph_invalid_handler)

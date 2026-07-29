@@ -1,7 +1,7 @@
 """Overseer.concept_inference: Hoot transcript -> concept_id.
 
 Isolated LLM call. The LLM is given the transcript and the course's candidate
-concepts (``{concept_id, display_name}``, drawn from ``apollo_concepts`` rows
+concepts (``{concept_id, display_name}``, drawn from ``app.concepts`` rows
 scoped to the course). It must return exactly one matching ``concept_id`` (int)
 from the provided set, or null. Apollo NEVER sees this call's output directly —
 only the Overseer uses it to select a problem.
@@ -14,12 +14,12 @@ call.
 from __future__ import annotations
 
 import json
-import os
 
 from openai import OpenAI
 
 from apollo.errors import NoMatchingConceptError
 from apollo.subjects.curriculum_db import ConceptRow
+from config.models import MAIN_MODEL
 
 _SYSTEM_PROMPT = """You are identifying which concept a student was most recently
 learning about in a conversation. You will be given:
@@ -45,7 +45,7 @@ def infer_concept_id(
     the empty-candidates "course has no curriculum" path, where the LLM can only
     return null).
     """
-    model = model or os.getenv("MAIN_MODEL", "gpt-4o")
+    model = model or MAIN_MODEL
     client = OpenAI()
     user_content = json.dumps(
         {

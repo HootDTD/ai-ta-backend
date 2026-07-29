@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 
-from apollo.persistence.models import GradingArtifact, LearnerState, MasteryEvent
+from apollo.persistence.models import GradingRun, LearnerState, MasteryEvent
 from apollo.projections.mastery import (
     EVENT_KIND,
     _belief_for,
@@ -25,22 +25,25 @@ from apollo.projections.mastery import (
 pytestmark = pytest.mark.unit
 
 
-def _artifact(**overrides: Any) -> GradingArtifact:
+def _artifact(**overrides: Any) -> GradingRun:
+    # DB-14/A7: `scores`/`abstention` are gone from GradingRun -- the typed
+    # `composite_score` scalar column + `abstention_details` JSONB column
+    # replace them (see GradingRun's docstring).
     base = dict(
         concept_id=7,
         attempt_id=1,
         user_id="u1",
         search_space_id=1,
-        scores={"composite": 0.6},
-        abstention=None,
+        composite_score=0.6,
+        abstention_details=None,
         node_ledger=[],
         created_at=None,
     )
     base.update(overrides)
-    # A SimpleNamespace duck-types GradingArtifact for these pure-helper tests
+    # A SimpleNamespace duck-types GradingRun for these pure-helper tests
     # (only attribute reads, no ORM behavior needed) — cast so callers keep
     # the real return-type contract.
-    return cast(GradingArtifact, SimpleNamespace(**base))
+    return cast(GradingRun, SimpleNamespace(**base))
 
 
 # ---------------------------------------------------------------------------
@@ -135,20 +138,20 @@ def test_ledger_entity_keys_empty_ledger() -> None:
 
 
 def test_normalization_confidence_present() -> None:
-    artifact = _artifact(abstention={"normalization_confidence": 0.82})
+    artifact = _artifact(abstention_details={"normalization_confidence": 0.82})
     assert _normalization_confidence(artifact) == pytest.approx(0.82)
 
 
 def test_normalization_confidence_none_abstention_defaults_to_full_confidence() -> None:
-    assert _normalization_confidence(_artifact(abstention=None)) == 1.0
+    assert _normalization_confidence(_artifact(abstention_details=None)) == 1.0
 
 
 def test_normalization_confidence_missing_key_defaults_to_full_confidence() -> None:
-    assert _normalization_confidence(_artifact(abstention={})) == 1.0
+    assert _normalization_confidence(_artifact(abstention_details={})) == 1.0
 
 
 def test_normalization_confidence_explicit_none_value_defaults_to_full_confidence() -> None:
-    artifact = _artifact(abstention={"normalization_confidence": None})
+    artifact = _artifact(abstention_details={"normalization_confidence": None})
     assert _normalization_confidence(artifact) == 1.0
 
 
@@ -223,8 +226,8 @@ async def _run_projection(
         attempt_id=1,
         user_id="u1",
         search_space_id=1,
-        scores={"composite": 0.6},
-        abstention=None,
+        composite_score=0.6,
+        abstention_details=None,
         node_ledger=node_ledger,
         created_at=None,
     )

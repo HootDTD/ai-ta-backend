@@ -1,7 +1,7 @@
-"""Repository for apollo_student_progress rows.
+"""Repository for course-scoped student progress rows.
 
 Two public functions:
-  - load_progress: return the user's progress row, creating a default
+  - load_progress: return the user's per-course progress row, creating a default
     (0 XP, level 1) row if missing.
   - apply_xp: add xp_delta, recompute level, stamp last_level_up_at on
     level change, and return a before/after summary suitable for the
@@ -23,13 +23,20 @@ from apollo.overseer.xp import level_from_xp
 from apollo.persistence.models import StudentProgress
 
 
-async def load_progress(*, db: AsyncSession, user_id: str) -> StudentProgress:
+async def load_progress(
+    *, db: AsyncSession, user_id: str, course_id: int
+) -> StudentProgress:
     row = (await db.execute(
-        select(StudentProgress).where(StudentProgress.user_id == user_id)
+        select(StudentProgress).where(
+            StudentProgress.user_id == user_id,
+            StudentProgress.course_id == course_id,
+        )
     )).scalar_one_or_none()
     if row is not None:
         return row
-    row = StudentProgress(user_id=user_id, xp_total=0, level=1)
+    row = StudentProgress(
+        user_id=user_id, course_id=course_id, xp_total=0, level=1
+    )
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -40,12 +47,13 @@ async def apply_xp(
     *,
     db: AsyncSession,
     user_id: str,
+    course_id: int,
     xp_delta: int,
 ) -> Dict[str, Any]:
     if xp_delta < 0:
         raise ValueError(f"xp_delta must be non-negative; got {xp_delta}")
 
-    row = await load_progress(db=db, user_id=user_id)
+    row = await load_progress(db=db, user_id=user_id, course_id=course_id)
     xp_before = row.xp_total
     level_before = row.level
 

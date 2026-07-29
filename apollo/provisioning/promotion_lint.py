@@ -39,7 +39,7 @@ pass to promotion. The gates:
 PURE / DB-free / LLM-free: ``canonical_symbols`` / ``normalization_map`` (gate 4)
 and ``existing_problem_hashes`` (gate 8) are PASSED IN by the caller. This unit
 owns the gate logic + diagnostic ONLY — it does NOT promote, call
-``project_canon``, or write ``rejected_problems`` (that wiring is 3B2g's).
+``project_canon``, or persist rejection-audit rows.
 """
 
 from __future__ import annotations
@@ -718,8 +718,20 @@ class _Gate9Decision:
 
 
 _GATE9_SOLVE_TIMEOUT_SECONDS = 2.0
+# spawn children (no fork available, e.g. Windows) re-import sympy cold before
+# they can even start solving, so the poll deadline must not charge interpreter
+# boot time against the solve budget — fork children inherit the loaded
+# interpreter and get none of this allowance.
+_GATE9_SPAWN_IMPORT_ALLOWANCE_SECONDS = 20.0
 _GATE9_ATOL = 1e-9
 _GATE9_RTOL = 1e-6
+
+
+def _gate9_poll_timeout(start_method: str) -> float:
+    """Poll deadline for the gate-9 solver child, given its mp start method."""
+    if start_method == "fork":
+        return _GATE9_SOLVE_TIMEOUT_SECONDS
+    return _GATE9_SOLVE_TIMEOUT_SECONDS + _GATE9_SPAWN_IMPORT_ALLOWANCE_SECONDS
 
 
 def _solve_worker(sender, equations, unknowns) -> None:
@@ -735,12 +747,13 @@ def _solve_worker(sender, equations, unknowns) -> None:
 def _solve_with_timeout(equations: list, unknowns: list):
     """Run one SymPy solve in a killable child process."""
     methods = multiprocessing.get_all_start_methods()
-    ctx = multiprocessing.get_context("fork" if "fork" in methods else "spawn")
+    start_method = "fork" if "fork" in methods else "spawn"
+    ctx = multiprocessing.get_context(start_method)
     receiver, sender = ctx.Pipe(duplex=False)
     proc = ctx.Process(target=_solve_worker, args=(sender, equations, unknowns), daemon=True)
     proc.start()
     sender.close()
-    if receiver.poll(_GATE9_SOLVE_TIMEOUT_SECONDS):
+    if receiver.poll(_gate9_poll_timeout(start_method)):
         # A child that dies without sending trips poll() via EOF too, so the
         # recv() must tolerate it — an EOFError is a solver error, not a crash.
         try:

@@ -8,21 +8,30 @@ Python/FastAPI backend powering Hoot's intelligent tutoring system. Combines RAG
 
 ## Doc tree — navigate docs first, code second
 
-`docs/architecture/` describes this repo's code; each doc declares `owns:`
-globs in its frontmatter and is the authority on those files:
+`docs/architecture/` is a **hierarchical** tree: `architecture/<domain>/<module>.md`
+leaf docs, each owning **explicit repo-relative paths** (1-2 source files), routed
+by a per-domain `_index.md` and a thin root `_overview.md`. Reading protocol:
+CLAUDE.md → `docs/shared-architecture/README.md` → domain `_index.md` → 1-3 leaves
+(≤4 hops, ≤~500 doc-lines; resolve any source file to its owning leaf via
+`docs/index.json`). Never read source to understand the system — only to change it.
 
-- `docs/architecture/_overview.md` — bootstrap, HTTP surface, auth, config, vendors, ops entrypoints
-- `docs/architecture/rag-pipeline.md` — `ai/` + `retrieval/` (QA pipeline)
-- `docs/architecture/indexing.md` — `indexing/` + `indexers/` + `ocr/` (ingestion)
-- `docs/architecture/apollo.md` — `apollo/` (learning-by-teaching subsystem)
-- `docs/architecture/domain-data.md` — `database/` + `chats/` + `knowledge/` + `reports/`
+Domains: `apollo/_index.md` (sub-indexed: conversation, ontology, knowledge-graph,
+resolution, solver, overseer, grading, projections, persistence, learner-model,
+schemas, provisioning), `rag-pipeline/`, `chats/`, `knowledge/`, `platform/`,
+`reports/`, `indexing/`, `database/`, `campaign/`.
 
-Cross-repo shared docs live in `docs/shared-architecture/` (conventions,
-security, supabase, product-context, README navigation map).
+Cross-repo shared docs live in `docs/shared-architecture/` (README router,
+conventions, security, supabase, data-flow, branching, admin-setup, product-context).
 
-**Drift contract:** before editing a source file, load its owner doc. After
-editing code, update the owner doc in the same commit and bump
-`last_verified`. Stale docs are worse than no docs.
+**Drift contract:** before editing a source file, resolve and load its **owning
+leaf** (via `docs/index.json` or the domain `_index`) — `owns` declares **explicit
+repo-relative paths**, not globs. Ownership is a machine-checked **bijection** (every
+non-test source file maps to exactly one leaf); the `docs` CI job fails the PR on an
+uncovered, double-owned, dangling, or owns∩exclude-colliding file, a broken
+`related:` id, a stale `_index` table, or an owned-file change with no
+`last_verified` bump. Cross-cutting invariants live in the domain `_index` — change
+them there, once. After editing, reconcile the owning leaf in the SAME commit and
+bump `last_verified`. Stale docs are worse than no docs.
 
 ## Architecture
 
@@ -41,11 +50,11 @@ editing code, update the owner doc in the same commit and bump
 1. Student submits question + optional images
 2. Vision module transcribes images; keywords extracted
 3. Semantic filter removes out-of-scope questions
-4. Retrieval-mode orchestrator (`ROUTER_ENABLED`, default off): classifies each turn
+4. Retrieval-mode orchestrator (always on): classifies each turn
    NONE / AUGMENT / FRESH against the session's cached bundle — NONE answers from
    cache (skips steps 5–7 and snippet scoring), AUGMENT runs a reduced top-up merged
    with the cache, FRESH is the full pipeline. Fails open to FRESH.
-   Details: `docs/architecture/rag-pipeline.md` (step 3a).
+   Details: `docs/architecture/rag-pipeline/_index.md` (router-mode / router-wiring).
 5. Hybrid retrieval: pgvector semantic + PostgreSQL FTS lexical + query expansion
 6. Reranking: importance scoring, relevance thresholding, duplicate removal
 7. Context packing: snippet assembly, citation markers, token budget management
@@ -54,9 +63,9 @@ editing code, update the owner doc in the same commit and bump
 
 ## Key Tech Decisions
 - Vector search: pgvector (PostgreSQL) + FAISS. Do not introduce other vector stores.
-- LLM: GPT-4o via MAIN_MODEL env var. Vision fallback: Tesseract if GPT-4V unavailable.
+- LLM: the solver model is pinned in `config/models.py` (`MAIN_MODEL = gpt-5.1`, `MAIN_REASONING_EFFORT = low`) — changing it is a code change + deploy, not an env var. Vision fallback: Tesseract if GPT-4V unavailable.
 - Database: Supabase PostgreSQL + pgvector, async via SQLAlchemy + asyncpg
-- Deployment: Railway (GitHub integration, deploys `ApolloV3`; Procfile defines web + worker processes). Heroku is abandoned — do not re-wire it.
+- Deployment: Railway (GitHub integration; prod deploys `main`, staging deploys `staging`; Procfile defines web + worker processes). Heroku is abandoned — do not re-wire it.
 
 ## Environment
 Config via `config/settings.py`. Copy `.env.example` to `.env` for required variables.
@@ -71,7 +80,7 @@ pytest tests/test_main_ai.py -v     # Run specific test module
 
 ## Coding Standards
 - Keep each retrieval pipeline stage independent and independently testable
-- All new features must include unit tests using Supabase mock fixtures (see conftest.py)
+- All new features must include unit tests using the shared conftest harness (env fixtures + Testcontainers Postgres for DB paths; see tests/conftest.py)
 - Use comprehensive debug logging for any pipeline stage
 - Return structured JSON responses from the LLM layer — never raw text
 

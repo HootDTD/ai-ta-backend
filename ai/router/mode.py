@@ -8,7 +8,7 @@ v1 deliberately skips the embedding stage (``EmbeddingRouter``): its seed
 utterances are subject-specific and centroid thresholds are untuned, while the
 gpt-4o-mini structured call is subject-agnostic and sees conversation context —
 the only reliable signal for bare CYU replies like "B". Telemetry rows
-(``chat_router_decisions``) collect the data needed to add an embedding
+(``internal.chat_routing_decisions``) collect the data needed to add an embedding
 fast-path later.
 
 Failure asymmetry: misrouting toward FRESH only costs efficiency; misrouting

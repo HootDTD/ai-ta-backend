@@ -14,7 +14,7 @@ It REUSES three frozen primitives and re-implements none of their logic:
     Layer-1 entities.
 
 On a PASS it stores the annotated reference solution + ``solution_source`` into
-the ``apollo_concept_problems.payload``, flips ``tier`` 1->2 (keyed on the
+the promoted ``app.problems`` columns, flips ``tier`` 1->2 (keyed on the
 existing row id — NEVER an insert), flushes, then projects ``:Canon``. The tier
 flip is idempotent (a re-run flips an already-``tier=2`` row to ``2``, a no-op)
 and the ``:Canon`` MERGE is idempotent, so a re-claimed job's re-promote is
@@ -28,12 +28,11 @@ malformed, invalid, or failed enumeration leaves the legacy single path intact.
 
 On a FAIL it returns ``PromoteResult(promoted=False, failed_gate, diagnostic)``
 WITHOUT touching the row. ``promote`` does NOT write the
-``apollo_rejected_problems`` row — the orchestrator is the SINGLE rejection-write
-owner (so the gate->reject mapping lives in one place).
+retired rejection-audit table; the result ledger owns rejection outcomes.
 
 ``promote`` never commits or rolls back the caller's session: the orchestrator
 owns the transaction. A ``CanonProjectionError`` from ``project_canon`` is
-re-raised (the orchestrator maps it to an ``apollo_ingest_errors`` row + a failed
+re-raised (the orchestrator maps it to a content-ingest error + a failed
 run); the already-flushed tier flip is left in place — it is idempotently
 re-projected on the next attempt.
 """
@@ -53,7 +52,8 @@ from apollo.persistence.learner_model_seed import (
     annotate_reference_solution,
     validate_reference_graph,
 )
-from apollo.persistence.models import Concept, ConceptProblem
+from apollo.persistence.models import Concept
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.path_enumeration import multi_path_enabled
 from apollo.provisioning.promotion_lint import (
     PromotionUnresolved,
@@ -195,13 +195,12 @@ async def promote(
         concept_problem_id=concept_problem_id,
     )
 
-    # Read the concept's AUTHORED symbol set (gate-4 non-vacuity). The shape is
-    # {"symbols": [...], ...} (author_concept_symbols, 3B2d); a vacuous set makes
-    # gate 4 reject every foreign symbol.
+    # Read the concept's AUTHORED symbol array (gate-4 non-vacuity); a vacuous
+    # set makes gate 4 reject every foreign symbol.
     concept = await db.get(Concept, mint_plan.concept_id)
     if concept is None:
         raise RuntimeError(f"promote: concept {mint_plan.concept_id} not found")
-    canonical_symbols = set(dict(concept.canonical_symbols or {}).get("symbols") or [])
+    canonical_symbols = set(concept.canonical_symbols or [])
     normalization_map = dict(concept.normalization_map or {})
 
     # Subject-AGNOSTIC Apollo (spec §3): gate applicability is CONTENT-DERIVED, not
@@ -238,7 +237,7 @@ async def promote(
         )
 
     # --- PASS: flip tier 1->2, RE-HOME to the tagged concept, store solution --- #
-    row = await db.get(ConceptProblem, concept_problem_id)
+    row = await db.get(ProblemRecord, concept_problem_id)
     if row is None:
         raise RuntimeError(f"promote: concept_problem {concept_problem_id} not found")
     # Store the COMPLETE annotated problem as the payload: the student selector
@@ -265,8 +264,8 @@ async def promote(
         **annotated,
         "verification": "mechanically_verified" if mechanically_verified else "faithfulness_only",
     }
-    new_payload = {**(row.payload or {}), **annotated_with_stamp}
-    row.payload = new_payload  # type: ignore[assignment]
+    new_payload = {**dict(row.payload_extra or {}), **annotated_with_stamp}
+    row.apply_pydantic_payload(new_payload)
     # RE-HOME the row from the provisional-inventory concept (scrape.py's seam home)
     # onto the REAL tagged concept (``tag_and_mint`` resolved). The student selector
     # ``list_problems_for_concept`` filters ``concept_id == <session concept> AND
@@ -274,6 +273,7 @@ async def promote(
     # stranded on ``provisional.inventory`` is permanently UNREACHABLE. Idempotent: a
     # re-run re-assigns the SAME tagged concept_id (no-op). (scrape.py:18.)
     row.concept_id = mint_plan.concept_id  # type: ignore[assignment]
+    row.course_id = search_space_id  # type: ignore[assignment]
     row.tier = 2  # type: ignore[assignment]
     # Persist the true per-problem provenance the caller threaded (e.g. an authored
     # set's paired-EXTRACTED solution), falling back to the generic default. The

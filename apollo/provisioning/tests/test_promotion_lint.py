@@ -1413,6 +1413,21 @@ def test_gate9_solver_timeout_hard_terminates_hanging_child(monkeypatch):
     assert time.monotonic() - started < 1.0
 
 
+def test_gate9_poll_timeout_fork_is_bare_solve_budget():
+    import apollo.provisioning.promotion_lint as lint
+
+    assert lint._gate9_poll_timeout("fork") == lint._GATE9_SOLVE_TIMEOUT_SECONDS
+
+
+def test_gate9_poll_timeout_spawn_adds_import_allowance():
+    import apollo.provisioning.promotion_lint as lint
+
+    expected = lint._GATE9_SOLVE_TIMEOUT_SECONDS + lint._GATE9_SPAWN_IMPORT_ALLOWANCE_SECONDS
+    assert lint._gate9_poll_timeout("spawn") == expected
+    # Any non-fork start method (e.g. "forkserver") gets the same allowance.
+    assert lint._gate9_poll_timeout("forkserver") == expected
+
+
 def test_gate9_more_than_one_residual_unknown_is_unresolved_not_refuted():
     from apollo.provisioning.promotion_lint import content_active_gates
 

@@ -11,7 +11,7 @@ context, so those spans are marked ``carries_solution=False`` (extract branch
 skipped, but the spans still ride along as generation context). When no solution
 document is paired (``solution_document_id is None``), the retrieve fn returns
 no spans at all so the caller falls through to solution generation. This module
-deliberately filters by ``aita_chunks.document_id`` and never uses the
+deliberately filters by ``internal.document_chunks.document_id`` and never uses the
 student-RAG document visibility gate.
 """
 
@@ -45,13 +45,13 @@ async def load_solution_chunks(
     ``None`` (no solution doc paired) returns ``[]`` without a query."""
     if solution_document_id is None:
         return []
-    from database.models import AITAChunk
+    from database.models import DocumentChunk
 
     rows = (
         await db.execute(
-            select(AITAChunk.id, AITAChunk.content, AITAChunk.page_number)
-            .where(AITAChunk.document_id == solution_document_id)
-            .order_by(AITAChunk.id.asc())
+            select(DocumentChunk.id, DocumentChunk.content, DocumentChunk.page_number)
+            .where(DocumentChunk.document_id == solution_document_id)
+            .order_by(DocumentChunk.id.asc())
         )
     ).all()
     return [(int(row.id), row.content or "", row.page_number) for row in rows]
@@ -67,10 +67,10 @@ async def chunk_ocr_confidence(
     ``None`` (no document, e.g. no solution paired) returns ``{}`` without a query."""
     if document_id is None:
         return {}
-    from database.models import AITADocument
+    from database.models import Document
 
-    doc = await db.get(AITADocument, document_id)
-    meta = dict(getattr(doc, "document_metadata", None) or {})
+    doc = await db.get(Document, document_id)
+    meta = dict(getattr(doc, "metadata_", None) or {})
     page_conf: dict[int | None, float | None] = {}
     for entry in meta.get("page_debug") or []:
         if not isinstance(entry, dict):
@@ -91,7 +91,7 @@ async def _doc_scoped_semantic(
     top_k: int,
 ) -> list[SolutionChunk]:
     """Semantic top-k over exactly one solution document's chunks."""
-    from database.models import AITAChunk
+    from database.models import DocumentChunk
     from indexing.document_embedder import embed_text
     from retrieval.hybrid_search import _halfvec_cosine_distance
 
@@ -99,8 +99,8 @@ async def _doc_scoped_semantic(
     distance = _halfvec_cosine_distance(query_embedding)
     rows = (
         await db.execute(
-            select(AITAChunk.id, AITAChunk.content, AITAChunk.page_number)
-            .where(AITAChunk.document_id == solution_document_id)
+            select(DocumentChunk.id, DocumentChunk.content, DocumentChunk.page_number)
+            .where(DocumentChunk.document_id == solution_document_id)
             .order_by(distance)
             .limit(top_k)
         )

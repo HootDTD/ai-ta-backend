@@ -1,0 +1,2 @@
+-- Deterministic, non-production seed data belongs here.
+-- DB-02 intentionally leaves the seed empty until the target schema migrations exist.

@@ -3,10 +3,10 @@
 ``apollo.projections.classroom.struggle_signals``.
 
 Seeds 2 students x 2 concepts of ``apollo_learner_state`` rows plus
-``apollo_grading_artifacts`` rows directly via the ORM -- these tests exercise
-the AGGREGATION SQL, not the writers that produce these rows in production
-(``update_mastery_from_artifact`` / ``write_artifacts`` already have their own
-dedicated DB test suites).
+``internal.grading_runs`` rows (DB-14/A7 artifacts-only merge) directly via
+the ORM -- these tests exercise the AGGREGATION SQL, not the writers that
+produce these rows in production (``update_mastery_from_artifact`` /
+``write_artifacts`` already have their own dedicated DB test suites).
 
 Row shapes below mirror what ``apollo.handlers.artifact_writer.write_artifacts``
 + ``apollo.grading.artifact_build`` actually produce (review fix, Task B3):
@@ -29,16 +29,22 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from apollo.persistence.models import (
-    ApolloSession,
-    GradingArtifact,
-    KGEntity,
+    GradingRun,
+    LearnerEntity,
     LearnerState,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.projections.classroom import mastery_heatmap, struggle_signals
-from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
+from apollo.subjects.tests._curriculum_fixtures import (
+    minimal_problem_payload,
+    problem_database_id,
+    seed_concept,
+    seed_problems,
+    seed_search_space,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -54,8 +60,11 @@ async def _seed_two_concepts(db) -> tuple[int, int, int]:
     return sid, cid_1, cid_2
 
 
-async def _seed_entity(db, *, concept_id: int, canonical_key: str, kind: str = "equation") -> int:
-    entity = KGEntity(
+async def _seed_entity(
+    db, *, course_id: int, concept_id: int, canonical_key: str, kind: str = "equation"
+) -> int:
+    entity = LearnerEntity(
+        course_id=course_id,
         concept_id=concept_id,
         canonical_key=canonical_key,
         kind=kind,
@@ -83,28 +92,52 @@ async def _seed_state(
     await db.flush()
 
 
-async def _seed_attempt(db, *, search_space_id: int, concept_id: int) -> int:
-    sess = ApolloSession(
+async def _seed_problem(db, *, search_space_id: int) -> int:
+    """A real ``app.problems`` row -- ``GradingRun.problem_id`` (DB-14/A7) is
+    a NOT NULL FK to ``app.problems.id`` (ON DELETE RESTRICT), unlike the
+    pre-merge model's bare ``Text`` column. Seeded under its own throwaway
+    concept, decoupled from the attempt's session concept."""
+    problem_concept_id = await seed_concept(
+        db,
+        search_space_id=search_space_id,
+        subject_slug=f"subj-{uuid.uuid4().hex[:8]}",
+        concept_slug=f"pconcept-{uuid.uuid4().hex[:8]}",
+    )
+    code = f"p-{uuid.uuid4().hex[:8]}"
+    await seed_problems(db, concept_id=problem_concept_id, payloads=[minimal_problem_payload(code=code)])
+    return await problem_database_id(db, concept_id=problem_concept_id, problem_code=code)
+
+
+async def _seed_attempt(db, *, search_space_id: int, concept_id: int) -> tuple[int, int]:
+    """Returns ``(attempt_id, problem_id)``."""
+    problem_id = await _seed_problem(db, search_space_id=search_space_id)
+    sess = TutoringSession(
         user_id=str(uuid.uuid4()),
         search_space_id=search_space_id,
         concept_id=concept_id,
         status=SessionStatus.ended.value,
         phase=SessionPhase.REPORT.value,
-        current_problem_id="p1",
+        current_problem_id=1,
     )
     db.add(sess)
     await db.flush()
     attempt = ProblemAttempt(
-        session_id=sess.id, problem_id="p1", difficulty="intro", result="graded"
+        session_id=sess.id,
+        problem_id=problem_id,
+        difficulty="intro",
+        result="graded",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
     )
     db.add(attempt)
     await db.flush()
-    return int(attempt.id)
+    return int(attempt.id), problem_id
 
 
 def _artifact(
     *,
     attempt_id: int,
+    problem_id: int,
     search_space_id: int,
     concept_id: int,
     grader_used: str,
@@ -113,22 +146,31 @@ def _artifact(
     misconceptions: list[dict] | None = None,
     abstained: bool | None = None,
     created_at: datetime | None = None,
-) -> GradingArtifact:
-    return GradingArtifact(
+) -> GradingRun:
+    return GradingRun(
         attempt_id=attempt_id,
         role=role,
         grader_used=grader_used,
+        grader_version="v1",
         user_id=str(uuid.uuid4()),
         search_space_id=search_space_id,
         concept_id=concept_id,
-        problem_id="p1",
-        versions={"grader": "v1"},
+        problem_id=problem_id,
+        version_details={"grader": "v1"},
         node_ledger=node_ledger or [],
         edge_ledger=[],
-        misconceptions=misconceptions or [],
-        clarification_trace=[],
-        scores={"composite": 0.5},
-        abstention={"abstained": abstained} if abstained is not None else None,
+        score_details={"composite": 0.5},
+        composite_score=0.5,
+        # `abstained` is a typed NOT NULL boolean column (default false,
+        # matching build_llm_artifact hardcoding abstention.abstained=None
+        # -> artifact_writer lifts falsy to False); abstention_details keeps
+        # the whole-dict record only when a real value was asserted.
+        abstained=bool(abstained) if abstained is not None else False,
+        abstention_details={"abstained": abstained} if abstained is not None else None,
+        grader_payload={
+            "misconceptions": misconceptions or [],
+            "clarification_trace": [],
+        },
         grading_latency_ms=None,
         created_at=created_at or datetime.now(UTC),
     )
@@ -141,8 +183,8 @@ def _artifact(
 
 async def test_heatmap_returns_one_row_per_user_and_concept(db_session):
     sid, cid_1, cid_2 = await _seed_two_concepts(db_session)
-    e1 = await _seed_entity(db_session, concept_id=cid_1, canonical_key="eq.a")
-    e2 = await _seed_entity(db_session, concept_id=cid_2, canonical_key="eq.b")
+    e1 = await _seed_entity(db_session, course_id=sid, concept_id=cid_1, canonical_key="eq.a")
+    e2 = await _seed_entity(db_session, course_id=sid, concept_id=cid_2, canonical_key="eq.b")
     u1, u2 = str(uuid.uuid4()), str(uuid.uuid4())
 
     await _seed_state(
@@ -168,8 +210,8 @@ async def test_heatmap_returns_one_row_per_user_and_concept(db_session):
 
 async def test_heatmap_averages_multiple_entities_under_one_concept(db_session):
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
-    e1 = await _seed_entity(db_session, concept_id=cid_1, canonical_key="eq.a")
-    e2 = await _seed_entity(db_session, concept_id=cid_1, canonical_key="eq.b")
+    e1 = await _seed_entity(db_session, course_id=sid, concept_id=cid_1, canonical_key="eq.a")
+    e2 = await _seed_entity(db_session, course_id=sid, concept_id=cid_1, canonical_key="eq.b")
     u1 = str(uuid.uuid4())
 
     await _seed_state(
@@ -189,8 +231,8 @@ async def test_heatmap_averages_multiple_entities_under_one_concept(db_session):
 async def test_heatmap_scopes_to_search_space(db_session):
     sid_a, cid_a, _ = await _seed_two_concepts(db_session)
     sid_b, cid_b, _ = await _seed_two_concepts(db_session)
-    e_a = await _seed_entity(db_session, concept_id=cid_a, canonical_key="eq.a")
-    e_b = await _seed_entity(db_session, concept_id=cid_b, canonical_key="eq.b")
+    e_a = await _seed_entity(db_session, course_id=sid_a, concept_id=cid_a, canonical_key="eq.a")
+    e_b = await _seed_entity(db_session, course_id=sid_b, concept_id=cid_b, canonical_key="eq.b")
     u1 = str(uuid.uuid4())
 
     await _seed_state(
@@ -217,7 +259,14 @@ async def test_heatmap_empty_when_no_state_rows(db_session):
 
 
 def _paired_abstained(
-    db_session, *, attempt_id, search_space_id, concept_id, created_at=None, **canonical_kwargs
+    db_session,
+    *,
+    attempt_id,
+    problem_id,
+    search_space_id,
+    concept_id,
+    created_at=None,
+    **canonical_kwargs,
 ):
     """Realistic ``write_artifacts`` shape for an abstained shadow: the served
     (``role='canonical'``) row is the LLM fallback (``abstained=None``,
@@ -227,6 +276,7 @@ def _paired_abstained(
     db_session.add(
         _artifact(
             attempt_id=attempt_id,
+            problem_id=problem_id,
             search_space_id=search_space_id,
             concept_id=concept_id,
             role="canonical",
@@ -239,6 +289,7 @@ def _paired_abstained(
     db_session.add(
         _artifact(
             attempt_id=attempt_id,
+            problem_id=problem_id,
             search_space_id=search_space_id,
             concept_id=concept_id,
             role="pair",
@@ -250,7 +301,14 @@ def _paired_abstained(
 
 
 def _paired_fallback(
-    db_session, *, attempt_id, search_space_id, concept_id, created_at=None, **canonical_kwargs
+    db_session,
+    *,
+    attempt_id,
+    problem_id,
+    search_space_id,
+    concept_id,
+    created_at=None,
+    **canonical_kwargs,
 ):
     """Realistic ``write_artifacts`` shape for a REAL (non-abstained)
     fallback-from-graph: a shadow ran (paired ``role='pair'`` graph row,
@@ -259,6 +317,7 @@ def _paired_fallback(
     db_session.add(
         _artifact(
             attempt_id=attempt_id,
+            problem_id=problem_id,
             search_space_id=search_space_id,
             concept_id=concept_id,
             role="canonical",
@@ -271,6 +330,7 @@ def _paired_fallback(
     db_session.add(
         _artifact(
             attempt_id=attempt_id,
+            problem_id=problem_id,
             search_space_id=search_space_id,
             concept_id=concept_id,
             role="pair",
@@ -284,10 +344,11 @@ def _paired_fallback(
 async def test_struggle_signals_counts_and_top_lists(db_session):
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
 
-    attempt_1 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    attempt_1, problem_1 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
     _paired_abstained(
         db_session,
         attempt_id=attempt_1,
+        problem_id=problem_1,
         search_space_id=sid,
         concept_id=cid_1,
         node_ledger=[
@@ -298,10 +359,11 @@ async def test_struggle_signals_counts_and_top_lists(db_session):
     )
     await db_session.flush()
 
-    attempt_2 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    attempt_2, problem_2 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
     _paired_fallback(
         db_session,
         attempt_id=attempt_2,
+        problem_id=problem_2,
         search_space_id=sid,
         concept_id=cid_1,
         node_ledger=[{"canonical_key": "eq.b", "status": "misconception"}],
@@ -309,9 +371,10 @@ async def test_struggle_signals_counts_and_top_lists(db_session):
     )
     await db_session.flush()
 
-    attempt_3 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    attempt_3, problem_3 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
     graph_artifact = _artifact(
         attempt_id=attempt_3,
+        problem_id=problem_3,
         search_space_id=sid,
         concept_id=cid_1,
         role="canonical",
@@ -351,8 +414,14 @@ async def test_struggle_signals_counts_abstention_from_paired_graph_row(db_sessi
     ``role='pair'`` ``grader_used='graph'`` row; this seeds exactly that
     shape and proves it is now counted."""
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
-    attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
-    _paired_abstained(db_session, attempt_id=attempt, search_space_id=sid, concept_id=cid_1)
+    attempt, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    _paired_abstained(
+        db_session,
+        attempt_id=attempt,
+        problem_id=problem_id,
+        search_space_id=sid,
+        concept_id=cid_1,
+    )
     await db_session.commit()
 
     result = await struggle_signals(db_session, search_space_id=sid)
@@ -366,10 +435,11 @@ async def test_struggle_signals_fallback_excludes_shadow_off_llm_only(db_session
     paired graph row at all -- that is not a "fallback", it is the only
     grader that ever ran. Must not inflate ``fallback_count``."""
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
-    attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    attempt, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
     db_session.add(
         _artifact(
             attempt_id=attempt,
+            problem_id=problem_id,
             search_space_id=sid,
             concept_id=cid_1,
             role="canonical",
@@ -386,9 +456,10 @@ async def test_struggle_signals_fallback_excludes_shadow_off_llm_only(db_session
 
 async def test_struggle_signals_unresolved_student_ids_excluded_from_coverage(db_session):
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
-    attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    attempt, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
     artifact = _artifact(
         attempt_id=attempt,
+        problem_id=problem_id,
         search_space_id=sid,
         concept_id=cid_1,
         grader_used="graph",
@@ -415,9 +486,10 @@ async def test_struggle_signals_missing_node_rows_surface_as_zero_coverage(db_se
     a real failed resolution). It must surface as a 0.0-coverage worst
     offender, not be silently dropped like an opaque student-id row."""
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
-    attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    attempt, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
     artifact = _artifact(
         attempt_id=attempt,
+        problem_id=problem_id,
         search_space_id=sid,
         concept_id=cid_1,
         grader_used="graph",
@@ -445,11 +517,12 @@ async def test_struggle_signals_missing_node_rows_surface_as_zero_coverage(db_se
 
 async def test_struggle_signals_respects_window(db_session):
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
-    attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    attempt, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
     stale_created_at = datetime.now(UTC) - timedelta(days=30)
     _paired_abstained(
         db_session,
         attempt_id=attempt,
+        problem_id=problem_id,
         search_space_id=sid,
         concept_id=cid_1,
         created_at=stale_created_at,
@@ -464,10 +537,22 @@ async def test_struggle_signals_respects_window(db_session):
 async def test_struggle_signals_other_course_invisible(db_session):
     sid_a, cid_a, _ = await _seed_two_concepts(db_session)
     sid_b, cid_b, _ = await _seed_two_concepts(db_session)
-    attempt_a = await _seed_attempt(db_session, search_space_id=sid_a, concept_id=cid_a)
-    attempt_b = await _seed_attempt(db_session, search_space_id=sid_b, concept_id=cid_b)
-    _paired_abstained(db_session, attempt_id=attempt_a, search_space_id=sid_a, concept_id=cid_a)
-    _paired_abstained(db_session, attempt_id=attempt_b, search_space_id=sid_b, concept_id=cid_b)
+    attempt_a, problem_a = await _seed_attempt(db_session, search_space_id=sid_a, concept_id=cid_a)
+    attempt_b, problem_b = await _seed_attempt(db_session, search_space_id=sid_b, concept_id=cid_b)
+    _paired_abstained(
+        db_session,
+        attempt_id=attempt_a,
+        problem_id=problem_a,
+        search_space_id=sid_a,
+        concept_id=cid_a,
+    )
+    _paired_abstained(
+        db_session,
+        attempt_id=attempt_b,
+        problem_id=problem_b,
+        search_space_id=sid_b,
+        concept_id=cid_b,
+    )
     await db_session.commit()
 
     result_a = await struggle_signals(db_session, search_space_id=sid_a)

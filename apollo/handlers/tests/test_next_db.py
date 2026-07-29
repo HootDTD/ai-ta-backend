@@ -14,13 +14,14 @@ from apollo.conftest import TEST_USER_ID
 from apollo.errors import PoolExhaustedError
 from apollo.handlers.next import handle_next
 from apollo.persistence.models import (
-    ApolloSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
+    problem_database_id,
     seed_course,
 )
 
@@ -31,7 +32,7 @@ _INTRO = [p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "in
 
 async def _seed_report_session(db, *, search_space_id, concept_id, current_problem_id):
     """A REPORT-phase session with one graded attempt on current_problem_id."""
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=search_space_id,
         concept_id=concept_id,
@@ -46,6 +47,8 @@ async def _seed_report_session(db, *, search_space_id, concept_id, current_probl
             session_id=sess.id,
             problem_id=current_problem_id,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
             result="graded",
         )
     )
@@ -63,11 +66,14 @@ async def test_next_selects_problem_by_session_concept_id(db_session):
         problems=_INTRO,
     )
     first_code = codes[0]
+    first_problem_id = await problem_database_id(
+        db_session, concept_id=cid, problem_code=first_code
+    )
     session_id = await _seed_report_session(
         db_session,
         search_space_id=sid,
         concept_id=cid,
-        current_problem_id=first_code,
+        current_problem_id=first_problem_id,
     )
 
     result = await handle_next(db=db_session, session_id=session_id, difficulty="intro")
@@ -75,9 +81,11 @@ async def test_next_selects_problem_by_session_concept_id(db_session):
     assert result["problem"]["id"] in set(codes)
     assert result["problem"]["id"] != first_code  # excludes the attempted one
     sess = (
-        await db_session.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db_session.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
-    assert sess.current_problem_id == result["problem"]["id"]
+    assert sess.current_problem_id == await problem_database_id(
+        db_session, concept_id=cid, problem_code=result["problem"]["id"]
+    )
     assert sess.phase == SessionPhase.TEACHING.value
 
 
@@ -94,7 +102,9 @@ async def test_next_pool_exhausted_uses_concept_id(db_session, monkeypatch):
         db_session,
         search_space_id=sid,
         concept_id=cid,
-        current_problem_id=codes[0],
+        current_problem_id=await problem_database_id(
+            db_session, concept_id=cid, problem_code=codes[0]
+        ),
     )
 
     # WU-6A3: the route now calls select_problem_personalized (flag-OFF delegates

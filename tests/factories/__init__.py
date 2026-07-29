@@ -5,8 +5,8 @@ clashes with the project's async engine. To stay loop-safe we use plain
 ``factory.Factory`` builders (``.build()`` returns an unsaved ORM instance) and
 persist explicitly via :func:`persist`, which any async test/fixture can await.
 
-    space = await persist(db_session, SearchSpaceFactory.build())
-    doc = await persist(db_session, AITADocumentFactory.build(search_space_id=space.id))
+    space = await persist(db_session, CourseFactory.build())
+    doc = await persist(db_session, DocumentFactory.build(course_id=space.id))
 
 Phase 1 of docs/TESTING-CI-PLAN.md.
 """
@@ -18,12 +18,12 @@ from typing import TypeVar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.factories.models import (
-    AITAChunkFactory,
-    AITADocumentFactory,
+    DocumentChunkFactory,
+    DocumentFactory,
     ChatSessionFactory,
     CourseMembershipFactory,
-    SearchSpaceFactory,
-    TeacherUploadFactory,
+    CourseFactory,
+    UploadFactory,
 )
 
 T = TypeVar("T")
@@ -38,10 +38,10 @@ async def persist(session: AsyncSession, instance: T) -> T:
 
 __all__ = [
     "persist",
-    "SearchSpaceFactory",
-    "AITADocumentFactory",
-    "AITAChunkFactory",
+    "CourseFactory",
+    "DocumentFactory",
+    "DocumentChunkFactory",
     "CourseMembershipFactory",
     "ChatSessionFactory",
-    "TeacherUploadFactory",
+    "UploadFactory",
 ]

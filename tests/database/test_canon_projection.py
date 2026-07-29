@@ -16,8 +16,8 @@ from __future__ import annotations
 import pytest
 
 from apollo.knowledge_graph.canon_projection import load_entity_specs, project_canon
-from apollo.persistence.models import Concept, KGEntity, Subject
-from database.models import SearchSpace
+from apollo.persistence.models import Concept, LearnerEntity
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -28,21 +28,22 @@ pytestmark = pytest.mark.integration
 
 
 async def _make_course(db, *, slug: str) -> int:
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     return space.id
 
 
-async def _make_subject(db, *, search_space_id: int, slug: str) -> int:
-    subj = Subject(slug=slug, display_name=slug, search_space_id=search_space_id)
-    db.add(subj)
-    await db.flush()
-    return subj.id
-
-
-async def _make_concept(db, *, subject_id: int, slug: str) -> int:
-    concept = Concept(subject_id=subject_id, slug=slug, display_name=slug)
+async def _make_concept(
+    db, *, course_id: int, subject_slug: str, slug: str
+) -> int:
+    concept = Concept(
+        course_id=course_id,
+        subject_slug=subject_slug,
+        subject_display_name=subject_slug,
+        slug=slug,
+        display_name=slug,
+    )
     db.add(concept)
     await db.flush()
     return concept.id
@@ -51,12 +52,14 @@ async def _make_concept(db, *, subject_id: int, slug: str) -> int:
 async def _make_entity(
     db,
     *,
+    course_id: int,
     concept_id: int,
     canonical_key: str,
     kind: str,
     display_name: str,
 ) -> int:
-    ent = KGEntity(
+    ent = LearnerEntity(
+        course_id=course_id,
         concept_id=concept_id,
         canonical_key=canonical_key,
         kind=kind,
@@ -80,11 +83,13 @@ async def _seed_concept_with_entities(
     """Create course/subject/concept + the given (canonical_key, kind, name)
     entities. Returns (search_space_id, concept_id, [entity_id...])."""
     ss = await _make_course(db, slug=course_slug)
-    subj = await _make_subject(db, search_space_id=ss, slug=subject_slug)
-    concept = await _make_concept(db, subject_id=subj, slug=concept_slug)
+    concept = await _make_concept(
+        db, course_id=ss, subject_slug=subject_slug, slug=concept_slug
+    )
     ids = [
         await _make_entity(
             db,
+            course_id=ss,
             concept_id=concept,
             canonical_key=ck,
             kind=kind,
@@ -144,7 +149,7 @@ async def test_load_entity_specs_scoped_by_concept(db_session):
     specs = await load_entity_specs(db_session, concept_id=c1)
     assert {s.key for s in specs} == set(ids1)
     assert all(s.concept_id == c1 for s in specs)
-    # search_space_id carried via the Subject join.
+    # search_space_id is carried directly by the folded concept row.
     assert len({s.search_space_id for s in specs}) == 1
 
 
@@ -158,10 +163,12 @@ async def test_load_entity_specs_scoped_by_search_space(db_session):
         entities=[("eq.a", "equation", "A")],
     )
     # Same course, second subject+concept -> its entities are also in scope.
-    subj2 = await _make_subject(db_session, search_space_id=ss1, slug="ss1b")
-    c1b = await _make_concept(db_session, subject_id=subj2, slug="kk1b")
+    c1b = await _make_concept(
+        db_session, course_id=ss1, subject_slug="ss1b", slug="kk1b"
+    )
     id_b = await _make_entity(
         db_session,
+        course_id=ss1,
         concept_id=c1b,
         canonical_key="eq.b",
         kind="equation",
@@ -187,21 +194,12 @@ async def test_load_entity_specs_refuses_unscoped(db_session):
         await load_entity_specs(db_session)
 
 
-@pytest.mark.asyncio
-async def test_load_entity_specs_includes_misconceptions(db_session):
-    _, concept_id, _ = await _seed_concept_with_entities(
-        db_session,
-        course_slug="cm",
-        subject_slug="sm",
-        concept_slug="km",
-        entities=[
-            ("eq.a", "equation", "A"),
-            ("misc.density_ignored", "misconception", "Density ignored"),
-        ],
-    )
-    specs = await load_entity_specs(db_session, concept_id=concept_id)
-    kinds = {s.canonical_key: s.kind for s in specs}
-    assert kinds["misc.density_ignored"] == "misconception"
+# test_load_entity_specs_includes_misconceptions DELETED (DB-13): it seeded a
+# LearnerEntity with kind="misconception", which learner_entities__kind__check
+# no longer admits on real Postgres (see canon_projection.load_entity_specs's
+# docstring — "kind='misconception' is no longer a row this query can ever
+# return"). The scenario is now impossible; load_entity_specs's no-kind-
+# filtering behavior is still covered by the surviving scope-selector tests.
 
 
 # ---------------------------------------------------------------------------

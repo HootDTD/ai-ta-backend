@@ -6,30 +6,66 @@ natural-language report that explains the verdict — leading with the
 lowest-scoring axis, calling out what broke, and ending with a concrete
 next step.
 
-2026-07-10 (topic-score design spec section 4): when a ``TopicScoreResult``
-is passed in AND ``APOLLO_TOPIC_SCORE_SERVED`` is on, ``generate_diagnostic``
-replaces the axis-based prompt above with the ledger-grounded prompt built by
-``apollo.overseer.topic_narrative.build_topic_narrative_prompt`` — every claim
-in the narrative is traceable to a topic/misconception the deterministic
-ledger actually holds (kills the axis path's hallucination class). Flag OFF
-(or no ``topic_score`` argument) leaves this function's prompt/output unchanged
-apart from the final internals sanitizer, which is a no-op on clean prose."""
+When a ``TopicScoreResult`` is passed in, ``generate_diagnostic`` replaces the
+axis-based prompt with the ledger-grounded prompt built by
+``apollo.overseer.topic_narrative.build_topic_narrative_prompt`` and requests
+structured per-topic JSON. It returns both the back-compatible flattened
+narrative and the structured feedback block. No ``topic_score`` argument (or a
+soft-failed ``None``) leaves the axis prompt behavior unchanged and returns no
+structured feedback.
+
+``course_evidence`` (INTERACTION2, default OFF) threads a capped, student-safe
+block of the course's own material into the ledger-grounded prompt so feedback
+can cite where to read next. ``None`` — flag off, NULL session bundle, or
+nothing student-safe — leaves both prompts byte-identical to the pre-feature
+build."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Sequence
 from typing import Any
 
 from openai import OpenAI
 
-from apollo.overseer.misconception_detector.config import topic_score_served_enabled
 from apollo.overseer.topic_narrative import build_topic_narrative_prompt, sanitize_narrative
 from apollo.overseer.topic_score import TopicScoreResult
+from config.models import MAIN_MODEL
 
 _LOG = logging.getLogger(__name__)
+
+_UNAVAILABLE_NARRATIVE = "[Diagnostic narrative unavailable — the grade above is still accurate.]"
+
+_TOPIC_FEEDBACK_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "apollo_topic_feedback",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "headline": {"type": "string"},
+                "topic_feedback": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "canonical_key": {"type": "string"},
+                            "note": {"type": "string"},
+                            "quote": {"type": ["string", "null"]},
+                        },
+                        "required": ["canonical_key", "note", "quote"],
+                        "additionalProperties": False,
+                    },
+                },
+                "next_step": {"type": "string"},
+            },
+            "required": ["headline", "topic_feedback", "next_step"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 _SYSTEM_PROMPT = """Write feedback directly to a student who just taught Apollo how to solve a
 specific problem. The deterministic assessment is already complete. Explain the result in a way
@@ -73,28 +109,58 @@ def generate_diagnostic(
     model: str | None = None,
     topic_score: TopicScoreResult | None = None,
     student_utterances: Sequence[str] = (),
-) -> str:
-    """Generate the student-facing diagnostic narrative.
+    course_evidence: str | None = None,
+) -> tuple[str, dict[str, Any] | None]:
+    """Generate the narrative and optional feedback without raising into grading."""
+    try:
+        return _generate_diagnostic(
+            coverage=coverage,
+            reference_steps=reference_steps,
+            problem_text=problem_text,
+            rubric=rubric,
+            model=model,
+            topic_score=topic_score,
+            student_utterances=student_utterances,
+            course_evidence=course_evidence,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("diagnostic unexpected soft-fail: %s", exc)
+        return _UNAVAILABLE_NARRATIVE, None
 
-    ``topic_score`` (2026-07-10 spec §4) is an OPT-IN keyword: when it is
-    provided AND ``APOLLO_TOPIC_SCORE_SERVED`` is on, the ledger-grounded
-    prompt (``topic_narrative.build_topic_narrative_prompt``) REPLACES the
-    axis-based ``_SYSTEM_PROMPT``/``user_payload`` below — no other branch of
-    this function changes. When the flag is off (or ``topic_score`` is
-    ``None``, the default), this function's prompt assembly and output are
-    unchanged from pre-topic-score behavior, including the misconception/
-    negotiation recap lines appended below (those read ``rubric``/``coverage``
-    directly and are unaffected by which prompt generated ``narrative``),
-    modulo the final internals sanitizer, which is a no-op on clean prose."""
-    model = model or os.getenv("MAIN_MODEL", "gpt-4o")
-    client = OpenAI()
 
-    use_topic_prompt = topic_score is not None and topic_score_served_enabled()
+def _generate_diagnostic(
+    *,
+    coverage: dict[str, Any],
+    reference_steps: list[dict[str, Any]],
+    problem_text: str,
+    rubric: dict[str, Any],
+    model: str | None = None,
+    topic_score: TopicScoreResult | None = None,
+    student_utterances: Sequence[str] = (),
+    course_evidence: str | None = None,
+) -> tuple[str, dict[str, Any] | None]:
+    """Build one completion and convert it to the diagnostic return pair.
+
+    A topic score selects one strict-JSON ``MAIN_MODEL`` completion. Successful
+    JSON is sanitized field-by-field, receives deterministic code-generated
+    ``recap`` lines, and is flattened for the first tuple item. A completion or
+    parse failure returns the legacy narrative (raw completion text, or the
+    fixed unavailable string) and ``None`` feedback. No topic score keeps the
+    existing axis prompt and always returns ``None`` feedback.
+
+    ``course_evidence`` (INTERACTION2) reaches the LEDGER-GROUNDED path only.
+    The axis prompt is the soft-fail fallback and stays frozen: grounding must
+    not alter the shape of a degraded narrative.
+    """
+    model = model or MAIN_MODEL
+
+    use_topic_prompt = topic_score is not None
     if use_topic_prompt:
         system_prompt, user_content = build_topic_narrative_prompt(
             topic_score,
             problem_text=problem_text,
             student_utterances=student_utterances,
+            course_evidence=course_evidence,
         )
     else:
         system_prompt = _SYSTEM_PROMPT
@@ -115,19 +181,58 @@ def generate_diagnostic(
         user_content = json.dumps(user_payload)
 
     try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
+        client = OpenAI()
+        completion_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            temperature=0.4,
+            "temperature": 0.4,
+        }
+        if use_topic_prompt:
+            completion_kwargs["response_format"] = _TOPIC_FEEDBACK_RESPONSE_FORMAT
+        resp = client.chat.completions.create(
+            **completion_kwargs,
         )
-        narrative = resp.choices[0].message.content or ""
+        raw_narrative = resp.choices[0].message.content or ""
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("diagnostic LLM soft-fail: %s", exc)
-        narrative = "[Diagnostic narrative unavailable — the grade above is still accurate.]"
+        return _legacy_narrative(
+            _UNAVAILABLE_NARRATIVE,
+            coverage=coverage,
+            rubric=rubric,
+            topic_score=topic_score,
+        ), None
 
+    if use_topic_prompt:
+        try:
+            feedback = _parse_topic_feedback(
+                raw_narrative,
+                topic_score=topic_score,
+                coverage=coverage,
+                rubric=rubric,
+            )
+            return _flatten_topic_feedback(feedback), feedback
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("diagnostic JSON soft-fail: %s", exc)
+
+    return _legacy_narrative(
+        raw_narrative,
+        coverage=coverage,
+        rubric=rubric,
+        topic_score=topic_score,
+    ), None
+
+
+def _legacy_narrative(
+    narrative: str,
+    *,
+    coverage: dict[str, Any],
+    rubric: dict[str, Any],
+    topic_score: TopicScoreResult | None,
+) -> str:
+    """Apply the pre-scorecard recap and sanitization behavior."""
     narrative = _append_misconception_line(narrative, rubric)
     narrative = _append_negotiation_line(narrative, coverage)
     ledger_keys = (
@@ -136,6 +241,117 @@ def generate_diagnostic(
         else ()
     )
     return sanitize_narrative(narrative, canonical_keys=ledger_keys)
+
+
+def _parse_topic_feedback(
+    raw: str,
+    *,
+    topic_score: TopicScoreResult,
+    coverage: dict[str, Any],
+    rubric: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate, gate, and sanitize the model's structured topic feedback."""
+    payload = json.loads(raw)
+    if not isinstance(payload, dict) or set(payload) != {
+        "headline",
+        "topic_feedback",
+        "next_step",
+    }:
+        raise ValueError("topic feedback must contain exactly the declared top-level fields")
+    if not isinstance(payload["headline"], str) or not isinstance(payload["next_step"], str):
+        raise ValueError("headline and next_step must be strings")
+    if not isinstance(payload["topic_feedback"], list):
+        raise ValueError("topic_feedback must be a list")
+
+    topics_by_key = {topic.canonical_key: topic for topic in topic_score.topics}
+    expected_keys = [topic.canonical_key for topic in topic_score.topics]
+    ledger_keys = tuple(expected_keys)
+    feedback_items: list[dict[str, Any]] = []
+    received_keys: list[str] = []
+
+    for item in payload["topic_feedback"]:
+        if not isinstance(item, dict) or set(item) != {"canonical_key", "note", "quote"}:
+            raise ValueError("each topic feedback item must contain exactly key, note, and quote")
+        canonical_key = item["canonical_key"]
+        note = item["note"]
+        quote = item["quote"]
+        if not isinstance(canonical_key, str) or canonical_key not in topics_by_key:
+            raise ValueError("topic feedback contains an unknown canonical key")
+        if not isinstance(note, str) or not (isinstance(quote, str) or quote is None):
+            raise ValueError("topic note/quote has an invalid type")
+
+        topic = topics_by_key[canonical_key]
+        gated_quote = _gate_topic_quote(
+            quote,
+            evidence_span=topic.evidence_span,
+            canonical_keys=ledger_keys,
+        )
+        feedback_items.append(
+            {
+                "canonical_key": canonical_key,
+                "note": sanitize_narrative(note, canonical_keys=ledger_keys),
+                "quote": gated_quote,
+                # INTERACTION5: additive, code-injected from the ledger (never the
+                # LLM) so the flat Hoot-assist cap can't be argued away by prose.
+                # False when the topic was not Hoot-assisted; absent-safe for the
+                # pre-feature payload shape (survives remediation's deepcopy).
+                "hoot_assisted": bool(getattr(topic, "hoot_assisted", False)),
+            }
+        )
+        received_keys.append(canonical_key)
+
+    if received_keys != expected_keys:
+        raise ValueError("topic feedback must contain every topic exactly once in topic order")
+
+    recap = _deterministic_recap(
+        coverage=coverage,
+        rubric=rubric,
+        canonical_keys=ledger_keys,
+    )
+    return {
+        "headline": sanitize_narrative(payload["headline"], canonical_keys=ledger_keys),
+        "topic_feedback": feedback_items,
+        "recap": recap,
+        "next_step": sanitize_narrative(payload["next_step"], canonical_keys=ledger_keys),
+    }
+
+
+def _gate_topic_quote(
+    quote: str | None,
+    *,
+    evidence_span: str | None,
+    canonical_keys: Sequence[str],
+) -> str | None:
+    """Accept only an exact gated span that is already sanitizer-clean."""
+    if quote is None or evidence_span is None or quote != evidence_span:
+        return None
+    sanitized = sanitize_narrative(quote, canonical_keys=canonical_keys)
+    return quote if sanitized == quote else None
+
+
+def _deterministic_recap(
+    *,
+    coverage: dict[str, Any],
+    rubric: dict[str, Any],
+    canonical_keys: Sequence[str],
+) -> list[str]:
+    """Build recap entries from code-owned appenders, never model output."""
+    lines = [
+        _append_misconception_line("", rubric),
+        _append_negotiation_line("", coverage),
+    ]
+    return [sanitize_narrative(line, canonical_keys=canonical_keys) for line in lines if line]
+
+
+def _flatten_topic_feedback(feedback: dict[str, Any]) -> str:
+    """Flatten structured feedback in one stable back-compat order."""
+    parts = [
+        feedback["headline"],
+        *(item["note"] for item in feedback["topic_feedback"]),
+        *feedback["recap"],
+        f"Next step: {feedback['next_step']}",
+    ]
+    return "\n\n".join(parts)
 
 
 def _append_negotiation_line(narrative: str, coverage: dict[str, Any]) -> str:

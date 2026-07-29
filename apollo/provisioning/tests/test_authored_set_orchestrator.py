@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, ConceptProblem, DedupDecision, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, LearnerEntity
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.orchestrator import run_authored_set_provisioning
 from apollo.provisioning.authored_sets.structure_pass import (
     BlockSpan,
@@ -19,7 +20,7 @@ from apollo.provisioning.promote import PromoteResult
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
 from apollo.provisioning.solution import ReferenceSolutionDraft
 from apollo.provisioning.tag_mint import MintPlan
-from database.models import AITAChunk, AITADocument, SearchSpace
+from database.models import Course, Document, DocumentChunk
 
 orch = sys.modules["apollo.provisioning.authored_sets.orchestrator"]
 
@@ -61,23 +62,21 @@ class _StructureShadowMC:
 
 
 async def _seed_search_space(db, *, slug: str) -> int:
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     return int(space.id)
 
 
 async def _seed_concept(db, *, search_space_id: int, slug: str = "authored") -> int:
-    subject = Subject(
+    subject = SimpleNamespace(
         slug=f"subject-{slug}", display_name="Physics", search_space_id=search_space_id
     )
-    db.add(subject)
-    await db.flush()
     concept = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=slug,
         display_name="Authored",
-        canonical_symbols={"symbols": ["M"]},
+        canonical_symbols=["M"],
         normalization_map={},
     )
     db.add(concept)
@@ -93,16 +92,16 @@ async def _seed_doc_with_chunk(
     title: str,
     ocr_conf: float = 0.95,
 ) -> int:
-    doc = AITADocument(
+    doc = Document(
         title=title,
         content=content,
         content_hash=f"{title}-{search_space_id}",
-        search_space_id=search_space_id,
-        document_metadata={"page_debug": [{"page": 1, "ocr_confidence": ocr_conf}]},
+        course_id=search_space_id,
+        metadata_={"page_debug": [{"page": 1, "ocr_confidence": ocr_conf}]},
     )
     db.add(doc)
     await db.flush()
-    db.add(AITAChunk(document_id=doc.id, content=content, page_number=1))
+    db.add(DocumentChunk(course_id=doc.course_id, document_id=doc.id, content=content, page_number=1))
     await db.flush()
     return int(doc.id)
 
@@ -237,7 +236,7 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
 
     async def _promote(db, neo, **kwargs):  # noqa: ANN001
         promote_kwargs.update(kwargs)
-        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row = await db.get(ProblemRecord, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
 
@@ -623,13 +622,13 @@ async def test_oversized_question_without_answer_unit_is_masked_before_tier1(
 
     assert len(scraped_candidates) == 1
     assert leaked_tail not in scraped_candidates[0].problem_text
-    payload = (
+    problem_text = (
         await db_session.execute(
-            select(ConceptProblem.payload).where(ConceptProblem.concept_id == concept_id)
+            select(ProblemRecord.problem_text).where(ProblemRecord.concept_id == concept_id)
         )
     ).scalar_one()
-    assert leaked_tail not in payload["problem_text"]
-    assert "Explanation:" not in payload["problem_text"]
+    assert leaked_tail not in problem_text
+    assert "Explanation:" not in problem_text
     records = [
         record
         for record in caplog.records
@@ -649,12 +648,12 @@ async def test_problem_only_combined_porter_masks_answers_before_tier1_write(
     monkeypatch.setenv("APOLLO_REVERSED_PROVISIONING", "0")
     space = await _seed_search_space(db_session, slug="combined-porter")
     concept_id = await _seed_concept(db_session, search_space_id=space)
-    doc = AITADocument(
+    doc = Document(
         title="Combined Porter Q&A",
         content="20 Porter questions and answers",
         content_hash="combined-porter-hash",
-        search_space_id=space,
-        document_metadata={"page_debug": [{"page": 1, "ocr_confidence": 0.95}]},
+        course_id=space,
+        metadata_={"page_debug": [{"page": 1, "ocr_confidence": 0.95}]},
     )
     db_session.add(doc)
     await db_session.flush()
@@ -663,7 +662,8 @@ async def test_problem_only_combined_porter_masks_answers_before_tier1_write(
     for index in range(1, 21):
         answer = f"Answer {index}: PORTER_SECRET_{index}"
         answer_texts.append(answer)
-        chunk = AITAChunk(
+        chunk = DocumentChunk(
+            course_id=doc.course_id,
             document_id=doc.id,
             content=f"Question {index}: Which force applies?\n{answer}",
             page_number=index,
@@ -754,20 +754,20 @@ async def test_problem_only_combined_porter_masks_answers_before_tier1_write(
     assert pass_calls == 1
     assert len(scraped_candidates) == 20
     assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 20}
-    payloads = (
+    problem_texts = (
         (
             await db_session.execute(
-                select(ConceptProblem.payload).where(ConceptProblem.concept_id == concept_id)
+                select(ProblemRecord.problem_text).where(ProblemRecord.concept_id == concept_id)
             )
         )
         .scalars()
         .all()
     )
-    assert len(payloads) == 20
+    assert len(problem_texts) == 20
     for candidate in scraped_candidates:
         assert all(answer not in candidate.problem_text for answer in answer_texts)
-    for payload in payloads:
-        assert all(answer not in payload["problem_text"] for answer in answer_texts)
+    for problem_text in problem_texts:
+        assert all(answer not in problem_text for answer in answer_texts)
 
 
 @pytest.mark.asyncio
@@ -997,15 +997,12 @@ async def test_unaugmented_hold_payload_untouched(db_session, monkeypatch):
     assert result.solution_source == "generated"
     assert result.review_required is True
     assert result.reason == "generated_no_match"
-    row = await db_session.get(ConceptProblem, result.concept_problem_id)
-    assert row.payload == {
-        "id": f"scrape.{candidate.chunk_content_hash}",
-        "concept_id": candidate.concept_slug,
-        "difficulty": candidate.difficulty,
-        "problem_text": candidate.problem_text,
-        "given_values": candidate.given_values,
-        "target_unknown": candidate.target_unknown,
-    }
+    row = await db_session.get(ProblemRecord, result.concept_problem_id)
+    assert row.problem_code == f"scrape.{candidate.chunk_content_hash}"
+    assert row.difficulty == candidate.difficulty
+    assert row.problem_text == candidate.problem_text
+    assert row.given_values == candidate.given_values
+    assert row.target_unknown == candidate.target_unknown
 
 
 @pytest.mark.asyncio
@@ -1070,13 +1067,13 @@ async def test_hold_arm_applies_augmentation_to_tier1_payload(db_session, monkey
     assert result.reason == "generated_no_match"
     assert result.concept_problem_id is not None
 
-    row = await db_session.get(ConceptProblem, result.concept_problem_id)
+    row = await db_session.get(ProblemRecord, result.concept_problem_id)
     authored_review = row.provenance["authored_review"]
-    assert row.payload["problem_text"] == "Define beam moment and explain why it peaks."
-    assert row.payload["target_unknown"] == "why beam moment peaks"
-    assert row.payload["problem_text_original"] == candidate.problem_text
-    assert row.payload["target_unknown_original"] == candidate.target_unknown
-    assert row.payload["augmented"] == "explain_why"
+    assert row.problem_text == "Define beam moment and explain why it peaks."
+    assert row.target_unknown == "why beam moment peaks"
+    assert row.payload_extra["problem_text_original"] == candidate.problem_text
+    assert row.payload_extra["target_unknown_original"] == candidate.target_unknown
+    assert row.payload_extra["augmented"] == "explain_why"
     assert authored_review["required"] is True
     assert authored_review["reason"] == "generated_no_match"
     assert authored_review["augmented"] == "explain_why"
@@ -1098,17 +1095,21 @@ async def test_authored_concept_dup_hashes_skips_invalid_payload(db_session):
     space = await _seed_search_space(db_session, slug="dup")
     concept_id = await _seed_concept(db_session, search_space_id=space, slug="dup")
     db_session.add(
-        ConceptProblem(
+        ProblemRecord(
+            course_id=space,
             concept_id=concept_id,
             problem_code="bad-payload",
             difficulty="intro",
+            problem_text="",
+            reference_solution={"version": 1, "steps": []},
+            payload_extra={"not": "a valid problem"},
             tier=2,
-            payload={"not": "a valid problem"},
-            search_space_id=space,
         )
     )
     await db_session.flush()
-    hashes = await _authored_concept_dup_hashes(db_session, concept_id=concept_id)
+    hashes = await _authored_concept_dup_hashes(
+        db_session, concept_id=concept_id, course_id=space
+    )
     assert hashes == set()
 
 
@@ -1257,14 +1258,14 @@ def _savepoint_draft(*, step_id: str) -> ReferenceSolutionDraft:
 @pytest.mark.asyncio
 async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, monkeypatch):
     """M1: a fail-closed TagMintError raised INSIDE the REAL ``tag_and_mint`` (at
-    step 5a, ``link_opposes``) after concept/KGEntity/apollo_dedup_decisions rows
+    step 5a, ``link_opposes``) after concept/LearnerEntity/dedup-decision rows
     for THAT candidate have already been flushed must not leave those rows
     orphaned once the caller's (simulated ``_run_set_background``) commit lands.
     The per-candidate ``begin_nested`` savepoint rolls back exactly the failed
     candidate's partial writes; a SIBLING candidate in the same run still mints
     and promotes. DISCRIMINATING: without the savepoint wrap, the failed
-    candidate's ``eq.eq-fail`` KGEntity + its DedupDecision row would survive the
-    outer commit even though no ConceptProblem was ever promoted for it."""
+    candidate's ``eq.eq-fail`` LearnerEntity + its DedupDecision row would survive the
+    outer commit even though no ProblemRecord was ever promoted for it."""
     from apollo.provisioning import tag_mint as tm
     from apollo.provisioning.tag_mint_persist import link_opposes as real_link_opposes
 
@@ -1307,7 +1308,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
         return await real_link_opposes(db, concept_id=concept_id, key_to_id=key_to_id)
 
     async def _promote(db, neo, **kwargs):
-        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row = await db.get(ProblemRecord, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
 
@@ -1339,10 +1340,10 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
     await db_session.commit()
 
     # The failed candidate's entity must NOT have survived the savepoint rollback
-    # (orphaned KG rows unreachable by any promoted ConceptProblem, yet a live
+    # (orphaned KG rows unreachable by any promoted ProblemRecord, yet a live
     # dedup target for a later mint, is exactly the defect M1 fixes).
     fail_rows = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "eq.eq-fail")))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.canonical_key == "eq.eq-fail")))
         .scalars()
         .all()
     )
@@ -1350,13 +1351,13 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
 
     # The sibling candidate's mint DOES survive the commit.
     ok_rows = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "eq.eq-ok")))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.canonical_key == "eq.eq-ok")))
         .scalars()
         .all()
     )
     assert len(ok_rows) == 1
 
-    # No apollo_dedup_decisions row from the rolled-back candidate leaks through
+    # No dedup-decision row from the rolled-back candidate leaks through
     # either (it would otherwise become a live dedup target for a future mint).
     dedup_rows = (
         (
@@ -1393,7 +1394,8 @@ async def test_candidate_missing_tier1_row_is_rejected(db_session, monkeypatch):
         spans = await retrieve_fn(question)
         return _draft(source="extracted").model_copy(update={"grounding": spans})
 
-    async def _no_tier1(db, *, concept_id, chunk_content_hash):
+    async def _no_tier1(db, *, concept_id, chunk_content_hash, course_id):
+        assert course_id > 0
         return None
 
     report = await _run_single_candidate(
@@ -1461,12 +1463,12 @@ async def test_candidate_gate9_unresolved_is_held_for_review(db_session, monkeyp
     result = report.problems[0]
     assert result.outcome == "held_for_review"
     assert result.reason == "promotion_lint_unresolved"
-    row = await db_session.get(ConceptProblem, result.concept_problem_id)
+    row = await db_session.get(ProblemRecord, result.concept_problem_id)
     assert row.tier == 1
     assert row.provenance["authored_review"]["reason"] == "promotion_lint_unresolved"
 
 
-async def _noop_hashes(db, *, concept_id):
+async def _noop_hashes(db, *, concept_id, course_id):
     return set()
 
 
@@ -1541,7 +1543,7 @@ async def test_authored_set_low_confidence_divergence_holds_without_minting(
     assert result.ocr_confidence == 0.20
     assert minted is False
     assert promoted is False
-    tier1 = await db_session.get(ConceptProblem, result.concept_problem_id)
+    tier1 = await db_session.get(ProblemRecord, result.concept_problem_id)
     assert tier1.tier == 1
     review = tier1.provenance["authored_review"]
     assert review["required"] is True

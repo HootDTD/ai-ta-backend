@@ -135,7 +135,7 @@ def personalize_selection(
     *,
     concept_id: int,
     difficulty: str,
-    attempted_ids: Sequence[str],
+    attempted_ids: Sequence[str | int],
 ) -> Problem:
     """Pick the in-difficulty, unattempted ``Problem`` that best covers the student's
     weak-and-teachable entities; cold-start / empty-weak -> ``candidates[0]``.
@@ -152,7 +152,11 @@ def personalize_selection(
     LOWEST ``Problem.id`` EXPLICITLY (independent of pool order).
     """
     attempted = set(attempted_ids)
-    candidates = [p for p in pool if p.difficulty == difficulty and p.id not in attempted]
+    candidates = [
+        p
+        for p in pool
+        if p.difficulty == difficulty and p.id not in attempted and p.database_id not in attempted
+    ]
     if not candidates:
         raise PoolExhaustedError(concept_cluster_id=str(concept_id), difficulty=difficulty)
 

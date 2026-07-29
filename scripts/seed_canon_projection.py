@@ -9,7 +9,7 @@ duplicates). Mirrors ``scripts/seed_apollo_learner_model.py``.
 
 The projection is ALWAYS scoped (the isolation invariant forbids a course-blind
 seed). When neither ``--concept-id`` nor ``--search-space-id`` is passed, the
-CLI resolves a default ``search_space_id = MIN(aita_search_spaces.id)`` (the
+CLI resolves a default ``search_space_id = MIN(app.courses.id)`` (the
 WU-3B bootstrap convenience) and passes it EXPLICITLY into the seeder, so the
 unscoped-refusal in ``load_entity_specs`` stays intact.
 
@@ -31,7 +31,7 @@ import os
 import sys
 from pathlib import Path
 
-from sqlalchemy import text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Make the package importable when run as `python -m scripts....`
@@ -42,6 +42,7 @@ from apollo.knowledge_graph.canon_projection import (  # noqa: E402
     project_canon,
 )
 from apollo.persistence.neo4j_client import Neo4jClient  # noqa: E402
+from database.models import Course  # noqa: E402
 
 _LOG = logging.getLogger(__name__)
 
@@ -54,19 +55,24 @@ async def run(
 ) -> CanonProjectionResult:
     """Build an async engine + a Neo4jClient, project :Canon for one scope,
     and close both. When neither scope arg is given, resolve a default
-    ``search_space_id = MIN(aita_search_spaces.id)`` and pass it explicitly."""
-    engine = create_async_engine(database_url)
+    ``search_space_id = MIN(app.courses.id)`` and pass it explicitly."""
+    engine_options = (
+        {"execution_options": {"schema_translate_map": {"app": None, "internal": None}}}
+        if database_url.startswith("sqlite")
+        else {}
+    )
+    engine = create_async_engine(database_url, **engine_options)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     neo = Neo4jClient.from_env()
     try:
         async with Session() as session:
             if concept_id is None and search_space_id is None:
                 search_space_id = (
-                    await session.execute(text("SELECT MIN(id) FROM aita_search_spaces"))
+                    await session.execute(select(func.min(Course.id)))
                 ).scalar_one_or_none()
                 if search_space_id is None:
                     raise RuntimeError(
-                        "no aita_search_spaces rows — seed a course before projecting :Canon"
+                        "no app.courses rows — seed a course before projecting :Canon"
                     )
             result = await project_canon(
                 session,
@@ -96,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         "--search-space-id",
         type=int,
         default=None,
-        help="course id (defaults to MIN(aita_search_spaces.id) when no scope given)",
+        help="course id (defaults to MIN(app.courses.id) when no scope given)",
     )
     parser.add_argument(
         "--concept-id",

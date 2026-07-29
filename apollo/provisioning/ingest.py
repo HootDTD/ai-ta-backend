@@ -14,7 +14,7 @@ cases:
   * ``none``        — statement only (generate it; flagged lower-confidence).
 
 It then:
-  1. writes each authored problem as a **Tier-1** ``apollo_concept_problems`` row
+  1. writes each authored problem as a **Tier-1** ``app.problems`` row
      (``tier=1`` EXPLICIT — the §8B safety trap: the ORM default is 2/teachable);
   2. **commits independently** of the downstream find/generate/promote stages.
 
@@ -47,7 +47,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import ConceptProblem
+from apollo.persistence.models import Problem
 from apollo.schemas.problem import Difficulty
 
 _LOG = logging.getLogger(__name__)
@@ -237,24 +237,23 @@ async def write_authored_tier1_problems(
     for problem in problems:
         existing = (
             await db.execute(
-                select(ConceptProblem.id)
-                .where(ConceptProblem.concept_id == concept_id)
-                .where(ConceptProblem.problem_code == problem.problem_code)
+                select(Problem.id)
+                .where(Problem.course_id == search_space_id)
+                .where(Problem.concept_id == concept_id)
+                .where(Problem.problem_code == problem.problem_code)
             )
         ).scalar_one_or_none()
         if existing is not None:
             continue
 
         db.add(
-            ConceptProblem(
+            Problem.from_inventory_payload(
+                problem.tier1_payload(),
+                course_id=search_space_id,
                 concept_id=concept_id,
-                problem_code=problem.problem_code,
-                difficulty=problem.difficulty,
-                payload=problem.tier1_payload(),
                 tier=1,  # EXPLICIT: never inherit the teachable default (2)
                 solution_source=_AUTHORED_SOLUTION_SOURCE,
                 provenance={"source": "authored", "completeness": problem.completeness},
-                search_space_id=search_space_id,
             )
         )
         inserted += 1

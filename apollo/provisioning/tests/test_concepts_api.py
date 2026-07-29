@@ -30,9 +30,9 @@ def _as_user(monkeypatch, capi, user_id: str) -> None:
 
 
 async def _seed_space(db, *, slug: str) -> int:
-    from database.models import SearchSpace
+    from database.models import Course
 
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="MIS")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="MIS")
     db.add(space)
     await db.flush()
     return int(space.id)
@@ -41,7 +41,7 @@ async def _seed_space(db, *, slug: str) -> int:
 async def _seed_membership(db, *, user_id: str, search_space_id: int, role: str) -> None:
     from database.models import CourseMembership
 
-    db.add(CourseMembership(user_id=user_id, search_space_id=search_space_id, role=role))
+    db.add(CourseMembership(user_id=user_id, course_id=search_space_id, role=role))
     await db.flush()
 
 
@@ -62,9 +62,9 @@ def test_mint_slug_shapes():
 
 
 @pytest.mark.asyncio
-async def test_create_concept_creates_subject_and_row(db_session, monkeypatch):
+async def test_create_concept_folds_subject_metadata_into_row(db_session, monkeypatch):
     import apollo.provisioning.concepts_api as capi
-    from apollo.persistence.models import Concept, Subject
+    from apollo.persistence.models import Concept
 
     space_id = await _seed_teacher(db_session, monkeypatch, capi, slug="tca-create")
 
@@ -84,10 +84,9 @@ async def test_create_concept_creates_subject_and_row(db_session, monkeypatch):
 
     row = (await db_session.execute(select(Concept).where(Concept.id == resp["id"]))).scalar_one()
     assert row.description.startswith("Modeling data")
-    subject = (
-        await db_session.execute(select(Subject).where(Subject.id == row.subject_id))
-    ).scalar_one()
-    assert subject.search_space_id == space_id
+    assert row.course_id == space_id
+    assert row.subject_slug
+    assert row.subject_display_name
 
 
 @pytest.mark.asyncio
@@ -147,7 +146,8 @@ async def test_student_gets_403(db_session, monkeypatch):
 @pytest.mark.asyncio
 async def test_list_excludes_provisional_and_counts_problems(db_session, monkeypatch):
     import apollo.provisioning.concepts_api as capi
-    from apollo.persistence.models import Concept, ConceptProblem, Subject
+    from apollo.persistence.models import Concept
+    from apollo.persistence.models import Problem as ProblemRecord
     from apollo.provisioning.scrape import PROVISIONAL_CONCEPT_SLUG
 
     space_id = await _seed_teacher(db_session, monkeypatch, capi, slug="tca-list")
@@ -158,35 +158,36 @@ async def test_list_excludes_provisional_and_counts_problems(db_session, monkeyp
         db=db_session,
     )
     # a provisional-inventory row (scrape seam) must stay invisible
-    subject_id = (
-        await db_session.execute(select(Subject.id).where(Subject.search_space_id == space_id))
-    ).scalar_one()
     db_session.add(
         Concept(
-            subject_id=subject_id,
+            course_id=space_id,
+            subject_slug="mis",
+            subject_display_name="MIS",
             slug=PROVISIONAL_CONCEPT_SLUG,
             display_name="Provisional",
         )
     )
     # one live teachable problem + one quarantined one
     db_session.add(
-        ConceptProblem(
+        ProblemRecord(
+            course_id=space_id,
             concept_id=created["id"],
             problem_code="P1",
             difficulty="core",
-            payload={},
+            problem_text="",
+            reference_solution={"version": 1, "steps": []},
             tier=2,
-            search_space_id=space_id,
         )
     )
     db_session.add(
-        ConceptProblem(
+        ProblemRecord(
+            course_id=space_id,
             concept_id=created["id"],
             problem_code="P2",
             difficulty="core",
-            payload={},
+            problem_text="",
+            reference_solution={"version": 1, "steps": []},
             tier=1,
-            search_space_id=space_id,
         )
     )
     await db_session.flush()
@@ -264,7 +265,7 @@ async def test_delete_bare_concept_ok(db_session, monkeypatch):
 @pytest.mark.asyncio
 async def test_delete_with_problems_409(db_session, monkeypatch):
     import apollo.provisioning.concepts_api as capi
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space_id = await _seed_teacher(db_session, monkeypatch, capi, slug="tca-del409")
     created = await capi.create_teacher_concept(
@@ -273,13 +274,14 @@ async def test_delete_with_problems_409(db_session, monkeypatch):
         db=db_session,
     )
     db_session.add(
-        ConceptProblem(
+        ProblemRecord(
+            course_id=space_id,
             concept_id=created["id"],
             problem_code="P1",
             difficulty="core",
-            payload={},
+            problem_text="",
+            reference_solution={"version": 1, "steps": []},
             tier=2,
-            search_space_id=space_id,
         )
     )
     await db_session.flush()

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import uuid
 
@@ -43,6 +42,7 @@ from apollo.parser.extraction_schema import build_extraction_schema
 from apollo.parser.graph_context import GraphContext
 from apollo.parser.prompt_builder import build_system_prompt
 from apollo.subjects import ConceptDefinition
+from config import models
 
 _LOG = logging.getLogger(__name__)
 
@@ -361,7 +361,7 @@ def parse_utterance(
     USES/PRECEDES fallback runs. Raises ParserCouldNotExtractError when a
     non-trivial utterance yields zero extractions.
     """
-    model = model or os.getenv("MAIN_MODEL", "gpt-4o")
+    model = model or models.MAIN_MODEL
     raw = _call_extraction(
         utterance, concept=concept, graph_context=graph_context, model=model,
     )

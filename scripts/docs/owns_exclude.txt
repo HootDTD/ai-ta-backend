@@ -1,0 +1,24 @@
+# owns_exclude.txt — paths NOT required in the architecture-doc ownership bijection.
+# Consumed by scripts/docs/check_owns_coverage.py. One glob per line; `#` comments
+# and blank lines ignored. `**` spans directories, `*` does not cross `/`.
+#
+# NARROWED (PLAN §6.2): the old broad `test_*.py` / `*_fixtures.py` globs are gone —
+# they wrongly excluded OWNED live files (scripts/test_search.py, a live-LLM harness;
+# campaign/cast/materials/generate_fixtures.py, a PDF generator). Real test fixtures
+# all live under a `tests/` dir, so the narrowed `**/tests/**/*_fixtures.py` catches
+# them. The explicit `conftest.py`/`**/conftest.py` entries are RETAINED because
+# apollo/conftest.py lives OUTSIDE a tests/ dir. `runtime/**` is removed (0 files).
+# Any path in BOTH an `owns` and this list is a HARD error (check 4), never dropped.
+tests/**
+**/tests/**
+conftest.py
+**/conftest.py
+**/tests/**/test_*.py
+**/tests/**/*_fixtures.py
+scripts/tests/**
+__pycache__/**
+.venv/**
+# UIs
+**/*.test.ts
+**/*.test.tsx
+**/__mocks__/**

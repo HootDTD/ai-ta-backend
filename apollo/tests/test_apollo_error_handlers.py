@@ -1,4 +1,4 @@
-"""WU-4C1 — the five new Apollo error -> HTTP handlers.
+"""Apollo resolution error -> HTTP handlers.
 
 NOTE on location: ``apollo/api.py`` is a MODULE file, not a package, so an
 ``apollo/api/tests/`` directory cannot exist. ``apollo/tests/`` is the api-test
@@ -22,10 +22,6 @@ from apollo.errors import (
     ResolutionUnavailableError,
     TranscriptAuditUnavailableError,
 )
-from apollo.graph_compare.validator import (
-    ReferenceGraphInvalidError,
-    StudentGraphInvalidError,
-)
 
 pytestmark = pytest.mark.unit
 
@@ -47,14 +43,6 @@ def _app() -> FastAPI:
         raise ResolutionInvalidOutputError(
             returned_key="hallucinated", allowed_keys=("a", "b", "c")
         )
-
-    @app.get("/raise/student_graph_invalid")
-    def _r4():
-        raise StudentGraphInvalidError(reasons=("bad edge", "cycle"))
-
-    @app.get("/raise/reference_graph_invalid")
-    def _r5():
-        raise ReferenceGraphInvalidError(reasons=("no declared_paths",))
 
     return app
 
@@ -89,29 +77,11 @@ def test_resolution_invalid_output_500():
     assert "allowed_keys" not in body
 
 
-def test_student_graph_invalid_422():
-    r = TestClient(_app(), raise_server_exceptions=False).get("/raise/student_graph_invalid")
-    assert r.status_code == 422
-    body = r.json()
-    assert body["error_code"] == "student_graph_invalid"
-    assert body["reasons"] == ["bad edge", "cycle"]
-
-
-def test_reference_graph_invalid_409():
-    r = TestClient(_app(), raise_server_exceptions=False).get("/raise/reference_graph_invalid")
-    assert r.status_code == 409
-    body = r.json()
-    assert body["error_code"] == "reference_graph_invalid"
-    assert body["reasons"] == ["no declared_paths"]
-
-
-def test_all_five_registered():
+def test_resolution_errors_registered():
     app = _app()
     for exc in (
         ResolutionUnavailableError,
         TranscriptAuditUnavailableError,
         ResolutionInvalidOutputError,
-        StudentGraphInvalidError,
-        ReferenceGraphInvalidError,
     ):
         assert exc in app.exception_handlers

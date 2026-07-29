@@ -1,11 +1,11 @@
 """Unit tests for ``chats.service.append_turn`` keyword threading (no DB).
 
 WU-5B4 adds a backward-compatible, keyword-only ``keywords`` param to
-``append_turn`` that writes ``ChatTurn(keywords=keywords or [])`` — the §10 RQ5
+``append_turn`` that writes ``ChatMessage(keywords=keywords or [])`` — the §10 RQ5
 write-only hedge. These tests drive ``append_turn`` against a FAKE
 ``AsyncSession`` (the two internal ``execute`` calls — the FOR-UPDATE session
 lock and the ``max(turn_index)`` query — are stubbed) so no real DB is needed;
-they capture the ``ChatTurn`` handed to ``db_session.add(...)`` and assert the
+they capture the ``ChatMessage`` handed to ``db_session.add(...)`` and assert the
 keyword field threads through.
 """
 
@@ -18,7 +18,7 @@ from chats.service import append_turn
 
 def _fake_session(lock_id: int = 1, max_idx: int = 0):
     """A fake AsyncSession whose two execute() calls return the lock row id then
-    the max turn_index. ``add`` records the built ChatTurn for inspection."""
+    the max turn_index. ``add`` records the built ChatMessage for inspection."""
     lock_result = MagicMock()
     lock_result.scalar_one_or_none.return_value = lock_id
     idx_result = MagicMock()
@@ -37,6 +37,8 @@ async def test_append_turn_sets_keywords_on_built_turn():
     turn = await append_turn(
         session,
         chat_session_id=1,
+        user_id="00000000-0000-0000-0000-000000000001",
+        course_id=10,
         role="assistant",
         content="x",
         keywords=["energy", "work"],
@@ -51,6 +53,8 @@ async def test_append_turn_keywords_defaults_to_empty_list():
     turn = await append_turn(
         session,
         chat_session_id=1,
+        user_id="00000000-0000-0000-0000-000000000001",
+        course_id=10,
         role="assistant",
         content="x",
     )
@@ -61,6 +65,8 @@ async def test_append_turn_keywords_defaults_to_empty_list():
     turn2 = await append_turn(
         other,
         chat_session_id=1,
+        user_id="00000000-0000-0000-0000-000000000001",
+        course_id=10,
         role="assistant",
         content="y",
     )
@@ -73,6 +79,8 @@ async def test_append_turn_keywords_none_coalesces_to_empty():
     turn = await append_turn(
         session,
         chat_session_id=1,
+        user_id="00000000-0000-0000-0000-000000000001",
+        course_id=10,
         role="assistant",
         content="x",
         keywords=None,
@@ -88,6 +96,8 @@ async def test_append_turn_keywords_does_not_touch_other_columns():
     with_kw = await append_turn(
         s1,
         chat_session_id=7,
+        user_id="00000000-0000-0000-0000-000000000001",
+        course_id=10,
         role="assistant",
         content="answer",
         model="gpt-5",
@@ -99,6 +109,8 @@ async def test_append_turn_keywords_does_not_touch_other_columns():
     without_kw = await append_turn(
         s2,
         chat_session_id=7,
+        user_id="00000000-0000-0000-0000-000000000001",
+        course_id=10,
         role="assistant",
         content="answer",
         model="gpt-5",

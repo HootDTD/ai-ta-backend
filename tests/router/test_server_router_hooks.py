@@ -26,17 +26,7 @@ def _ctx(mode: str, cached: object | None) -> SimpleNamespace:
 
 
 @pytest.mark.unit
-def test_prepare_router_context_disabled_returns_none(monkeypatch):
-    monkeypatch.delenv("ROUTER_ENABLED", raising=False)
-    result = server._prepare_router_context_sync(
-        auth=AUTH, chat_id="c1", search_space_id=1, question="q", has_attachments=False
-    )
-    assert result is None
-
-
-@pytest.mark.unit
 def test_prepare_router_context_returns_wiring_result(monkeypatch):
-    monkeypatch.setenv("ROUTER_ENABLED", "true")
     sentinel = _ctx("NONE", cached=object())
 
     async def _fake_prepare(**kwargs):
@@ -53,8 +43,6 @@ def test_prepare_router_context_returns_wiring_result(monkeypatch):
 
 @pytest.mark.unit
 def test_prepare_router_context_failure_returns_none(monkeypatch):
-    monkeypatch.setenv("ROUTER_ENABLED", "true")
-
     async def _boom(**kwargs):
         raise RuntimeError("router down")
 

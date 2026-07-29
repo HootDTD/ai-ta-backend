@@ -1,8 +1,8 @@
 """Shared real-PG seed helpers for Apollo database tests.
 
 Provides ``seed_attempt_chain``: inserts the minimal FK parent rows needed by
-Apollo tables that reference ``apollo_problem_attempts`` (and transitively
-``apollo_sessions`` / ``aita_search_spaces``). Returns a frozen dataclass so
+Apollo tables that reference ``app.problem_attempts`` (and transitively
+``app.learning_activities`` / ``app.courses``). Returns a frozen dataclass so
 callers can access ``attempt_id``, ``session_id``, ``user_id``,
 ``search_space_id``, and ``concept_id`` by name.
 
@@ -18,8 +18,8 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import ApolloSession, ProblemAttempt
-from database.models import SearchSpace
+from apollo.persistence.models import ProblemAttempt, TutoringSession
+from database.models import Course
 
 
 @dataclasses.dataclass(frozen=True)
@@ -34,10 +34,11 @@ class AttemptChain:
 
 
 async def seed_attempt_chain(db: AsyncSession) -> AttemptChain:
-    """Create SearchSpace -> ApolloSession -> ProblemAttempt; return ids.
+    """Create Course -> TutoringSession -> ProblemAttempt; return ids.
 
     ``user_id`` is a fresh UUID per call so the unique-active-session index
-    (``ix_apollo_sessions_unique_active_per_user``) never collides across tests.
+    (``learning_activities__active_tutoring_user_course__uidx``) never collides
+    across tests.
     ``concept_id`` is ``None`` because no Subject/Concept is seeded here; the
     FK on ``apollo_clarifications.concept_id`` is nullable (ON DELETE SET NULL),
     so callers can pass ``None`` freely.
@@ -45,15 +46,21 @@ async def seed_attempt_chain(db: AsyncSession) -> AttemptChain:
     user_id = str(uuid.uuid4())
     slug = f"course-{uuid.uuid4().hex[:8]}"
 
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
 
-    session = ApolloSession(user_id=user_id, search_space_id=space.id)
+    session = TutoringSession(user_id=user_id, search_space_id=space.id)
     db.add(session)
     await db.flush()
 
-    attempt = ProblemAttempt(session_id=session.id, problem_id="p1", difficulty="easy")
+    attempt = ProblemAttempt(
+        session_id=session.id,
+        problem_id=1,
+        difficulty="easy",
+        user_id=session.user_id,
+        course_id=session.course_id,
+    )
     db.add(attempt)
     await db.flush()
 

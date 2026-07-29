@@ -33,16 +33,16 @@ def _patch_indexer_with_real_metadata(monkeypatch, db_session, ingestion):
     )
 
     async def fake_prepare(self, conn_docs):
-        from database.models import AITADocument
+        from database.models import Document
 
         cd = conn_docs[0]
-        doc = AITADocument(
+        doc = Document(
             title=cd.title,
-            search_space_id=cd.search_space_id,
+            course_id=cd.search_space_id,
             content="c",
             content_hash="h",
             unique_identifier_hash="u",
-            document_metadata=cd.metadata,
+            metadata_=cd.metadata,
         )
         db_session.add(doc)
         await db_session.flush()
@@ -88,10 +88,10 @@ def test_connector_document_includes_page_debug_confidence():
 
 @pytest.mark.asyncio
 async def test_index_authored_doc_sets_hidden_status(db_session, monkeypatch):
-    from database.models import SearchSpace
+    from database.models import Course
 
     db_session.add(
-        SearchSpace(
+        Course(
             id=4,
             name="AAE 333 E2E Test",
             slug="aae-333-e2e-test",
@@ -119,11 +119,11 @@ async def test_index_authored_doc_sets_hidden_status(db_session, monkeypatch):
     )
 
     async def fake_prepare(self, docs):
-        from database.models import AITADocument
+        from database.models import Document
 
-        doc = AITADocument(
+        doc = Document(
             title=docs[0].title,
-            search_space_id=docs[0].search_space_id,
+            course_id=docs[0].search_space_id,
             content="c",
             content_hash="h",
             unique_identifier_hash="u",
@@ -154,10 +154,10 @@ async def test_index_authored_doc_sets_hidden_status(db_session, monkeypatch):
         role="problem",
     )
 
-    from database.models import AITADocument
+    from database.models import Document
 
-    doc = await db_session.get(AITADocument, doc_id)
-    assert doc.status == {"state": "apollo_reference"}
+    doc = await db_session.get(Document, doc_id)
+    assert doc.status == "queued"
 
 
 @pytest.mark.asyncio
@@ -165,9 +165,9 @@ async def test_index_authored_doc_propagates_page_confidence(db_session, monkeyp
     """End-to-end indexer seam: a low-confidence page must surface through
     ``chunk_ocr_confidence`` so the orchestrator's OCR cross-check can fire."""
     from apollo.provisioning.authored_sets.paired_retrieval import chunk_ocr_confidence
-    from database.models import SearchSpace
+    from database.models import Course
 
-    db_session.add(SearchSpace(id=7, name="AAE Conf", slug="aae-conf", subject_name="AAE"))
+    db_session.add(Course(id=7, name="AAE Conf", slug="aae-conf", subject_name="AAE"))
     await db_session.flush()
 
     ingestion = _fake_ingestion(
@@ -192,9 +192,9 @@ async def test_index_authored_doc_propagates_page_confidence(db_session, monkeyp
 async def test_index_authored_doc_captures_pages_into_sink(db_session, monkeypatch):
     """The optional ``page_sink`` receives the transient per-page OCR pass so the
     caller can persist page-level OCR evidence (WU-AAS observability)."""
-    from database.models import SearchSpace
+    from database.models import Course
 
-    db_session.add(SearchSpace(id=9, name="Sink", slug="sink", subject_name="AAE"))
+    db_session.add(Course(id=9, name="Sink", slug="sink", subject_name="AAE"))
     await db_session.flush()
 
     pages = [
@@ -249,9 +249,9 @@ async def test_index_authored_doc_raises_on_no_items(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_index_authored_doc_raises_on_no_chunk_texts(db_session, monkeypatch):
-    from database.models import SearchSpace
+    from database.models import Course
 
-    db_session.add(SearchSpace(id=9, name="x", slug="aae-nochunks", subject_name="AAE"))
+    db_session.add(Course(id=9, name="x", slug="aae-nochunks", subject_name="AAE"))
     await db_session.flush()
     ing = _fake_ingestion(
         [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
@@ -271,10 +271,10 @@ async def test_index_authored_doc_raises_on_no_chunk_texts(db_session, monkeypat
 
 @pytest.mark.asyncio
 async def test_index_authored_doc_falls_back_to_existing_doc(db_session, monkeypatch):
-    from database.models import AITADocument, SearchSpace
+    from database.models import Document, Course
     from indexing.document_hashing import compute_unique_identifier_hash
 
-    db_session.add(SearchSpace(id=11, name="x", slug="aae-existing", subject_name="AAE"))
+    db_session.add(Course(id=11, name="x", slug="aae-existing", subject_name="AAE"))
     await db_session.flush()
     ing = _fake_ingestion(
         [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
@@ -283,13 +283,13 @@ async def test_index_authored_doc_falls_back_to_existing_doc(db_session, monkeyp
     connector = idx._connector_document(
         search_space_id=11, title="t", set_index=1, role="problem", ingestion=ing
     )
-    existing = AITADocument(
+    existing = Document(
         title="t",
         content="c",
         content_hash="h-existing",
-        search_space_id=11,
+        course_id=11,
         unique_identifier_hash=compute_unique_identifier_hash(connector),
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(existing)
     await db_session.flush()
@@ -311,8 +311,8 @@ async def test_index_authored_doc_falls_back_to_existing_doc(db_session, monkeyp
         role="problem",
     )
     assert doc_id == existing_id
-    refreshed = await db_session.get(AITADocument, existing_id)
-    assert refreshed.status == {"state": "apollo_reference"}
+    refreshed = await db_session.get(Document, existing_id)
+    assert refreshed.status == "queued"
 
 
 @pytest.mark.asyncio
@@ -325,13 +325,13 @@ async def test_reupload_reuses_content_identical_doc_via_real_prepare(db_session
     away (returns []) and the indexer must reuse the content-identical doc by
     falling back to the content hash — not raise.
     """
-    from database.models import AITADocument, SearchSpace
+    from database.models import Document, Course
     from indexing.document_hashing import (
         compute_content_hash,
         compute_unique_identifier_hash,
     )
 
-    db_session.add(SearchSpace(id=21, name="x", slug="aae-reupload", subject_name="AAE"))
+    db_session.add(Course(id=21, name="x", slug="aae-reupload", subject_name="AAE"))
     await db_session.flush()
     ing = _fake_ingestion(
         [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
@@ -341,13 +341,13 @@ async def test_reupload_reuses_content_identical_doc_via_real_prepare(db_session
     first = idx._connector_document(
         search_space_id=21, title="t", set_index=1, role="problem", ingestion=ing
     )
-    existing = AITADocument(
+    existing = Document(
         title="t",
         content="c",
         content_hash=compute_content_hash(first),
-        search_space_id=21,
+        course_id=21,
         unique_identifier_hash=compute_unique_identifier_hash(first),
-        status={"state": "apollo_reference"},
+        status="queued",
     )
     db_session.add(existing)
     await db_session.flush()
@@ -369,9 +369,9 @@ async def test_reupload_reuses_content_identical_doc_via_real_prepare(db_session
 
 @pytest.mark.asyncio
 async def test_index_authored_doc_raises_when_no_doc_and_no_existing(db_session, monkeypatch):
-    from database.models import SearchSpace
+    from database.models import Course
 
-    db_session.add(SearchSpace(id=12, name="x", slug="aae-nodoc", subject_name="AAE"))
+    db_session.add(Course(id=12, name="x", slug="aae-nodoc", subject_name="AAE"))
     await db_session.flush()
     ing = _fake_ingestion(
         [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
@@ -397,9 +397,9 @@ async def test_index_authored_doc_raises_when_no_doc_and_no_existing(db_session,
 async def test_index_authored_doc_offloads_ingest_off_event_loop(db_session, monkeypatch):
     """The blocking PyMuPDF/OCR ingest must run off the event-loop thread so it
     never stalls concurrent request handling."""
-    from database.models import SearchSpace
+    from database.models import Course
 
-    db_session.add(SearchSpace(id=8, name="AAE Thread", slug="aae-thread", subject_name="AAE"))
+    db_session.add(Course(id=8, name="AAE Thread", slug="aae-thread", subject_name="AAE"))
     await db_session.flush()
 
     loop_thread_ident = threading.get_ident()

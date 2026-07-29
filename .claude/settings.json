@@ -3,5 +3,18 @@
     "allow": [
       "Bash(python -c \":*)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_docs_placement.py\""
+          }
+        ]
+      }
+    ]
   }
 }

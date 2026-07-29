@@ -1,0 +1,2264 @@
+{
+  "$schema_version": 1,
+  "generated_by": "check_owns_coverage.py --emit-index",
+  "generated_at": "2026-07-28",
+  "repo": "aside-tutor",
+  "docs_root": "docs/architecture",
+  "source_to_doc": {
+    ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
+    ".coveragerc": "platform/ci-workflows",
+    ".github/actions/setup/action.yml": "platform/ci-workflows",
+    ".github/dependabot.yml": "platform/ci-workflows",
+    ".github/workflows/backmerge.yml": "platform/ci-workflows",
+    ".github/workflows/ci.yml": "platform/ci-workflows",
+    ".github/workflows/nightly.yml": "platform/ci-workflows",
+    ".pre-commit-config.yaml": "platform/ci-workflows",
+    "Procfile": "platform/worker-and-procfile",
+    "ai/__init__.py": "rag-pipeline/main-ai",
+    "ai/main_ai.py": "rag-pipeline/main-ai",
+    "ai/orchestrator.py": "rag-pipeline/orchestrator",
+    "ai/prompts/__init__.py": "rag-pipeline/prompts-keyword",
+    "ai/prompts/apollo_aside.py": "rag-pipeline/prompts-answer",
+    "ai/prompts/concept_extraction.py": "rag-pipeline/prompts-keyword",
+    "ai/prompts/extract_keywords.py": "rag-pipeline/prompts-keyword",
+    "ai/prompts/general_term_filter.py": "rag-pipeline/prompts-keyword",
+    "ai/prompts/keyword_generation.py": "rag-pipeline/prompts-keyword",
+    "ai/prompts/keyword_scoring.py": "rag-pipeline/prompts-keyword",
+    "ai/prompts/parse_question.py": "rag-pipeline/prompts-parse-relevance",
+    "ai/prompts/relevance_guard.py": "rag-pipeline/prompts-parse-relevance",
+    "ai/prompts/score_and_answer_snippet.py": "rag-pipeline/prompts-answer",
+    "ai/prompts/synonyms.py": "rag-pipeline/prompts-keyword",
+    "ai/prompts/tutor.py": "rag-pipeline/prompts-answer",
+    "ai/router/__init__.py": "rag-pipeline/router-wiring",
+    "ai/router/embedding_router.py": "rag-pipeline/router-deferred",
+    "ai/router/llm_router.py": "rag-pipeline/router-llm",
+    "ai/router/mode.py": "rag-pipeline/router-mode",
+    "ai/router/orchestrator.py": "rag-pipeline/router-deferred",
+    "ai/router/routes.py": "rag-pipeline/router-deferred",
+    "ai/router/seeds.json": "rag-pipeline/router-deferred",
+    "ai/router/wiring.py": "rag-pipeline/router-wiring",
+    "ai/solver.py": "rag-pipeline/solver",
+    "ai/streaming.py": "rag-pipeline/streaming",
+    "ai/vision.py": "rag-pipeline/vision",
+    "apollo/__init__.py": "apollo/conversation/routing/router",
+    "apollo/agent/__init__.py": "apollo/conversation/agent/llm-client",
+    "apollo/agent/_llm.py": "apollo/conversation/agent/llm-client",
+    "apollo/agent/apollo_llm.py": "apollo/conversation/agent/persona-reply",
+    "apollo/agent/leakage_judge.py": "apollo/conversation/agent/output-filter",
+    "apollo/agent/output_filter.py": "apollo/conversation/agent/output-filter",
+    "apollo/api.py": "apollo/conversation/routing/router",
+    "apollo/auth_deps.py": "apollo/conversation/routing/auth-deps",
+    "apollo/errors.py": "apollo/conversation/routing/errors",
+    "apollo/grading/__init__.py": "apollo/grading/artifact-build",
+    "apollo/grading/artifact_build.py": "apollo/grading/artifact-build",
+    "apollo/grading/event_model.py": "apollo/grading/event-model",
+    "apollo/handlers/__init__.py": "apollo/conversation/handlers/chat",
+    "apollo/handlers/artifact_writer.py": "apollo/conversation/handlers/grading-artifact-writer",
+    "apollo/handlers/browse.py": "apollo/conversation/handlers/browse",
+    "apollo/handlers/chat.py": "apollo/conversation/handlers/chat",
+    "apollo/handlers/done.py": "apollo/conversation/handlers/done",
+    "apollo/handlers/done_turn_order.py": "apollo/conversation/handlers/done-turn-order",
+    "apollo/handlers/history.py": "apollo/conversation/handlers/history",
+    "apollo/handlers/intent.py": "apollo/conversation/handlers/intent",
+    "apollo/handlers/lifecycle.py": "apollo/conversation/handlers/lifecycle",
+    "apollo/handlers/negotiate.py": "apollo/conversation/handlers/negotiate",
+    "apollo/handlers/next.py": "apollo/conversation/handlers/navigation",
+    "apollo/handlers/olm_invite.py": "apollo/conversation/handlers/olm-invite",
+    "apollo/handlers/progress.py": "apollo/conversation/handlers/progress",
+    "apollo/handlers/restart_problem.py": "apollo/conversation/handlers/navigation",
+    "apollo/hoot_bridge/__init__.py": "apollo/conversation/session-init",
+    "apollo/hoot_bridge/reference_answer.py": "apollo/conversation/hoot-bridge-reference-answer",
+    "apollo/hoot_bridge/session_init.py": "apollo/conversation/session-init",
+    "apollo/knowledge_graph/__init__.py": "apollo/knowledge-graph/store",
+    "apollo/knowledge_graph/canon_projection.py": "apollo/knowledge-graph/canon-projection",
+    "apollo/knowledge_graph/resolution_store.py": "apollo/knowledge-graph/resolution-store",
+    "apollo/knowledge_graph/store.py": "apollo/knowledge-graph/store",
+    "apollo/learner_model/__init__.py": "apollo/learner-model/belief-filter",
+    "apollo/learner_model/belief.py": "apollo/learner-model/belief-filter",
+    "apollo/learner_model/decay.py": "apollo/learner-model/belief-update",
+    "apollo/learner_model/personalization_read.py": "apollo/learner-model/personalization",
+    "apollo/learner_model/personalization_select.py": "apollo/learner-model/personalization",
+    "apollo/learner_model/state_model.py": "apollo/learner-model/belief-filter",
+    "apollo/learner_model/update.py": "apollo/learner-model/belief-update",
+    "apollo/ontology/__init__.py": "apollo/ontology/graph",
+    "apollo/ontology/edges.py": "apollo/ontology/edges",
+    "apollo/ontology/graph.py": "apollo/ontology/graph",
+    "apollo/ontology/nodes.py": "apollo/ontology/nodes",
+    "apollo/overseer/__init__.py": "apollo/overseer/transcript-coverage",
+    "apollo/overseer/aside_penalty.py": "apollo/overseer/aside-penalty",
+    "apollo/overseer/concept_inference.py": "apollo/overseer/concept-inference",
+    "apollo/overseer/coverage.py": "apollo/overseer/coverage",
+    "apollo/overseer/coverage_contract.py": "apollo/overseer/transcript-coverage",
+    "apollo/overseer/diagnostic.py": "apollo/overseer/diagnostic",
+    "apollo/overseer/grounding.py": "apollo/overseer/grounding",
+    "apollo/overseer/misconception.py": "apollo/overseer/rubric",
+    "apollo/overseer/personalization_flag.py": "apollo/overseer/problem-selector",
+    "apollo/overseer/problem_selector.py": "apollo/overseer/problem-selector",
+    "apollo/overseer/remediation.py": "apollo/overseer/diagnostic",
+    "apollo/overseer/rubric.py": "apollo/overseer/rubric",
+    "apollo/overseer/topic_narrative.py": "apollo/overseer/topic-narrative",
+    "apollo/overseer/topic_score.py": "apollo/overseer/topic-score",
+    "apollo/overseer/topic_score_serialize.py": "apollo/overseer/topic-score",
+    "apollo/overseer/transcript_coverage.py": "apollo/overseer/transcript-coverage",
+    "apollo/overseer/xp.py": "apollo/overseer/xp",
+    "apollo/parser/__init__.py": "apollo/conversation/parser/parser-llm",
+    "apollo/parser/edge_resolver.py": "apollo/conversation/parser/edge-resolver",
+    "apollo/parser/extraction_schema.py": "apollo/conversation/parser/extraction-schema",
+    "apollo/parser/graph_context.py": "apollo/conversation/parser/graph-context",
+    "apollo/parser/parser_llm.py": "apollo/conversation/parser/parser-llm",
+    "apollo/parser/prompt_builder.py": "apollo/conversation/parser/parser-llm",
+    "apollo/persistence/__init__.py": "apollo/persistence/models",
+    "apollo/persistence/attempt_history.py": "apollo/persistence/done-write-linkage",
+    "apollo/persistence/learner_model_seed.py": "apollo/persistence/learner-model-seed",
+    "apollo/persistence/models.py": "apollo/persistence/models",
+    "apollo/persistence/neo4j_client.py": "apollo/persistence/neo4j-client",
+    "apollo/persistence/neo4j_schema.cypher": "apollo/persistence/neo4j-client",
+    "apollo/persistence/problem_linkage.py": "apollo/persistence/done-write-linkage",
+    "apollo/persistence/progress_repo.py": "apollo/persistence/progress-repo",
+    "apollo/projections/__init__.py": "apollo/projections/mastery",
+    "apollo/projections/classroom.py": "apollo/projections/classroom",
+    "apollo/projections/mastery.py": "apollo/projections/mastery",
+    "apollo/projections/scorecard.py": "apollo/projections/scorecard",
+    "apollo/provisioning/__init__.py": "apollo/provisioning/_index",
+    "apollo/provisioning/authored_problem.py": "apollo/provisioning/authored-problem",
+    "apollo/provisioning/authored_sets/__init__.py": "apollo/provisioning/authored-sets/_index",
+    "apollo/provisioning/authored_sets/api.py": "apollo/provisioning/authored-sets/api",
+    "apollo/provisioning/authored_sets/graph_derivation.py": "apollo/provisioning/authored-sets/graph-derivation",
+    "apollo/provisioning/authored_sets/indexing.py": "apollo/provisioning/authored-sets/indexing",
+    "apollo/provisioning/authored_sets/label_match.py": "apollo/provisioning/authored-sets/paired-retrieval",
+    "apollo/provisioning/authored_sets/observability.py": "apollo/provisioning/authored-sets/observability",
+    "apollo/provisioning/authored_sets/orchestrator.py": "apollo/provisioning/authored-sets/orchestrator",
+    "apollo/provisioning/authored_sets/paired_retrieval.py": "apollo/provisioning/authored-sets/paired-retrieval",
+    "apollo/provisioning/authored_sets/structure_pass.py": "apollo/provisioning/authored-sets/structure-pass",
+    "apollo/provisioning/authored_sets/verification.py": "apollo/provisioning/authored-sets/verification",
+    "apollo/provisioning/concept_match.py": "apollo/provisioning/concept-match",
+    "apollo/provisioning/concepts_api.py": "apollo/provisioning/concepts-api",
+    "apollo/provisioning/cost_constants.py": "apollo/provisioning/metered-chat",
+    "apollo/provisioning/dedup.py": "apollo/provisioning/dedup",
+    "apollo/provisioning/dedup_constants.py": "apollo/provisioning/dedup",
+    "apollo/provisioning/generation_contract.py": "apollo/provisioning/provisioning-schema",
+    "apollo/provisioning/ingest.py": "apollo/provisioning/ingest",
+    "apollo/provisioning/metered_chat.py": "apollo/provisioning/metered-chat",
+    "apollo/provisioning/pairing_gate.py": "apollo/provisioning/pairing-gate",
+    "apollo/provisioning/path_enumeration.py": "apollo/provisioning/path-enumeration",
+    "apollo/provisioning/problem_generation/__init__.py": "apollo/provisioning/problem-generation/_index",
+    "apollo/provisioning/problem_generation/api.py": "apollo/provisioning/problem-generation/api",
+    "apollo/provisioning/problem_generation/generator.py": "apollo/provisioning/problem-generation/generator",
+    "apollo/provisioning/problem_generation/operators.py": "apollo/provisioning/problem-generation/support",
+    "apollo/provisioning/problem_generation/verifiers.py": "apollo/provisioning/problem-generation/support",
+    "apollo/provisioning/problem_hash.py": "apollo/provisioning/dedup",
+    "apollo/provisioning/problem_leak_guard.py": "apollo/provisioning/problem-leak-guard",
+    "apollo/provisioning/promote.py": "apollo/provisioning/promote",
+    "apollo/provisioning/promotion_lint.py": "apollo/provisioning/promotion-lint",
+    "apollo/provisioning/provisioning_schema.py": "apollo/provisioning/provisioning-schema",
+    "apollo/provisioning/retrieval_adapter.py": "apollo/provisioning/retrieval-adapter",
+    "apollo/provisioning/scrape.py": "apollo/provisioning/scrape",
+    "apollo/provisioning/section_grouping.py": "apollo/provisioning/scrape-sections",
+    "apollo/provisioning/section_triage.py": "apollo/provisioning/scrape-sections",
+    "apollo/provisioning/solution.py": "apollo/provisioning/solution",
+    "apollo/provisioning/tag_mint.py": "apollo/provisioning/tag-mint",
+    "apollo/provisioning/tag_mint_persist.py": "apollo/provisioning/tag-mint",
+    "apollo/resolution/__init__.py": "apollo/resolution/resolver",
+    "apollo/resolution/assignment.py": "apollo/resolution/assignment",
+    "apollo/resolution/candidates.py": "apollo/resolution/candidates",
+    "apollo/resolution/competition.py": "apollo/resolution/guardrails",
+    "apollo/resolution/embedding.py": "apollo/resolution/embedding",
+    "apollo/resolution/equation_alignment.py": "apollo/resolution/content-tiers",
+    "apollo/resolution/resolver.py": "apollo/resolution/resolver",
+    "apollo/resolution/result.py": "apollo/resolution/result",
+    "apollo/resolution/structural.py": "apollo/resolution/guardrails",
+    "apollo/resolution/tiers.py": "apollo/resolution/content-tiers",
+    "apollo/schemas/__init__.py": "apollo/schemas/problem",
+    "apollo/schemas/dag.py": "apollo/schemas/authoring-schemas",
+    "apollo/schemas/problem.py": "apollo/schemas/problem",
+    "apollo/schemas/procedure.py": "apollo/schemas/authoring-schemas",
+    "apollo/schemas/variable_map.py": "apollo/schemas/authoring-schemas",
+    "apollo/smart_questions/__init__.py": "apollo/conversation/questioning/controller",
+    "apollo/smart_questions/controller.py": "apollo/conversation/questioning/controller",
+    "apollo/smart_questions/unified.py": "apollo/conversation/questioning/unified",
+    "apollo/solver/__init__.py": "apollo/solver/sympy-exec",
+    "apollo/solver/forward_chain.py": "apollo/solver/sufficiency",
+    "apollo/solver/narrator.py": "apollo/solver/narrator",
+    "apollo/solver/sufficiency.py": "apollo/solver/sufficiency",
+    "apollo/solver/sympy_exec.py": "apollo/solver/sympy-exec",
+    "apollo/subjects/__init__.py": "apollo/conversation/curriculum/registry",
+    "apollo/subjects/calculus_2/__init__.py": "apollo/conversation/curriculum/registry",
+    "apollo/subjects/curriculum_db.py": "apollo/conversation/curriculum/db",
+    "apollo/subjects/fluid_mechanics/__init__.py": "apollo/conversation/curriculum/registry",
+    "apollo/subjects/macroeconomics/__init__.py": "apollo/conversation/curriculum/registry",
+    "auth.py": "platform/auth",
+    "campaign/README.md": "campaign/transcript-replay",
+    "campaign/__init__.py": "campaign/transcript-replay",
+    "campaign/cast/__init__.py": "campaign/cast-student",
+    "campaign/cast/materials/generate_fixtures.py": "campaign/cast-subjects-materials",
+    "campaign/cast/personas/__init__.py": "campaign/cast-personas",
+    "campaign/cast/personas/schema.py": "campaign/cast-personas",
+    "campaign/cast/personas/validate.py": "campaign/cast-personas",
+    "campaign/cast/student.py": "campaign/cast-student",
+    "campaign/cast/subjects.py": "campaign/cast-subjects-materials",
+    "campaign/cast/teacher.py": "campaign/cast-teacher",
+    "campaign/infra/__init__.py": "campaign/infra",
+    "campaign/infra/apply_migrations.py": "campaign/infra",
+    "campaign/infra/reset.py": "campaign/infra",
+    "campaign/judges/__init__.py": "campaign/judges-base",
+    "campaign/judges/base.py": "campaign/judges-base",
+    "campaign/judges/s1_reference_graph.py": "campaign/judges-s1-s2",
+    "campaign/judges/s2_ingestion.py": "campaign/judges-s1-s2",
+    "campaign/judges/s3_student_fidelity.py": "campaign/judges-s3-s4",
+    "campaign/judges/s4_apollo_coherence.py": "campaign/judges-s3-s4",
+    "campaign/judges/s5_misconceptions.py": "campaign/judges-s5",
+    "campaign/scripts/__init__.py": "campaign/scripts-run-s1-s2",
+    "campaign/scripts/diff_generated_vs_authored.py": "campaign/scripts-diff-eval",
+    "campaign/scripts/eval_authored_calc2.py": "campaign/scripts-diff-eval",
+    "campaign/scripts/run_s1_s2.py": "campaign/scripts-run-s1-s2",
+    "campaign/transcript_replay.py": "campaign/transcript-replay",
+    "chats/__init__.py": "chats/service",
+    "chats/bundle_cache.py": "chats/bundle-cache",
+    "chats/routes.py": "chats/routes",
+    "chats/service.py": "chats/service",
+    "citations/__init__.py": "rag-pipeline/citations-formatter",
+    "citations/formatter.py": "rag-pipeline/citations-formatter",
+    "config/__init__.py": "platform/config-settings",
+    "config/contracts.py": "platform/config-contracts",
+    "config/models.py": "platform/config-model-pins",
+    "config/settings.py": "platform/config-settings",
+    "config/weights.py": "platform/config-weights",
+    "database/__init__.py": "database/models",
+    "database/migrations/001_create_schema.py": "database/legacy-migrations",
+    "database/migrations/002_seed_from_supabase.py": "database/legacy-migrations",
+    "database/migrations/003_reindex_existing.py": "database/legacy-migrations",
+    "database/migrations/004_teacher_features.sql": "database/legacy-migrations",
+    "database/migrations/005_chat_memory.sql": "database/legacy-migrations",
+    "database/migrations/006_membership_auth.sql": "database/legacy-migrations",
+    "database/migrations/007_teacher_upload_async.sql": "database/legacy-migrations",
+    "database/migrations/008_invite_links.sql": "database/legacy-migrations",
+    "database/migrations/009_apollo_slice0.sql": "database/legacy-migrations",
+    "database/migrations/010_apollo_procedure_step.sql": "database/legacy-migrations",
+    "database/migrations/011_chat_turn_citations.sql": "database/legacy-migrations",
+    "database/migrations/012_ai_use_reports.sql": "database/legacy-migrations",
+    "database/migrations/013_apollo_student_progress.sql": "database/legacy-migrations",
+    "database/migrations/014_apollo_attempt_id.sql": "database/legacy-migrations",
+    "database/migrations/015_rag_orchestrator.sql": "database/legacy-migrations",
+    "database/migrations/016_apollo_pending_intent.sql": "database/legacy-migrations",
+    "database/migrations/017_apollo_history_summary.sql": "database/legacy-migrations",
+    "database/migrations/018_apollo_concept_registry.sql": "database/legacy-migrations",
+    "database/migrations/019_apollo_misconceptions.sql": "database/legacy-migrations",
+    "database/migrations/020_apollo_message_metadata.sql": "database/legacy-migrations",
+    "database/migrations/021_apollo_kg_negotiations.sql": "database/legacy-migrations",
+    "database/migrations/022_enable_rls_stopgap.sql": "database/legacy-migrations",
+    "database/migrations/023_apollo_auth_scoping.sql": "database/legacy-migrations",
+    "database/migrations/023_chunks_halfvec_hnsw.sql": "database/legacy-migrations",
+    "database/migrations/024_teacher_textbook.sql": "database/legacy-migrations",
+    "database/migrations/025_apollo_attempt_result_values.sql": "database/legacy-migrations",
+    "database/migrations/026_apollo_learner_model.sql": "database/legacy-migrations",
+    "database/migrations/027_apollo_drop_concept_cluster_id.sql": "database/legacy-migrations",
+    "database/migrations/028_apollo_learner_janitor.sql": "database/legacy-migrations",
+    "database/migrations/029_chat_turn_keywords.sql": "database/legacy-migrations",
+    "database/migrations/030_apollo_autoprovisioning.sql": "database/legacy-migrations",
+    "database/migrations/031_apollo_soundness_applicable.sql": "database/legacy-migrations",
+    "database/migrations/032_apollo_authored_sets.sql": "database/legacy-migrations",
+    "database/migrations/033_apollo_clarifications.sql": "database/legacy-migrations",
+    "database/migrations/034_apollo_grading_artifacts.sql": "database/legacy-migrations",
+    "database/migrations/035_apollo_learner_state_space_idx.sql": "database/legacy-migrations",
+    "database/migrations/036_apollo_ingest_page_evidence.sql": "database/legacy-migrations",
+    "database/migrations/037_apollo_misconception_observations.sql": "database/legacy-migrations",
+    "database/migrations/038_apollo_concept_description.sql": "database/legacy-migrations",
+    "database/migrations/039_apollo_misconception_opposes.sql": "database/legacy-migrations",
+    "database/migrations/040_apollo_misconception_obs_source_domain.sql": "database/legacy-migrations",
+    "database/migrations/041_apollo_grading_artifact_llm_transcript.sql": "database/legacy-migrations",
+    "database/migrations/042_apollo_reference_question_opportunities.sql": "database/legacy-migrations",
+    "database/migrations/043_apollo_dedup_pressure.sql": "database/legacy-migrations",
+    "database/migrations/044_apollo_generation_runs.sql": "database/legacy-migrations",
+    "database/migrations/045_apollo_mastery_event_problem_link.sql": "database/legacy-migrations",
+    "database/migrations/046_apollo_solution_source_llm_paired.sql": "database/legacy-migrations",
+    "database/migrations/047_apollo_question_tally.sql": "database/legacy-migrations",
+    "database/migrations/048_apollo_session_grounding_bundle.sql": "database/legacy-migrations",
+    "database/migrations/README.md": "database/legacy-migrations",
+    "database/migrations/__init__.py": "database/legacy-migrations",
+    "database/migrations/legacy-manifest.sha256": "database/legacy-migrations",
+    "database/models.py": "database/models",
+    "database/session.py": "database/session",
+    "database/transforms.py": "database/transforms",
+    "indexing/__init__.py": "indexing/indexing-service",
+    "indexing/checkpoint_indexer.py": "indexing/checkpoint-indexer",
+    "indexing/connector_document.py": "indexing/connector-document",
+    "indexing/document_chunker.py": "indexing/chunking-embedding",
+    "indexing/document_embedder.py": "indexing/chunking-embedding",
+    "indexing/document_hashing.py": "indexing/persistence-hashing",
+    "indexing/document_persistence.py": "indexing/persistence-hashing",
+    "indexing/indexing_service.py": "indexing/indexing-service",
+    "indexing/text_sanitization.py": "indexing/connector-document",
+    "knowledge/__init__.py": "knowledge/teacher-weekly",
+    "knowledge/teacher_pdf_ingestion.py": "knowledge/teacher-pdf-ingestion",
+    "knowledge/teacher_weekly.py": "knowledge/teacher-weekly",
+    "mypy.ini": "platform/ci-workflows",
+    "ocr/README.md": "indexing/ocr-core",
+    "ocr/__init__.py": "indexing/ocr-core",
+    "ocr/factory.py": "indexing/ocr-core",
+    "ocr/mathpix.py": "indexing/ocr-providers",
+    "ocr/openai_vision.py": "indexing/ocr-providers",
+    "ocr/provider.py": "indexing/ocr-core",
+    "package.json": "platform/ci-workflows",
+    "pytest.ini": "platform/ci-workflows",
+    "reports/__init__.py": "reports/ai-use-routes",
+    "reports/ai_use/__init__.py": "reports/ai-use-routes",
+    "reports/ai_use/models.py": "reports/ai-use-models",
+    "reports/ai_use/pdf.py": "reports/ai-use-pdf",
+    "reports/ai_use/routes.py": "reports/ai-use-routes",
+    "reports/ai_use/service.py": "reports/ai-use-service",
+    "requirements-test.txt": "platform/ci-workflows",
+    "requirements.txt": "platform/ci-workflows",
+    "retrieval/__init__.py": "rag-pipeline/retrieve-pipeline",
+    "retrieval/context_packer.py": "rag-pipeline/context-packer",
+    "retrieval/document_visibility.py": "rag-pipeline/document-visibility",
+    "retrieval/hybrid_search.py": "rag-pipeline/hybrid-search",
+    "retrieval/pipeline.py": "rag-pipeline/retrieve-pipeline",
+    "retrieval/reranker.py": "rag-pipeline/reranker",
+    "retrieval/store_bias.py": "rag-pipeline/store-bias",
+    "ruff.toml": "platform/ci-workflows",
+    "scripts/dag4_granularity_eval.py": "platform/ops-eval-scripts",
+    "scripts/db/build-legacy-snapshot-draft.mjs": "platform/ops-db-tooling",
+    "scripts/db/check-migration-drift.mjs": "platform/ops-db-tooling",
+    "scripts/db/compare-schema-dump.mjs": "platform/ops-db-tooling",
+    "scripts/db/drop_duplicate_indexes.sql": "platform/ops-db-sql",
+    "scripts/db/reconcile_copy.sql": "platform/ops-db-sql",
+    "scripts/db/remove_legacy_public_schema.sql": "platform/ops-db-sql",
+    "scripts/db/reset-local.mjs": "platform/ops-db-tooling",
+    "scripts/db/rollback_reverse_copy.sql": "platform/ops-db-sql",
+    "scripts/db/unused_index_review.sql": "platform/ops-db-sql",
+    "scripts/docs/check_owns_coverage.py": "platform/ci-workflows",
+    "scripts/docs/owns_exclude.txt": "platform/ci-workflows",
+    "scripts/eval_iterative_scan_recall.py": "platform/ops-eval-scripts",
+    "scripts/seed_apollo_concept_registry.py": "platform/ops-seed-scripts",
+    "scripts/seed_apollo_learner_model.py": "platform/ops-seed-scripts",
+    "scripts/seed_canon_projection.py": "platform/ops-seed-scripts",
+    "scripts/seed_premade_concepts.py": "platform/ops-seed-scripts",
+    "scripts/spikes/rq3_edge_extraction.py": "platform/ops-eval-scripts",
+    "scripts/spikes/rq3_results.json": "platform/ops-eval-scripts",
+    "scripts/test_search.py": "platform/ops-eval-scripts",
+    "scripts/wave1_live_smoke.py": "platform/ops-eval-scripts",
+    "server.py": "platform/http-server",
+    "supabase/.gitignore": "database/supabase-migrations",
+    "supabase/config.toml": "database/supabase-migrations",
+    "supabase/migrations/20260717032246_legacy_public_snapshot.sql": "database/supabase-migrations",
+    "supabase/migrations/20260717035041_create_app_schema_v1.sql": "database/supabase-migrations",
+    "supabase/migrations/20260717043000_copy_app_schema_v1.sql": "database/supabase-migrations",
+    "supabase/migrations/20260717050000_retrieval_functions_v1.sql": "database/supabase-migrations",
+    "supabase/migrations/20260722120000_db08b_rls_enforcement_grants.sql": "database/supabase-migrations",
+    "supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql": "database/supabase-migrations",
+    "supabase/migrations/20260728120000_apollo_grounding_bundle.sql": "database/supabase-migrations",
+    "supabase/seed.sql": "database/supabase-migrations",
+    "teacher_upload_worker.py": "platform/worker-and-procfile",
+    "vendors/__init__.py": "platform/vendor-openai-client",
+    "vendors/openai_client.py": "platform/vendor-openai-client",
+    "vendors/supabase_storage.py": "platform/vendor-supabase-storage",
+    "workspaces/__init__.py": "platform/workspaces",
+    "workspaces/db.py": "platform/workspaces",
+    "workspaces/manager.py": "platform/workspaces"
+  },
+  "docs": {
+    "ai-ta-backend/_overview": {
+      "path": "docs/architecture/_overview.md",
+      "kind": "router",
+      "description": "Thin root router for the ai-ta-backend architecture tree \u2014 routes to the nine domain indexes.",
+      "owns": []
+    },
+    "apollo/_index": {
+      "path": "docs/architecture/apollo/_index.md",
+      "kind": "router",
+      "description": "Apollo mega-domain router \u2014 two index tiers over the teach-a-confused-AI mode (365 files); routes to 12 sub-domain indexes.",
+      "owns": []
+    },
+    "apollo/conversation/_index": {
+      "path": "docs/architecture/apollo/conversation/_index.md",
+      "kind": "router",
+      "description": "Router + Apollo teaching-turn end-to-end authority \u2014 routing, handlers, agent, parser, questioning, curriculum, session entry",
+      "owns": []
+    },
+    "apollo/conversation/agent/llm-client": {
+      "path": "docs/architecture/apollo/conversation/agent/llm-client.md",
+      "kind": "leaf",
+      "description": "Shared two-tier OpenAI chat helpers (cheap_chat / main_chat) for Apollo agent code.",
+      "owns": [
+        "apollo/agent/_llm.py",
+        "apollo/agent/__init__.py"
+      ]
+    },
+    "apollo/conversation/agent/output-filter": {
+      "path": "docs/architecture/apollo/conversation/agent/output-filter.md",
+      "kind": "leaf",
+      "description": "Vestigial two-stage structural-leakage barrier (deterministic pre-filter + LLM judge).",
+      "owns": [
+        "apollo/agent/output_filter.py",
+        "apollo/agent/leakage_judge.py"
+      ]
+    },
+    "apollo/conversation/agent/persona-reply": {
+      "path": "docs/architecture/apollo/conversation/agent/persona-reply.md",
+      "kind": "leaf",
+      "description": "Vestigial confused-learner persona reply generator; only ContextOverflowError is still wired.",
+      "owns": [
+        "apollo/agent/apollo_llm.py"
+      ]
+    },
+    "apollo/conversation/curriculum/db": {
+      "path": "docs/architecture/apollo/conversation/curriculum/db.md",
+      "kind": "leaf",
+      "description": "DB-backed curriculum loader \u2014 the live course-scoped selection path reading app.concepts.",
+      "owns": [
+        "apollo/subjects/curriculum_db.py"
+      ]
+    },
+    "apollo/conversation/curriculum/registry": {
+      "path": "docs/architecture/apollo/conversation/curriculum/registry.md",
+      "kind": "leaf",
+      "description": "Filesystem-backed subject/concept authoring registry and the single authority on the on-disk concept-pack schema.",
+      "owns": [
+        "apollo/subjects/__init__.py",
+        "apollo/subjects/calculus_2/__init__.py",
+        "apollo/subjects/fluid_mechanics/__init__.py",
+        "apollo/subjects/macroeconomics/__init__.py"
+      ]
+    },
+    "apollo/conversation/handlers/browse": {
+      "path": "docs/architecture/apollo/conversation/handlers/browse.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/browse.py \u2014 handle_list_problems, the read-only student browse surface for one concept",
+      "owns": [
+        "apollo/handlers/browse.py"
+      ]
+    },
+    "apollo/conversation/handlers/chat": {
+      "path": "docs/architecture/apollo/conversation/handlers/chat.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/chat.py \u2014 handle_chat, the full V3 teaching turn (intent gate, parse, KG write, questioning)",
+      "owns": [
+        "apollo/handlers/chat.py",
+        "apollo/handlers/__init__.py"
+      ]
+    },
+    "apollo/conversation/handlers/done": {
+      "path": "docs/architecture/apollo/conversation/handlers/done.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/done.py \u2014 handle_done, the grade-of-record orchestrator that assembles the whole Apollo grading path",
+      "owns": [
+        "apollo/handlers/done.py"
+      ]
+    },
+    "apollo/conversation/handlers/done-turn-order": {
+      "path": "docs/architecture/apollo/conversation/handlers/done-turn-order.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/done_turn_order.py \u2014 VESTIGIAL WU-4C1 shadow-chain turn order, orphaned by the A7 ruling (deletion candidate)",
+      "owns": [
+        "apollo/handlers/done_turn_order.py"
+      ]
+    },
+    "apollo/conversation/handlers/grading-artifact-writer": {
+      "path": "docs/architecture/apollo/conversation/handlers/grading-artifact-writer.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/artifact_writer.py \u2014 write_artifacts, the one canonical GradingRun row per Done click (DB-14)",
+      "owns": [
+        "apollo/handlers/artifact_writer.py"
+      ]
+    },
+    "apollo/conversation/handlers/history": {
+      "path": "docs/architecture/apollo/conversation/handlers/history.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/history.py \u2014 VESTIGIAL windowed-history loader with zero live importers (deletion candidate)",
+      "owns": [
+        "apollo/handlers/history.py"
+      ]
+    },
+    "apollo/conversation/handlers/intent": {
+      "path": "docs/architecture/apollo/conversation/handlers/intent.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/intent.py \u2014 the chat intent classifier + confirmation gate that routes \"I'm done\" to grading",
+      "owns": [
+        "apollo/handlers/intent.py"
+      ]
+    },
+    "apollo/conversation/handlers/lifecycle": {
+      "path": "docs/architecture/apollo/conversation/handlers/lifecycle.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/lifecycle.py \u2014 retry / end / get-session snapshot handlers",
+      "owns": [
+        "apollo/handlers/lifecycle.py"
+      ]
+    },
+    "apollo/conversation/handlers/navigation": {
+      "path": "docs/architecture/apollo/conversation/handlers/navigation.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/next.py + restart_problem.py \u2014 the two phase-transition problem-navigation handlers",
+      "owns": [
+        "apollo/handlers/next.py",
+        "apollo/handlers/restart_problem.py"
+      ]
+    },
+    "apollo/conversation/handlers/negotiate": {
+      "path": "docs/architecture/apollo/conversation/handlers/negotiate.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/negotiate.py \u2014 the P3 Negotiable-OLM challenge/paraphrase/skip/trace endpoints on a KG entry",
+      "owns": [
+        "apollo/handlers/negotiate.py"
+      ]
+    },
+    "apollo/conversation/handlers/olm-invite": {
+      "path": "docs/architecture/apollo/conversation/handlers/olm-invite.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/olm_invite.py \u2014 VESTIGIAL P3.5 clarification-invite logic, never wired (deletion candidate)",
+      "owns": [
+        "apollo/handlers/olm_invite.py"
+      ]
+    },
+    "apollo/conversation/handlers/progress": {
+      "path": "docs/architecture/apollo/conversation/handlers/progress.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/progress.py \u2014 the course-scoped XP/level read surface",
+      "owns": [
+        "apollo/handlers/progress.py"
+      ]
+    },
+    "apollo/conversation/hoot-bridge-reference-answer": {
+      "path": "docs/architecture/apollo/conversation/hoot-bridge-reference-answer.md",
+      "kind": "leaf",
+      "description": "INTERACTION4 \"ask Hoot\" hint lane \u2014 stateless bridge from an Apollo chat turn into Hoot's scoped QA pipeline for one reference-question aside.",
+      "owns": [
+        "apollo/hoot_bridge/reference_answer.py"
+      ]
+    },
+    "apollo/conversation/parser/edge-resolver": {
+      "path": "docs/architecture/apollo/conversation/parser/edge-resolver.md",
+      "kind": "leaf",
+      "description": "Maps LLM-emitted edge refs to validated typed Edges, enforcing endpoint rules at the parser output boundary.",
+      "owns": [
+        "apollo/parser/edge_resolver.py"
+      ]
+    },
+    "apollo/conversation/parser/extraction-schema": {
+      "path": "docs/architecture/apollo/conversation/parser/extraction-schema.md",
+      "kind": "leaf",
+      "description": "The strict OpenAI json_schema payload for the parser's one-call node + typed-edge extraction.",
+      "owns": [
+        "apollo/parser/extraction_schema.py"
+      ]
+    },
+    "apollo/conversation/parser/graph-context": {
+      "path": "docs/architecture/apollo/conversation/parser/graph-context.md",
+      "kind": "leaf",
+      "description": "Builds the minimal read-only prior-attempt graph the parser needs for cross-turn edge linking.",
+      "owns": [
+        "apollo/parser/graph_context.py"
+      ]
+    },
+    "apollo/conversation/parser/parser-llm": {
+      "path": "docs/architecture/apollo/conversation/parser/parser-llm.md",
+      "kind": "leaf",
+      "description": "Live parser entry \u2014 a student utterance becomes typed Nodes + Edges via one GPT-4o structured call.",
+      "owns": [
+        "apollo/parser/parser_llm.py",
+        "apollo/parser/prompt_builder.py",
+        "apollo/parser/__init__.py"
+      ]
+    },
+    "apollo/conversation/questioning/controller": {
+      "path": "docs/architecture/apollo/conversation/questioning/controller.md",
+      "kind": "leaf",
+      "description": "Persistence orchestration around the unified tally+question call (DB-11), writing QuestionOpportunity audit rows.",
+      "owns": [
+        "apollo/smart_questions/controller.py",
+        "apollo/smart_questions/__init__.py"
+      ]
+    },
+    "apollo/conversation/questioning/unified": {
+      "path": "docs/architecture/apollo/conversation/questioning/unified.md",
+      "kind": "leaf",
+      "description": "One-call engine that updates the per-node tally and generates Apollo's question, with log-only belt telemetry.",
+      "owns": [
+        "apollo/smart_questions/unified.py"
+      ]
+    },
+    "apollo/conversation/routing/auth-deps": {
+      "path": "docs/architecture/apollo/conversation/routing/auth-deps.md",
+      "kind": "leaf",
+      "description": "apollo/auth_deps.py \u2014 the four async FastAPI auth dependencies for /apollo and the DB-08b RLS ordering invariant",
+      "owns": [
+        "apollo/auth_deps.py"
+      ]
+    },
+    "apollo/conversation/routing/errors": {
+      "path": "docs/architecture/apollo/conversation/routing/errors.md",
+      "kind": "leaf",
+      "description": "apollo/errors.py \u2014 the apollo-wide NO-FALLBACK named-exception taxonomy, grouped by HTTP status",
+      "owns": [
+        "apollo/errors.py"
+      ]
+    },
+    "apollo/conversation/routing/router": {
+      "path": "docs/architecture/apollo/conversation/routing/router.md",
+      "kind": "leaf",
+      "description": "apollo/api.py FastAPI /apollo router, the process-singleton Neo4j client, and apollo-wide exception-handler registration",
+      "owns": [
+        "apollo/api.py",
+        "apollo/__init__.py"
+      ]
+    },
+    "apollo/conversation/session-init": {
+      "path": "docs/architecture/apollo/conversation/session-init.md",
+      "kind": "leaf",
+      "description": "hoot_bridge session creation \u2014 both Apollo entry paths, first attempt, and optional session grounding.",
+      "owns": [
+        "apollo/hoot_bridge/session_init.py",
+        "apollo/hoot_bridge/__init__.py"
+      ]
+    },
+    "apollo/grading/_index": {
+      "path": "docs/architecture/apollo/grading/_index.md",
+      "kind": "router",
+      "description": "Router for the shared grading value objects and canonical artifact-builder helpers.",
+      "owns": []
+    },
+    "apollo/grading/artifact-build": {
+      "path": "docs/architecture/apollo/grading/artifact-build.md",
+      "kind": "leaf",
+      "description": "The pure builder for the canonical transcript/topic grading artifact payload, plus the package facade.",
+      "owns": [
+        "apollo/grading/artifact_build.py",
+        "apollo/grading/__init__.py"
+      ]
+    },
+    "apollo/grading/event-model": {
+      "path": "docs/architecture/apollo/grading/event-model.md",
+      "kind": "leaf",
+      "description": "The frozen learner-model event value object mapping 1:1 onto app.mastery_events.",
+      "owns": [
+        "apollo/grading/event_model.py"
+      ]
+    },
+    "apollo/knowledge-graph/_index": {
+      "path": "docs/architecture/apollo/knowledge-graph/_index.md",
+      "kind": "router",
+      "description": "Router for the Neo4j-backed KG persistence area, and home of the Neo4j-degraded behavior invariant.",
+      "owns": []
+    },
+    "apollo/knowledge-graph/canon-projection": {
+      "path": "docs/architecture/apollo/knowledge-graph/canon-projection.md",
+      "kind": "leaf",
+      "description": "The WU-3C1 :Canon projection seeder \u2014 idempotently MERGE Layer-1 Postgres entities into Neo4j :Canon nodes.",
+      "owns": [
+        "apollo/knowledge_graph/canon_projection.py"
+      ]
+    },
+    "apollo/knowledge-graph/resolution-store": {
+      "path": "docs/architecture/apollo/knowledge-graph/resolution-store.md",
+      "kind": "leaf",
+      "description": "WU-3C2 persistence for the \u00a75 resolver \u2014 RESOLVES_TO edges plus the four Layer-2 resolution node-fields (dormant).",
+      "owns": [
+        "apollo/knowledge_graph/resolution_store.py"
+      ]
+    },
+    "apollo/knowledge-graph/store": {
+      "path": "docs/architecture/apollo/knowledge-graph/store.md",
+      "kind": "leaf",
+      "description": "KGStore \u2014 Neo4j-backed per-attempt subgraph CRUD plus Postgres-owned freeze enforcement; the handler-facing KG seam.",
+      "owns": [
+        "apollo/knowledge_graph/store.py",
+        "apollo/knowledge_graph/__init__.py"
+      ]
+    },
+    "apollo/learner-model/_index": {
+      "path": "docs/architecture/apollo/learner-model/_index.md",
+      "kind": "router",
+      "description": "Router for the Apollo learner-model sub-area \u2014 the pure 3-state Bayesian belief filter and the live session-personalization wedge.",
+      "owns": []
+    },
+    "apollo/learner-model/belief-filter": {
+      "path": "docs/architecture/apollo/learner-model/belief-filter.md",
+      "kind": "leaf",
+      "description": "The pure 3-state Bayesian belief-filter math core plus its frozen pre-DB value objects and the package re-export facade.",
+      "owns": [
+        "apollo/learner_model/belief.py",
+        "apollo/learner_model/state_model.py",
+        "apollo/learner_model/__init__.py"
+      ]
+    },
+    "apollo/learner-model/belief-update": {
+      "path": "docs/architecture/apollo/learner-model/belief-update.md",
+      "kind": "leaf",
+      "description": "The pure per-event apply_event orchestration and between-session decay layered on the belief math core.",
+      "owns": [
+        "apollo/learner_model/update.py",
+        "apollo/learner_model/decay.py"
+      ]
+    },
+    "apollo/learner-model/personalization": {
+      "path": "docs/architecture/apollo/learner-model/personalization.md",
+      "kind": "leaf",
+      "description": "The WU-6A session-personalization wedge \u2014 a course-scoped learner-profile DB read plus the pure problem-selection algorithm.",
+      "owns": [
+        "apollo/learner_model/personalization_read.py",
+        "apollo/learner_model/personalization_select.py"
+      ]
+    },
+    "apollo/ontology/_index": {
+      "path": "docs/architecture/apollo/ontology/_index.md",
+      "kind": "router",
+      "description": "Router for the Apollo V3 KG ontology \u2014 the typed shape layer every apollo module mirrors.",
+      "owns": []
+    },
+    "apollo/ontology/edges": {
+      "path": "docs/architecture/apollo/ontology/edges.md",
+      "kind": "leaf",
+      "description": "The four-type KG edge taxonomy with typed endpoint constraints enforced at Pydantic construction.",
+      "owns": [
+        "apollo/ontology/edges.py"
+      ]
+    },
+    "apollo/ontology/graph": {
+      "path": "docs/architecture/apollo/ontology/graph.md",
+      "kind": "leaf",
+      "description": "The KGGraph aggregate \u2014 the single source-of-truth graph shape \u2014 plus the ontology package facade.",
+      "owns": [
+        "apollo/ontology/graph.py",
+        "apollo/ontology/__init__.py"
+      ]
+    },
+    "apollo/ontology/nodes": {
+      "path": "docs/architecture/apollo/ontology/nodes.md",
+      "kind": "leaf",
+      "description": "The six-node KG taxonomy \u2014 a Pydantic discriminated union plus the build_node factory and label maps.",
+      "owns": [
+        "apollo/ontology/nodes.py"
+      ]
+    },
+    "apollo/overseer/_index": {
+      "path": "docs/architecture/apollo/overseer/_index.md",
+      "kind": "router",
+      "description": "Router for Apollo's grading, scoring, narrative, XP, and selection brains \u2014 home of the grading-path invariants.",
+      "owns": []
+    },
+    "apollo/overseer/aside-penalty": {
+      "path": "docs/architecture/apollo/overseer/aside-penalty.md",
+      "kind": "leaf",
+      "description": "INTERACTION5 pure credit-cap transform \u2014 flat-caps rubric nodes a Hoot lookup aside pre-explained, before the grade fans out.",
+      "owns": [
+        "apollo/overseer/aside_penalty.py"
+      ]
+    },
+    "apollo/overseer/concept-inference": {
+      "path": "docs/architecture/apollo/overseer/concept-inference.md",
+      "kind": "leaf",
+      "description": "Isolated LLM call mapping a Hoot transcript to one course concept_id for problem selection.",
+      "owns": [
+        "apollo/overseer/concept_inference.py"
+      ]
+    },
+    "apollo/overseer/coverage": {
+      "path": "docs/architecture/apollo/overseer/coverage.md",
+      "kind": "leaf",
+      "description": "DORMANT V3 KG-vs-KG coverage matcher \u2014 superseded as grader of record, no runtime caller.",
+      "owns": [
+        "apollo/overseer/coverage.py"
+      ]
+    },
+    "apollo/overseer/diagnostic": {
+      "path": "docs/architecture/apollo/overseer/diagnostic.md",
+      "kind": "leaf",
+      "description": "Generates the student-facing narrative that explains \u2014 never decides \u2014 the grade.",
+      "owns": [
+        "apollo/overseer/diagnostic.py",
+        "apollo/overseer/remediation.py"
+      ]
+    },
+    "apollo/overseer/grounding": {
+      "path": "docs/architecture/apollo/overseer/grounding.md",
+      "kind": "leaf",
+      "description": "INTERACTION2 \u2014 turns a session's cached retrieval bundle into one capped, student-safe evidence block for the grading prompts.",
+      "owns": [
+        "apollo/overseer/grounding.py"
+      ]
+    },
+    "apollo/overseer/problem-selector": {
+      "path": "docs/architecture/apollo/overseer/problem-selector.md",
+      "kind": "leaf",
+      "description": "Tier-2 problem-bank selection from app.problems, plus the session-personalization master flag.",
+      "owns": [
+        "apollo/overseer/problem_selector.py",
+        "apollo/overseer/personalization_flag.py"
+      ]
+    },
+    "apollo/overseer/rubric": {
+      "path": "docs/architecture/apollo/overseer/rubric.md",
+      "kind": "leaf",
+      "description": "Pure weighted-axis grade computation, the letter-band map, and the retained misconception signal value objects.",
+      "owns": [
+        "apollo/overseer/rubric.py",
+        "apollo/overseer/misconception.py"
+      ]
+    },
+    "apollo/overseer/topic-narrative": {
+      "path": "docs/architecture/apollo/overseer/topic-narrative.md",
+      "kind": "leaf",
+      "description": "Ledger-grounded diagnostic-narrative prompt builder plus the deterministic output sanitizer.",
+      "owns": [
+        "apollo/overseer/topic_narrative.py"
+      ]
+    },
+    "apollo/overseer/topic-score": {
+      "path": "docs/architecture/apollo/overseer/topic-score.md",
+      "kind": "leaf",
+      "description": "The LIVE grade of record \u2014 coverage-weighted topic scoring plus the single shared serializer.",
+      "owns": [
+        "apollo/overseer/topic_score.py",
+        "apollo/overseer/topic_score_serialize.py"
+      ]
+    },
+    "apollo/overseer/transcript-coverage": {
+      "path": "docs/architecture/apollo/overseer/transcript-coverage.md",
+      "kind": "leaf",
+      "description": "The LIVE grader of record \u2014 one-call transcript adjudication that emits the frozen coverage verdict.",
+      "owns": [
+        "apollo/overseer/transcript_coverage.py",
+        "apollo/overseer/coverage_contract.py",
+        "apollo/overseer/__init__.py"
+      ]
+    },
+    "apollo/overseer/xp": {
+      "path": "docs/architecture/apollo/overseer/xp.md",
+      "kind": "leaf",
+      "description": "Pure XP formula, 5-tier level table, and the progress envelope for the Done response.",
+      "owns": [
+        "apollo/overseer/xp.py"
+      ]
+    },
+    "apollo/persistence/_index": {
+      "path": "docs/architecture/apollo/persistence/_index.md",
+      "kind": "router",
+      "description": "Router for Apollo's persistence sub-area \u2014 the ORM hub, scoped repositories, the DB-free Layer-1 seed converter, and the Neo4j seam.",
+      "owns": []
+    },
+    "apollo/persistence/done-write-linkage": {
+      "path": "docs/architecture/apollo/persistence/done-write-linkage.md",
+      "kind": "leaf",
+      "description": "Two small pure read-side resolvers the Done-time XP/mastery writers call \u2014 prior-graded-attempt detection and durable problem-bank id resolution.",
+      "owns": [
+        "apollo/persistence/attempt_history.py",
+        "apollo/persistence/problem_linkage.py"
+      ]
+    },
+    "apollo/persistence/learner-model-seed": {
+      "path": "docs/architecture/apollo/persistence/learner-model-seed.md",
+      "kind": "leaf",
+      "description": "Pure, DB-free, LLM-free conversion core turning hand-authored Layer-1 source JSON into learner-model row specs, plus the executable reference-graph validation contract.",
+      "owns": [
+        "apollo/persistence/learner_model_seed.py"
+      ]
+    },
+    "apollo/persistence/models": {
+      "path": "docs/architecture/apollo/persistence/models.md",
+      "kind": "leaf",
+      "description": "The Apollo ORM hub \u2014 every SQLAlchemy model for Apollo's app/internal Postgres tables, as a catalog grouped by concern.",
+      "owns": [
+        "apollo/persistence/models.py",
+        "apollo/persistence/__init__.py"
+      ]
+    },
+    "apollo/persistence/neo4j-client": {
+      "path": "docs/architecture/apollo/persistence/neo4j-client.md",
+      "kind": "leaf",
+      "description": "The async Neo4j seam for Apollo's per-attempt KG store \u2014 driver wrapper, the degraded-mode error tuple, and the run-once Aura schema DDL.",
+      "owns": [
+        "apollo/persistence/neo4j_client.py",
+        "apollo/persistence/neo4j_schema.cypher"
+      ]
+    },
+    "apollo/persistence/progress-repo": {
+      "path": "docs/architecture/apollo/persistence/progress-repo.md",
+      "kind": "leaf",
+      "description": "Course-scoped student-progress repository (XP + leveling) over app.student_progress.",
+      "owns": [
+        "apollo/persistence/progress_repo.py"
+      ]
+    },
+    "apollo/projections/_index": {
+      "path": "docs/architecture/apollo/projections/_index.md",
+      "kind": "router",
+      "description": "Router for the read-side projections over the canonical grading artifact (Campaign-plan Phase B).",
+      "owns": []
+    },
+    "apollo/projections/classroom": {
+      "path": "docs/architecture/apollo/projections/classroom.md",
+      "kind": "leaf",
+      "description": "Pure teacher-facing classroom aggregations \u2014 mastery heatmap and windowed struggle signals.",
+      "owns": [
+        "apollo/projections/classroom.py"
+      ]
+    },
+    "apollo/projections/mastery": {
+      "path": "docs/architecture/apollo/projections/mastery.md",
+      "kind": "leaf",
+      "description": "Flat-EWMA mastery-ledger projection from the canonical grading artifact.",
+      "owns": [
+        "apollo/projections/mastery.py",
+        "apollo/projections/__init__.py"
+      ]
+    },
+    "apollo/projections/scorecard": {
+      "path": "docs/architecture/apollo/projections/scorecard.md",
+      "kind": "leaf",
+      "description": "Pure student-scorecard template over the canonical grading artifact dict.",
+      "owns": [
+        "apollo/projections/scorecard.py"
+      ]
+    },
+    "apollo/provisioning/_index": {
+      "path": "docs/architecture/apollo/provisioning/_index.md",
+      "kind": "router",
+      "description": "Router for the apollo-provisioning sub-domain \u2014 teacher reference-content pipelines and the shared auto-provision stages.",
+      "owns": [
+        "apollo/provisioning/__init__.py"
+      ]
+    },
+    "apollo/provisioning/authored-problem": {
+      "path": "docs/architecture/apollo/provisioning/authored-problem.md",
+      "kind": "leaf",
+      "description": "Synchronous provisioning for a single teacher-authored problem (the live teacher path).",
+      "owns": [
+        "apollo/provisioning/authored_problem.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/_index": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/_index.md",
+      "kind": "router",
+      "description": "Router for the authored_sets subpackage \u2014 the teacher-gated authored problem/solution-set provisioning pipeline",
+      "owns": [
+        "apollo/provisioning/authored_sets/__init__.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/api": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/api.md",
+      "kind": "leaf",
+      "description": "Teacher-gated HTTP surface for authored problem/solution sets \u2014 upload, index-hidden, background-provision, review, approve, delete",
+      "owns": [
+        "apollo/provisioning/authored_sets/api.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/graph-derivation": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/graph-derivation.md",
+      "kind": "leaf",
+      "description": "Derives a gold-format reference graph FROM a paired worked solution (reversed provisioning), guarded by a pure defect validator",
+      "owns": [
+        "apollo/provisioning/authored_sets/graph_derivation.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/indexing": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/indexing.md",
+      "kind": "leaf",
+      "description": "Index authored problem/solution PDFs into HIDDEN (PENDING-status) AITA documents so they never reach student retrieval",
+      "owns": [
+        "apollo/provisioning/authored_sets/indexing.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/observability": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/observability.md",
+      "kind": "leaf",
+      "description": "Ingest-audit writes for the authored-set path \u2014 content-ingest run, per-page OCR evidence, terminal counts, stage errors",
+      "owns": [
+        "apollo/provisioning/authored_sets/observability.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/orchestrator": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/orchestrator.md",
+      "kind": "leaf",
+      "description": "Drives one authored problem-set through scrape \u2192 ground \u2192 derive/pair \u2192 mint+promote, returning a bounded per-candidate report",
+      "owns": [
+        "apollo/provisioning/authored_sets/orchestrator.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/paired-retrieval": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/paired-retrieval.md",
+      "kind": "leaf",
+      "description": "Doc-scoped grounding against ONLY the paired solution document \u2014 structure-pair, deterministic label match, then semantic top-k",
+      "owns": [
+        "apollo/provisioning/authored_sets/paired_retrieval.py",
+        "apollo/provisioning/authored_sets/label_match.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/structure-pass": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/structure-pass.md",
+      "kind": "leaf",
+      "description": "One structured-output pass that segments a document into question/answer/other units and deterministically pairs labels",
+      "owns": [
+        "apollo/provisioning/authored_sets/structure_pass.py"
+      ]
+    },
+    "apollo/provisioning/authored-sets/verification": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/verification.md",
+      "kind": "leaf",
+      "description": "Low-OCR-confidence cross-check \u2014 independently generate and LLM-compare so a bad OCR'd reference is flagged for teacher review",
+      "owns": [
+        "apollo/provisioning/authored_sets/verification.py"
+      ]
+    },
+    "apollo/provisioning/concept-match": {
+      "path": "docs/architecture/apollo/provisioning/concept-match.md",
+      "kind": "leaf",
+      "description": "Closed-list concept matching for reversed provisioning \u2014 classify against a premade concept list.",
+      "owns": [
+        "apollo/provisioning/concept_match.py"
+      ]
+    },
+    "apollo/provisioning/concepts-api": {
+      "path": "docs/architecture/apollo/provisioning/concepts-api.md",
+      "kind": "leaf",
+      "description": "Teacher-facing concept-authoring HTTP router \u2014 write a course's concept list directly.",
+      "owns": [
+        "apollo/provisioning/concepts_api.py"
+      ]
+    },
+    "apollo/provisioning/dedup": {
+      "path": "docs/architecture/apollo/provisioning/dedup.md",
+      "kind": "leaf",
+      "description": "Course-local entity dedup ladder, its thresholds, and the gate-8 problem dedup hash.",
+      "owns": [
+        "apollo/provisioning/dedup.py",
+        "apollo/provisioning/dedup_constants.py",
+        "apollo/provisioning/problem_hash.py"
+      ]
+    },
+    "apollo/provisioning/ingest": {
+      "path": "docs/architecture/apollo/provisioning/ingest.md",
+      "kind": "leaf",
+      "description": "Subject-fluid Stage-1 replacement \u2014 load a professor-authored problem set into Tier-1 inventory.",
+      "owns": [
+        "apollo/provisioning/ingest.py"
+      ]
+    },
+    "apollo/provisioning/metered-chat": {
+      "path": "docs/architecture/apollo/provisioning/metered-chat.md",
+      "kind": "leaf",
+      "description": "The metered LLM client (the only token signal in provisioning) plus its cost/config table.",
+      "owns": [
+        "apollo/provisioning/metered_chat.py",
+        "apollo/provisioning/cost_constants.py"
+      ]
+    },
+    "apollo/provisioning/pairing-gate": {
+      "path": "docs/architecture/apollo/provisioning/pairing-gate.md",
+      "kind": "leaf",
+      "description": "Stage-3 two-phase span-grounded correctness gate deciding whether a reference solution is teachable.",
+      "owns": [
+        "apollo/provisioning/pairing_gate.py"
+      ]
+    },
+    "apollo/provisioning/path-enumeration": {
+      "path": "docs/architecture/apollo/provisioning/path-enumeration.md",
+      "kind": "leaf",
+      "description": "Fail-safe enumeration of alternative teach-back solution strategies over the minted graph.",
+      "owns": [
+        "apollo/provisioning/path_enumeration.py"
+      ]
+    },
+    "apollo/provisioning/problem-generation/_index": {
+      "path": "docs/architecture/apollo/provisioning/problem-generation/_index.md",
+      "kind": "router",
+      "description": "Router for the problem_generation subpackage \u2014 default-OFF, teacher-initiated generation of held tier-1 problem variants",
+      "owns": [
+        "apollo/provisioning/problem_generation/__init__.py"
+      ]
+    },
+    "apollo/provisioning/problem-generation/api": {
+      "path": "docs/architecture/apollo/provisioning/problem-generation/api.md",
+      "kind": "leaf",
+      "description": "Teacher-gated batch API for generated problem variants \u2014 start a run, poll status, review, and approve into tier-2",
+      "owns": [
+        "apollo/provisioning/problem_generation/api.py"
+      ]
+    },
+    "apollo/provisioning/problem-generation/generator": {
+      "path": "docs/architecture/apollo/provisioning/problem-generation/generator.md",
+      "kind": "leaf",
+      "description": "Core variant generator \u2014 apply operators to an approved seed, solution-check, leak-guard, and persist held tier-1 variants",
+      "owns": [
+        "apollo/provisioning/problem_generation/generator.py"
+      ]
+    },
+    "apollo/provisioning/problem-generation/support": {
+      "path": "docs/architecture/apollo/provisioning/problem-generation/support.md",
+      "kind": "leaf",
+      "description": "The two generator support modules \u2014 the variation-operator catalog and the post-generation round-trip/qualitative verifiers",
+      "owns": [
+        "apollo/provisioning/problem_generation/operators.py",
+        "apollo/provisioning/problem_generation/verifiers.py"
+      ]
+    },
+    "apollo/provisioning/problem-leak-guard": {
+      "path": "docs/architecture/apollo/provisioning/problem-leak-guard.md",
+      "kind": "leaf",
+      "description": "GEN-1 two-layer answer-leak guard for generated problem statements.",
+      "owns": [
+        "apollo/provisioning/problem_leak_guard.py"
+      ]
+    },
+    "apollo/provisioning/promote": {
+      "path": "docs/architecture/apollo/provisioning/promote.md",
+      "kind": "leaf",
+      "description": "Stage-6 Tier-1 to Tier-2 promotion \u2014 annotate, lint, flip tier, project Canon.",
+      "owns": [
+        "apollo/provisioning/promote.py"
+      ]
+    },
+    "apollo/provisioning/promotion-lint": {
+      "path": "docs/architecture/apollo/provisioning/promotion-lint.md",
+      "kind": "leaf",
+      "description": "The pure nine-gate promotion lint \u2014 the auto-provisioning safety core (DB/LLM/ORM-free).",
+      "owns": [
+        "apollo/provisioning/promotion_lint.py"
+      ]
+    },
+    "apollo/provisioning/provisioning-schema": {
+      "path": "docs/architecture/apollo/provisioning/provisioning-schema.md",
+      "kind": "leaf",
+      "description": "The prompt-to-parser json_schema contract plus the single shared generation ontology block.",
+      "owns": [
+        "apollo/provisioning/provisioning_schema.py",
+        "apollo/provisioning/generation_contract.py"
+      ]
+    },
+    "apollo/provisioning/retrieval-adapter": {
+      "path": "docs/architecture/apollo/provisioning/retrieval-adapter.md",
+      "kind": "leaf",
+      "description": "Course-scoped retrieval-grounding adapter that feeds find-or-generate and the pairing gate.",
+      "owns": [
+        "apollo/provisioning/retrieval_adapter.py"
+      ]
+    },
+    "apollo/provisioning/scrape": {
+      "path": "docs/architecture/apollo/provisioning/scrape.md",
+      "kind": "leaf",
+      "description": "Stage-1 LLM scrape of a document's chunks into Tier-1 (not-teachable) inventory rows.",
+      "owns": [
+        "apollo/provisioning/scrape.py"
+      ]
+    },
+    "apollo/provisioning/scrape-sections": {
+      "path": "docs/architecture/apollo/provisioning/scrape-sections.md",
+      "kind": "leaf",
+      "description": "Pure section reconstruction plus fail-open problem-likelihood triage feeding stage-1 scrape.",
+      "owns": [
+        "apollo/provisioning/section_grouping.py",
+        "apollo/provisioning/section_triage.py"
+      ]
+    },
+    "apollo/provisioning/solution": {
+      "path": "docs/architecture/apollo/provisioning/solution.md",
+      "kind": "leaf",
+      "description": "Stage-2 find-or-generate a reference solution, plus the subject-fluid authored-construction path.",
+      "owns": [
+        "apollo/provisioning/solution.py"
+      ]
+    },
+    "apollo/provisioning/tag-mint": {
+      "path": "docs/architecture/apollo/provisioning/tag-mint.md",
+      "kind": "leaf",
+      "description": "Stage-4 concept tag plus reference-entity mint, and its BIGINT-keyed persistence helpers.",
+      "owns": [
+        "apollo/provisioning/tag_mint.py",
+        "apollo/provisioning/tag_mint_persist.py"
+      ]
+    },
+    "apollo/resolution/_index": {
+      "path": "docs/architecture/apollo/resolution/_index.md",
+      "kind": "router",
+      "description": "Router for the \u00a75 reference-anchored resolver package (WU-3C2) \u2014 a fully built but currently unwired subsystem.",
+      "owns": []
+    },
+    "apollo/resolution/assignment": {
+      "path": "docs/architecture/apollo/resolution/assignment.md",
+      "kind": "leaf",
+      "description": "greedy_global_assignment \u2014 bounded greedy global assignment of student nodes to candidates (\u00a75 step 4).",
+      "owns": [
+        "apollo/resolution/assignment.py"
+      ]
+    },
+    "apollo/resolution/candidates": {
+      "path": "docs/architecture/apollo/resolution/candidates.md",
+      "kind": "leaf",
+      "description": "Construction of the closed per-attempt candidate set \u2014 reference nodes plus course misconception entities.",
+      "owns": [
+        "apollo/resolution/candidates.py"
+      ]
+    },
+    "apollo/resolution/content-tiers": {
+      "path": "docs/architecture/apollo/resolution/content-tiers.md",
+      "kind": "leaf",
+      "description": "The content-first matching ladder \u2014 exact, SymPy-symbolic, derived-equation-alignment, alias, and fuzzy tiers.",
+      "owns": [
+        "apollo/resolution/tiers.py",
+        "apollo/resolution/equation_alignment.py"
+      ]
+    },
+    "apollo/resolution/embedding": {
+      "path": "docs/architecture/apollo/resolution/embedding.md",
+      "kind": "leaf",
+      "description": "Embedding primitives for the resolution layer \u2014 cosine similarity and a per-candidate-set embedding cache.",
+      "owns": [
+        "apollo/resolution/embedding.py"
+      ]
+    },
+    "apollo/resolution/guardrails": {
+      "path": "docs/architecture/apollo/resolution/guardrails.md",
+      "kind": "leaf",
+      "description": "The two \u00a75 anti-over-normalization guardrails \u2014 the HARD type-compat constraint and misconception competition/polarity.",
+      "owns": [
+        "apollo/resolution/structural.py",
+        "apollo/resolution/competition.py"
+      ]
+    },
+    "apollo/resolution/resolver": {
+      "path": "docs/architecture/apollo/resolution/resolver.md",
+      "kind": "leaf",
+      "description": "resolve_attempt \u2014 the \u00a75 resolver orchestration that maps student nodes onto the closed candidate set (dormant).",
+      "owns": [
+        "apollo/resolution/resolver.py",
+        "apollo/resolution/__init__.py"
+      ]
+    },
+    "apollo/resolution/result": {
+      "path": "docs/architecture/apollo/resolution/result.md",
+      "kind": "leaf",
+      "description": "The resolver's structured result models \u2014 ResolvedNode per student node and the aggregate ResolutionResult.",
+      "owns": [
+        "apollo/resolution/result.py"
+      ]
+    },
+    "apollo/schemas/_index": {
+      "path": "docs/architecture/apollo/schemas/_index.md",
+      "kind": "router",
+      "description": "Router for the Apollo Pydantic content schemas \u2014 the central Problem schema plus three small hand-authored-JSON file schemas.",
+      "owns": []
+    },
+    "apollo/schemas/authoring-schemas": {
+      "path": "docs/architecture/apollo/schemas/authoring-schemas.md",
+      "kind": "leaf",
+      "description": "Three small standalone Pydantic schemas for hand-authored Apollo curriculum JSON \u2014 the concept DAG, a procedure step, and a variable map \u2014 currently test-only.",
+      "owns": [
+        "apollo/schemas/dag.py",
+        "apollo/schemas/procedure.py",
+        "apollo/schemas/variable_map.py"
+      ]
+    },
+    "apollo/schemas/problem": {
+      "path": "docs/architecture/apollo/schemas/problem.md",
+      "kind": "leaf",
+      "description": "The central Apollo problem schema \u2014 a validated problem file with a structured reference solution, and its derivation into a typed reference KG.",
+      "owns": [
+        "apollo/schemas/problem.py",
+        "apollo/schemas/__init__.py"
+      ]
+    },
+    "apollo/solver/_index": {
+      "path": "docs/architecture/apollo/solver/_index.md",
+      "kind": "router",
+      "description": "Router for the SymPy solver area \u2014 one live symbolic-math seam plus a dormant planner chain.",
+      "owns": []
+    },
+    "apollo/solver/narrator": {
+      "path": "docs/architecture/apollo/solver/narrator.md",
+      "kind": "leaf",
+      "description": "Template rendering of a solver trace into student-readable lines (dormant, part of the planner chain).",
+      "owns": [
+        "apollo/solver/narrator.py"
+      ]
+    },
+    "apollo/solver/sufficiency": {
+      "path": "docs/architecture/apollo/solver/sufficiency.md",
+      "kind": "leaf",
+      "description": "The dormant sufficiency check and its forward-chain planner; the SufficiencyVerdict type is still live in signatures.",
+      "owns": [
+        "apollo/solver/sufficiency.py",
+        "apollo/solver/forward_chain.py"
+      ]
+    },
+    "apollo/solver/sympy-exec": {
+      "path": "docs/architecture/apollo/solver/sympy-exec.md",
+      "kind": "leaf",
+      "description": "The shared SymPy wrapper \u2014 parse a zero-form equation and solve a system; the high-fan-in symbolic-math seam.",
+      "owns": [
+        "apollo/solver/sympy_exec.py",
+        "apollo/solver/__init__.py"
+      ]
+    },
+    "campaign/_index": {
+      "path": "docs/architecture/campaign/_index.md",
+      "kind": "router",
+      "description": "Router for the offline Apollo grading-campaign harness \u2014 casts an AI student against the live teaching loop and scores it.",
+      "owns": []
+    },
+    "campaign/cast-personas": {
+      "path": "docs/architecture/campaign/cast-personas.md",
+      "kind": "leaf",
+      "description": "Persona fixture schema and validation guarding the persona JSON corpus against the real reference-key universe.",
+      "owns": [
+        "campaign/cast/personas/schema.py",
+        "campaign/cast/personas/validate.py",
+        "campaign/cast/personas/__init__.py"
+      ]
+    },
+    "campaign/cast-student": {
+      "path": "docs/architecture/campaign/cast-student.md",
+      "kind": "leaf",
+      "description": "The AI-student session driver \u2014 plays one persona through a full Apollo attempt and writes the attempt JSONL ledger.",
+      "owns": [
+        "campaign/cast/student.py",
+        "campaign/cast/__init__.py"
+      ]
+    },
+    "campaign/cast-subjects-materials": {
+      "path": "docs/architecture/campaign/cast-subjects-materials.md",
+      "kind": "leaf",
+      "description": "Campaign subject registry plus the substantive PDF-material fixture generator (OWNED, not a pytest fixture).",
+      "owns": [
+        "campaign/cast/subjects.py",
+        "campaign/cast/materials/generate_fixtures.py"
+      ]
+    },
+    "campaign/cast-teacher": {
+      "path": "docs/architecture/campaign/cast-teacher.md",
+      "kind": "leaf",
+      "description": "Teacher-side provisioning driver for both curriculum arms \u2014 seeded incumbents and the real WU-AAS authored path.",
+      "owns": [
+        "campaign/cast/teacher.py"
+      ]
+    },
+    "campaign/infra": {
+      "path": "docs/architecture/campaign/infra.md",
+      "kind": "leaf",
+      "description": "Campaign DB bootstrap and teardown against LOCAL Docker Postgres + Neo4j.",
+      "owns": [
+        "campaign/infra/apply_migrations.py",
+        "campaign/infra/reset.py",
+        "campaign/infra/__init__.py"
+      ]
+    },
+    "campaign/judges-base": {
+      "path": "docs/architecture/campaign/judges-base.md",
+      "kind": "leaf",
+      "description": "The shared StageJudge framework subclassed by all five S1\u2013S5 stage judges.",
+      "owns": [
+        "campaign/judges/base.py",
+        "campaign/judges/__init__.py"
+      ]
+    },
+    "campaign/judges-s1-s2": {
+      "path": "docs/architecture/campaign/judges-s1-s2.md",
+      "kind": "leaf",
+      "description": "The two upstream (pre-teaching) quality judges \u2014 reference-graph structure and WU-AAS ingestion.",
+      "owns": [
+        "campaign/judges/s1_reference_graph.py",
+        "campaign/judges/s2_ingestion.py"
+      ]
+    },
+    "campaign/judges-s3-s4": {
+      "path": "docs/architecture/campaign/judges-s3-s4.md",
+      "kind": "leaf",
+      "description": "The two live teaching-loop transcript-quality judges \u2014 student-graph fidelity (resolver recall) and Apollo coherence.",
+      "owns": [
+        "campaign/judges/s3_student_fidelity.py",
+        "campaign/judges/s4_apollo_coherence.py"
+      ]
+    },
+    "campaign/judges-s5": {
+      "path": "docs/architecture/campaign/judges-s5.md",
+      "kind": "leaf",
+      "description": "S5 misconception-assertion judge \u2014 the precision-focused misconception gate plus reported (not gated) recall.",
+      "owns": [
+        "campaign/judges/s5_misconceptions.py"
+      ]
+    },
+    "campaign/scripts-diff-eval": {
+      "path": "docs/architecture/campaign/scripts-diff-eval.md",
+      "kind": "leaf",
+      "description": "Two provisioning-quality eval scripts comparing GENERATED problems against AUTHORED/gold.",
+      "owns": [
+        "campaign/scripts/diff_generated_vs_authored.py",
+        "campaign/scripts/eval_authored_calc2.py"
+      ]
+    },
+    "campaign/scripts-run-s1-s2": {
+      "path": "docs/architecture/campaign/scripts-run-s1-s2.md",
+      "kind": "leaf",
+      "description": "The S1/S2 raw-input harness runner \u2014 builds the JSON the S1/S2 judges consume, reading internal ingest tables directly.",
+      "owns": [
+        "campaign/scripts/run_s1_s2.py",
+        "campaign/scripts/__init__.py"
+      ]
+    },
+    "campaign/transcript-replay": {
+      "path": "docs/architecture/campaign/transcript-replay.md",
+      "kind": "leaf",
+      "description": "Deterministic transcript-grader fixture-replay entrypoint \u2014 the surface A7 kept.",
+      "owns": [
+        "campaign/transcript_replay.py",
+        "campaign/__init__.py",
+        "campaign/README.md"
+      ]
+    },
+    "chats/_index": {
+      "path": "docs/architecture/chats/_index.md",
+      "kind": "router",
+      "description": "Router for chat-session persistence, rolling memory, and the retrieval bundle cache.",
+      "owns": []
+    },
+    "chats/bundle-cache": {
+      "path": "docs/architecture/chats/bundle-cache.md",
+      "kind": "leaf",
+      "description": "Session-scoped retrieval bundle cache backing the NONE/AUGMENT retrieval-mode router.",
+      "owns": [
+        "chats/bundle_cache.py"
+      ]
+    },
+    "chats/routes": {
+      "path": "docs/architecture/chats/routes.md",
+      "kind": "leaf",
+      "description": "The /chats HTTP router \u2014 owner-scoped sync endpoints bridging to async CRUD.",
+      "owns": [
+        "chats/routes.py"
+      ]
+    },
+    "chats/service": {
+      "path": "docs/architecture/chats/service.md",
+      "kind": "leaf",
+      "description": "Chat session/turn CRUD primitives + rolling memory summarization (async).",
+      "owns": [
+        "chats/service.py",
+        "chats/__init__.py"
+      ]
+    },
+    "database/_index": {
+      "path": "docs/architecture/database/_index.md",
+      "kind": "router",
+      "description": "Router for core persistence \u2014 the database/ + supabase/ slice, with the schema truth hierarchy and the add-a-column recipe.",
+      "owns": []
+    },
+    "database/legacy-migrations": {
+      "path": "docs/architecture/database/legacy-migrations.md",
+      "kind": "leaf",
+      "description": "The FROZEN numbered migration archive (001\u2013048), including the explicit Interaction-1 exception.",
+      "owns": [
+        "database/migrations/__init__.py",
+        "database/migrations/001_create_schema.py",
+        "database/migrations/002_seed_from_supabase.py",
+        "database/migrations/003_reindex_existing.py",
+        "database/migrations/README.md",
+        "database/migrations/legacy-manifest.sha256",
+        "database/migrations/"
+      ]
+    },
+    "database/models": {
+      "path": "docs/architecture/database/models.md",
+      "kind": "leaf",
+      "description": "Core SQLAlchemy 2 ORM models (course/document/upload/chat) with post-#194 app/internal names.",
+      "owns": [
+        "database/models.py",
+        "database/__init__.py"
+      ]
+    },
+    "database/session": {
+      "path": "docs/architecture/database/session.md",
+      "kind": "leaf",
+      "description": "Async engine/session factory, the sync-to-async run_async bridge, and the DB-08b per-session RLS enforcement listener.",
+      "owns": [
+        "database/session.py"
+      ]
+    },
+    "database/supabase-migrations": {
+      "path": "docs/architecture/database/supabase-migrations.md",
+      "kind": "leaf",
+      "description": "The ACTIVE forward migration chain plus Supabase config/seed \u2014 the current-schema source of truth.",
+      "owns": [
+        "supabase/migrations/20260717032246_legacy_public_snapshot.sql",
+        "supabase/migrations/20260717035041_create_app_schema_v1.sql",
+        "supabase/migrations/20260717043000_copy_app_schema_v1.sql",
+        "supabase/migrations/20260717050000_retrieval_functions_v1.sql",
+        "supabase/migrations/20260722120000_db08b_rls_enforcement_grants.sql",
+        "supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql",
+        "supabase/migrations/20260728120000_apollo_grounding_bundle.sql",
+        "supabase/config.toml",
+        "supabase/seed.sql",
+        "supabase/.gitignore"
+      ]
+    },
+    "database/transforms": {
+      "path": "docs/architecture/database/transforms.md",
+      "kind": "leaf",
+      "description": "Pure column-value coercion helpers used at the ORM/service boundary.",
+      "owns": [
+        "database/transforms.py"
+      ]
+    },
+    "indexing/_index": {
+      "path": "docs/architecture/indexing/_index.md",
+      "kind": "router",
+      "description": "Router for the PDF-to-pgvector ingestion/indexing pipeline plus the pluggable OCR layer.",
+      "owns": []
+    },
+    "indexing/checkpoint-indexer": {
+      "path": "docs/architecture/indexing/checkpoint-indexer.md",
+      "kind": "leaf",
+      "description": "Checkpointed embed-and-persist for long textbook jobs \u2014 the production indexing path, never holds a session across an OpenAI call.",
+      "owns": [
+        "indexing/checkpoint_indexer.py"
+      ]
+    },
+    "indexing/chunking-embedding": {
+      "path": "docs/architecture/indexing/chunking-embedding.md",
+      "kind": "leaf",
+      "description": "The two stateless text-prep primitives \u2014 layout-aware chunker and the single/batched OpenAI embedders.",
+      "owns": [
+        "indexing/document_chunker.py",
+        "indexing/document_embedder.py"
+      ]
+    },
+    "indexing/connector-document": {
+      "path": "docs/architecture/indexing/connector-document.md",
+      "kind": "leaf",
+      "description": "AITAConnectorDocument input DTO plus its NUL-sanitization helper at the pipeline boundary.",
+      "owns": [
+        "indexing/connector_document.py",
+        "indexing/text_sanitization.py"
+      ]
+    },
+    "indexing/indexing-service": {
+      "path": "docs/architecture/indexing/indexing-service.md",
+      "kind": "leaf",
+      "description": "AITAIndexingService \u2014 the legacy monolithic indexing orchestrator (older API, single held session).",
+      "owns": [
+        "indexing/indexing_service.py",
+        "indexing/__init__.py"
+      ]
+    },
+    "indexing/ocr-core": {
+      "path": "docs/architecture/indexing/ocr-core.md",
+      "kind": "leaf",
+      "description": "The OCR provider contract, env-gated provider selection, and package re-exports.",
+      "owns": [
+        "ocr/provider.py",
+        "ocr/factory.py",
+        "ocr/__init__.py",
+        "ocr/README.md"
+      ]
+    },
+    "indexing/ocr-providers": {
+      "path": "docs/architecture/indexing/ocr-providers.md",
+      "kind": "leaf",
+      "description": "The two concrete OCRProvider implementations \u2014 Mathpix and OpenAI vision.",
+      "owns": [
+        "ocr/mathpix.py",
+        "ocr/openai_vision.py"
+      ]
+    },
+    "indexing/persistence-hashing": {
+      "path": "docs/architecture/indexing/persistence-hashing.md",
+      "kind": "leaf",
+      "description": "Dedup hashing plus the low-level SQLAlchemy failure/attach write helpers shared by both indexers.",
+      "owns": [
+        "indexing/document_hashing.py",
+        "indexing/document_persistence.py"
+      ]
+    },
+    "knowledge/_index": {
+      "path": "docs/architecture/knowledge/_index.md",
+      "kind": "router",
+      "description": "Router for teacher course-material ingestion \u2014 the pipeline that produces the documents retrieval reads.",
+      "owns": []
+    },
+    "knowledge/teacher-pdf-ingestion": {
+      "path": "docs/architecture/knowledge/teacher-pdf-ingestion.md",
+      "kind": "leaf",
+      "description": "TeacherPDFIngestor \u2014 native-first PDF extraction with selective Mathpix OCR fallback and fuzzy dedupe.",
+      "owns": [
+        "knowledge/teacher_pdf_ingestion.py"
+      ]
+    },
+    "knowledge/teacher-weekly": {
+      "path": "docs/architecture/knowledge/teacher-weekly.md",
+      "kind": "leaf",
+      "description": "TeacherWeeklyStorage \u2014 teacher uploads over Supabase Storage + a durable leased job queue + the worker loop.",
+      "owns": [
+        "knowledge/teacher_weekly.py",
+        "knowledge/__init__.py"
+      ]
+    },
+    "platform/_index": {
+      "path": "docs/architecture/platform/_index.md",
+      "kind": "router",
+      "description": "Router for the HTTP composition root, auth, request config, vendor clients, course workspaces, CI/CD, and one-shot ops scripts",
+      "owns": []
+    },
+    "platform/auth": {
+      "path": "docs/architecture/platform/auth.md",
+      "kind": "leaf",
+      "description": "auth.py \u2014 Supabase JWT validation with an in-memory token cache, course-membership checks, and student auto-enroll",
+      "owns": [
+        "auth.py"
+      ]
+    },
+    "platform/ci-workflows": {
+      "path": "docs/architecture/platform/ci-workflows.md",
+      "kind": "leaf",
+      "description": "The GitHub Actions CI/CD surface plus repo build-meta (pytest/ruff/mypy/coverage/requirements/pre-commit/package.json) \u2014 how the backend builds, tests, and gates PRs",
+      "owns": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/nightly.yml",
+        ".github/workflows/backmerge.yml",
+        ".github/actions/setup/action.yml",
+        ".github/dependabot.yml",
+        "pytest.ini",
+        ".coveragerc",
+        "requirements.txt",
+        "requirements-test.txt",
+        ".pre-commit-config.yaml",
+        "mypy.ini",
+        "ruff.toml",
+        "package.json",
+        "scripts/docs/check_owns_coverage.py",
+        "scripts/docs/owns_exclude.txt",
+        ".claude/hooks/guard_docs_placement.py"
+      ]
+    },
+    "platform/config-contracts": {
+      "path": "docs/architecture/platform/config-contracts.md",
+      "kind": "leaf",
+      "description": "config/contracts.py \u2014 the shared QA/solver dataclass contracts (ResearchBundle et al.) that flow through the whole /ask pipeline",
+      "owns": [
+        "config/contracts.py"
+      ]
+    },
+    "platform/config-model-pins": {
+      "path": "docs/architecture/platform/config-model-pins.md",
+      "kind": "leaf",
+      "description": "config/models.py \u2014 the hardcoded served solver-model constants (MAIN_MODEL, MAIN_REASONING_EFFORT) introduced by the 2026-07 flag reset",
+      "owns": [
+        "config/models.py"
+      ]
+    },
+    "platform/config-settings": {
+      "path": "docs/architecture/platform/config-settings.md",
+      "kind": "leaf",
+      "description": "config/settings.py \u2014 per-request runtime configuration plus backend env-flag getters.",
+      "owns": [
+        "config/settings.py",
+        "config/__init__.py"
+      ]
+    },
+    "platform/config-weights": {
+      "path": "docs/architecture/platform/config-weights.md",
+      "kind": "leaf",
+      "description": "config/weights.py \u2014 the store-kind retrieval bias weights (defaults, env parsing, clamp/normalize) consumed by the post-fusion store-bias step",
+      "owns": [
+        "config/weights.py"
+      ]
+    },
+    "platform/http-server": {
+      "path": "docs/architecture/platform/http-server.md",
+      "kind": "leaf",
+      "description": "server.py \u2014 the FastAPI composition root and Hoot QA HTTP surface (/ask, teacher, invite-links), plus the teacher retrieval-weights tuning seam",
+      "owns": [
+        "server.py"
+      ]
+    },
+    "platform/ops-db-sql": {
+      "path": "docs/architecture/platform/ops-db-sql.md",
+      "kind": "leaf",
+      "description": "The five one-off SQL operational scripts from the",
+      "owns": [
+        "scripts/db/drop_duplicate_indexes.sql",
+        "scripts/db/reconcile_copy.sql",
+        "scripts/db/remove_legacy_public_schema.sql",
+        "scripts/db/rollback_reverse_copy.sql",
+        "scripts/db/unused_index_review.sql"
+      ]
+    },
+    "platform/ops-db-tooling": {
+      "path": "docs/architecture/platform/ops-db-tooling.md",
+      "kind": "leaf",
+      "description": "The four Node (.mjs) DB dev/CI tooling scripts \u2014 migration-drift guard, local reset, legacy-snapshot draft builder, and schema-dump comparator",
+      "owns": [
+        "scripts/db/build-legacy-snapshot-draft.mjs",
+        "scripts/db/check-migration-drift.mjs",
+        "scripts/db/compare-schema-dump.mjs",
+        "scripts/db/reset-local.mjs"
+      ]
+    },
+    "platform/ops-eval-scripts": {
+      "path": "docs/architecture/platform/ops-eval-scripts.md",
+      "kind": "leaf",
+      "description": "The manual eval/smoke/spike scripts (live-LLM, cost money, never on the CI path) \u2014 DAG-4 granularity, iterative-scan recall, pgvector smoke, wave-1 live smoke, and the RQ3 edge-extraction spike",
+      "owns": [
+        "scripts/dag4_granularity_eval.py",
+        "scripts/eval_iterative_scan_recall.py",
+        "scripts/test_search.py",
+        "scripts/wave1_live_smoke.py",
+        "scripts/spikes/rq3_edge_extraction.py",
+        "scripts/spikes/rq3_results.json"
+      ]
+    },
+    "platform/ops-seed-scripts": {
+      "path": "docs/architecture/platform/ops-seed-scripts.md",
+      "kind": "leaf",
+      "description": "The four one-shot Apollo/data seeder CLIs (concept registry, learner-model Layer-1, :Canon projection, premade concepts) run manually via python -m scripts.<name>",
+      "owns": [
+        "scripts/seed_apollo_concept_registry.py",
+        "scripts/seed_apollo_learner_model.py",
+        "scripts/seed_canon_projection.py",
+        "scripts/seed_premade_concepts.py"
+      ]
+    },
+    "platform/vendor-openai-client": {
+      "path": "docs/architecture/platform/vendor-openai-client.md",
+      "kind": "leaf",
+      "description": "vendors/openai_client.py \u2014 the reports-only OpenAI Chat Completions wrapper (token budgeting, retry/backoff, deterministic fake mode)",
+      "owns": [
+        "vendors/openai_client.py",
+        "vendors/__init__.py"
+      ]
+    },
+    "platform/vendor-supabase-storage": {
+      "path": "docs/architecture/platform/vendor-supabase-storage.md",
+      "kind": "leaf",
+      "description": "vendors/supabase_storage.py \u2014 a thin REST client for Supabase Storage (ensure/upload/download objects) used by the teacher-upload path",
+      "owns": [
+        "vendors/supabase_storage.py"
+      ]
+    },
+    "platform/worker-and-procfile": {
+      "path": "docs/architecture/platform/worker-and-procfile.md",
+      "kind": "leaf",
+      "description": "Procfile + teacher_upload_worker.py \u2014 the Railway two-process split (web API vs background upload-ingestion worker)",
+      "owns": [
+        "teacher_upload_worker.py",
+        "Procfile"
+      ]
+    },
+    "platform/workspaces": {
+      "path": "docs/architecture/platform/workspaces.md",
+      "kind": "leaf",
+      "description": "workspaces/manager.py + db.py \u2014 course-workspace resolution (identifier \u2192 scoped materials + bias) with a TTL cache over the app.courses/app.documents tables",
+      "owns": [
+        "workspaces/manager.py",
+        "workspaces/db.py",
+        "workspaces/__init__.py"
+      ]
+    },
+    "rag-pipeline/_index": {
+      "path": "docs/architecture/rag-pipeline/_index.md",
+      "kind": "router",
+      "description": "Router for the Hoot /ask QA answer pipeline \u2014 retrieval, answer generation, prompts, retrieval-mode router.",
+      "owns": []
+    },
+    "rag-pipeline/citations-formatter": {
+      "path": "docs/architecture/rag-pipeline/citations-formatter.md",
+      "kind": "leaf",
+      "description": "Source-labeling and structured-citation builder for the answer response (+ DOC_TYPE_LABELS).",
+      "owns": [
+        "citations/formatter.py",
+        "citations/__init__.py"
+      ]
+    },
+    "rag-pipeline/context-packer": {
+      "path": "docs/architecture/rag-pipeline/context-packer.md",
+      "kind": "leaf",
+      "description": "Greedy token-budget packing of ranked chunks into BundleSnippets with citation markers.",
+      "owns": [
+        "retrieval/context_packer.py"
+      ]
+    },
+    "rag-pipeline/document-visibility": {
+      "path": "docs/architecture/rag-pipeline/document-visibility.md",
+      "kind": "leaf",
+      "description": "active_document_conditions \u2014 the single source of truth for week-gated student-visible documents.",
+      "owns": [
+        "retrieval/document_visibility.py"
+      ]
+    },
+    "rag-pipeline/hybrid-search": {
+      "path": "docs/architecture/rag-pipeline/hybrid-search.md",
+      "kind": "leaf",
+      "description": "pgvector cosine + Postgres FTS fused with RRF; carries the HNSW halfvec performance contract.",
+      "owns": [
+        "retrieval/hybrid_search.py"
+      ]
+    },
+    "rag-pipeline/main-ai": {
+      "path": "docs/architecture/rag-pipeline/main-ai.md",
+      "kind": "leaf",
+      "description": "The OpenAI chat-completion brain of /ask \u2014 parse, keyword, per-snippet scoring, answer, citation formatting.",
+      "owns": [
+        "ai/main_ai.py",
+        "ai/__init__.py"
+      ]
+    },
+    "rag-pipeline/orchestrator": {
+      "path": "docs/architecture/rag-pipeline/orchestrator.md",
+      "kind": "leaf",
+      "description": "Legacy/eval sequential state machine \u2014 imported by server.py but never instantiated on the live path.",
+      "owns": [
+        "ai/orchestrator.py"
+      ]
+    },
+    "rag-pipeline/prompts-answer": {
+      "path": "docs/architecture/rag-pipeline/prompts-answer.md",
+      "kind": "leaf",
+      "description": "The two answer-generation prompts \u2014 the product's never-hallucinate / always-cite contract.",
+      "owns": [
+        "ai/prompts/tutor.py",
+        "ai/prompts/score_and_answer_snippet.py",
+        "ai/prompts/apollo_aside.py"
+      ]
+    },
+    "rag-pipeline/prompts-keyword": {
+      "path": "docs/architecture/rag-pipeline/prompts-keyword.md",
+      "kind": "leaf",
+      "description": "The keyword-stage prompt catalog plus the prompts package barrel.",
+      "owns": [
+        "ai/prompts/concept_extraction.py",
+        "ai/prompts/extract_keywords.py",
+        "ai/prompts/keyword_generation.py",
+        "ai/prompts/keyword_scoring.py",
+        "ai/prompts/general_term_filter.py",
+        "ai/prompts/synonyms.py",
+        "ai/prompts/__init__.py"
+      ]
+    },
+    "rag-pipeline/prompts-parse-relevance": {
+      "path": "docs/architecture/rag-pipeline/prompts-parse-relevance.md",
+      "kind": "leaf",
+      "description": "The two query-understanding classification prompts (parse + relevance guard).",
+      "owns": [
+        "ai/prompts/parse_question.py",
+        "ai/prompts/relevance_guard.py"
+      ]
+    },
+    "rag-pipeline/reranker": {
+      "path": "docs/architecture/rag-pipeline/reranker.md",
+      "kind": "leaf",
+      "description": "Optional cross-encoder rerank; no-op/fail-open unless RERANKERS_ENABLED.",
+      "owns": [
+        "retrieval/reranker.py"
+      ]
+    },
+    "rag-pipeline/retrieve-pipeline": {
+      "path": "docs/architecture/rag-pipeline/retrieve-pipeline.md",
+      "kind": "leaf",
+      "description": "retrieve_for_question \u2014 the single pgvector retrieval entry point (hybrid \u2192 rerank \u2192 bias \u2192 pack).",
+      "owns": [
+        "retrieval/pipeline.py",
+        "retrieval/__init__.py"
+      ]
+    },
+    "rag-pipeline/router-deferred": {
+      "path": "docs/architecture/rag-pipeline/router-deferred.md",
+      "kind": "leaf",
+      "description": "The DEFERRED / not-wired legacy two-stage embedding router (dormant cohesive group).",
+      "owns": [
+        "ai/router/embedding_router.py",
+        "ai/router/orchestrator.py",
+        "ai/router/routes.py",
+        "ai/router/seeds.json"
+      ]
+    },
+    "rag-pipeline/router-llm": {
+      "path": "docs/architecture/rag-pipeline/router-llm.md",
+      "kind": "leaf",
+      "description": "LLMRouter \u2014 the strict-JSON stage-2 route classifier (gpt-4o-mini).",
+      "owns": [
+        "ai/router/llm_router.py"
+      ]
+    },
+    "rag-pipeline/router-mode": {
+      "path": "docs/architecture/rag-pipeline/router-mode.md",
+      "kind": "leaf",
+      "description": "decide_retrieval_mode \u2014 the always-on retrieval-mode classifier (NONE/AUGMENT/FRESH).",
+      "owns": [
+        "ai/router/mode.py"
+      ]
+    },
+    "rag-pipeline/router-wiring": {
+      "path": "docs/architecture/rag-pipeline/router-wiring.md",
+      "kind": "leaf",
+      "description": "Server glue binding the retrieval-mode router to the /ask pipeline and the session bundle cache.",
+      "owns": [
+        "ai/router/wiring.py",
+        "ai/router/__init__.py"
+      ]
+    },
+    "rag-pipeline/solver": {
+      "path": "docs/architecture/rag-pipeline/solver.md",
+      "kind": "leaf",
+      "description": "Sandboxed run_python utility \u2014 DORMANT in production (conceptual-only mode disables it).",
+      "owns": [
+        "ai/solver.py"
+      ]
+    },
+    "rag-pipeline/store-bias": {
+      "path": "docs/architecture/rag-pipeline/store-bias.md",
+      "kind": "leaf",
+      "description": "Post-fusion additive per-material-kind score bias, applied after reranking.",
+      "owns": [
+        "retrieval/store_bias.py"
+      ]
+    },
+    "rag-pipeline/streaming": {
+      "path": "docs/architecture/rag-pipeline/streaming.md",
+      "kind": "leaf",
+      "description": "JsonStringFieldStreamer \u2014 incremental extraction of one top-level JSON string field for SSE.",
+      "owns": [
+        "ai/streaming.py"
+      ]
+    },
+    "rag-pipeline/vision": {
+      "path": "docs/architecture/rag-pipeline/vision.md",
+      "kind": "leaf",
+      "description": "Image transcription for photo-of-problem attachments on /ask (fail-open OCR fallback).",
+      "owns": [
+        "ai/vision.py"
+      ]
+    },
+    "reports/_index": {
+      "path": "docs/architecture/reports/_index.md",
+      "kind": "router",
+      "description": "Router for the AI-use report feature \u2014 generate a PDF summarizing a chat's AI usage (routes, service, ORM, PDF rendering)",
+      "owns": []
+    },
+    "reports/ai-use-models": {
+      "path": "docs/architecture/reports/ai-use-models.md",
+      "kind": "leaf",
+      "description": "reports/ai_use/models.py \u2014 the AIUsageReport SQLAlchemy ORM model (app.ai_usage_reports) plus its typed async, owner-scoped repository",
+      "owns": [
+        "reports/ai_use/models.py"
+      ]
+    },
+    "reports/ai-use-pdf": {
+      "path": "docs/architecture/reports/ai-use-pdf.md",
+      "kind": "leaf",
+      "description": "reports/ai_use/pdf.py \u2014 markdown\u2192PDF rendering via WeasyPrint for the AI-use report GET .pdf route",
+      "owns": [
+        "reports/ai_use/pdf.py"
+      ]
+    },
+    "reports/ai-use-routes": {
+      "path": "docs/architecture/reports/ai-use-routes.md",
+      "kind": "leaf",
+      "description": "reports/ai_use/routes.py \u2014 the AI-use report HTTP endpoints (create, PDF, detail) with owner-scoped, IDOR-safe guards",
+      "owns": [
+        "reports/ai_use/routes.py",
+        "reports/__init__.py",
+        "reports/ai_use/__init__.py"
+      ]
+    },
+    "reports/ai-use-service": {
+      "path": "docs/architecture/reports/ai-use-service.md",
+      "kind": "leaf",
+      "description": "reports/ai_use/service.py \u2014 the evidence-pack build, PII redaction/excerpting, usage classification, and report generation (pure logic, no persistence)",
+      "owns": [
+        "reports/ai_use/service.py"
+      ]
+    }
+  },
+  "indexes": {
+    "apollo/_index": {
+      "path": "docs/architecture/apollo/_index.md",
+      "children": [
+        "apollo/conversation/_index",
+        "apollo/grading/_index",
+        "apollo/knowledge-graph/_index",
+        "apollo/learner-model/_index",
+        "apollo/ontology/_index",
+        "apollo/overseer/_index",
+        "apollo/persistence/_index",
+        "apollo/projections/_index",
+        "apollo/provisioning/_index",
+        "apollo/resolution/_index",
+        "apollo/schemas/_index",
+        "apollo/solver/_index"
+      ]
+    },
+    "apollo/conversation/_index": {
+      "path": "docs/architecture/apollo/conversation/_index.md",
+      "children": [
+        "apollo/conversation/agent/llm-client",
+        "apollo/conversation/agent/output-filter",
+        "apollo/conversation/agent/persona-reply",
+        "apollo/conversation/curriculum/db",
+        "apollo/conversation/curriculum/registry",
+        "apollo/conversation/handlers/browse",
+        "apollo/conversation/handlers/chat",
+        "apollo/conversation/handlers/done",
+        "apollo/conversation/handlers/done-turn-order",
+        "apollo/conversation/handlers/grading-artifact-writer",
+        "apollo/conversation/handlers/history",
+        "apollo/conversation/handlers/intent",
+        "apollo/conversation/handlers/lifecycle",
+        "apollo/conversation/handlers/navigation",
+        "apollo/conversation/handlers/negotiate",
+        "apollo/conversation/handlers/olm-invite",
+        "apollo/conversation/handlers/progress",
+        "apollo/conversation/hoot-bridge-reference-answer",
+        "apollo/conversation/parser/edge-resolver",
+        "apollo/conversation/parser/extraction-schema",
+        "apollo/conversation/parser/graph-context",
+        "apollo/conversation/parser/parser-llm",
+        "apollo/conversation/questioning/controller",
+        "apollo/conversation/questioning/unified",
+        "apollo/conversation/routing/auth-deps",
+        "apollo/conversation/routing/errors",
+        "apollo/conversation/routing/router",
+        "apollo/conversation/session-init"
+      ]
+    },
+    "apollo/grading/_index": {
+      "path": "docs/architecture/apollo/grading/_index.md",
+      "children": [
+        "apollo/grading/artifact-build",
+        "apollo/grading/event-model"
+      ]
+    },
+    "apollo/knowledge-graph/_index": {
+      "path": "docs/architecture/apollo/knowledge-graph/_index.md",
+      "children": [
+        "apollo/knowledge-graph/canon-projection",
+        "apollo/knowledge-graph/resolution-store",
+        "apollo/knowledge-graph/store"
+      ]
+    },
+    "apollo/learner-model/_index": {
+      "path": "docs/architecture/apollo/learner-model/_index.md",
+      "children": [
+        "apollo/learner-model/belief-filter",
+        "apollo/learner-model/belief-update",
+        "apollo/learner-model/personalization"
+      ]
+    },
+    "apollo/ontology/_index": {
+      "path": "docs/architecture/apollo/ontology/_index.md",
+      "children": [
+        "apollo/ontology/edges",
+        "apollo/ontology/graph",
+        "apollo/ontology/nodes"
+      ]
+    },
+    "apollo/overseer/_index": {
+      "path": "docs/architecture/apollo/overseer/_index.md",
+      "children": [
+        "apollo/overseer/aside-penalty",
+        "apollo/overseer/concept-inference",
+        "apollo/overseer/coverage",
+        "apollo/overseer/diagnostic",
+        "apollo/overseer/grounding",
+        "apollo/overseer/problem-selector",
+        "apollo/overseer/rubric",
+        "apollo/overseer/topic-narrative",
+        "apollo/overseer/topic-score",
+        "apollo/overseer/transcript-coverage",
+        "apollo/overseer/xp"
+      ]
+    },
+    "apollo/persistence/_index": {
+      "path": "docs/architecture/apollo/persistence/_index.md",
+      "children": [
+        "apollo/persistence/done-write-linkage",
+        "apollo/persistence/learner-model-seed",
+        "apollo/persistence/models",
+        "apollo/persistence/neo4j-client",
+        "apollo/persistence/progress-repo"
+      ]
+    },
+    "apollo/projections/_index": {
+      "path": "docs/architecture/apollo/projections/_index.md",
+      "children": [
+        "apollo/projections/classroom",
+        "apollo/projections/mastery",
+        "apollo/projections/scorecard"
+      ]
+    },
+    "apollo/provisioning/_index": {
+      "path": "docs/architecture/apollo/provisioning/_index.md",
+      "children": [
+        "apollo/provisioning/authored-problem",
+        "apollo/provisioning/authored-sets/_index",
+        "apollo/provisioning/concept-match",
+        "apollo/provisioning/concepts-api",
+        "apollo/provisioning/dedup",
+        "apollo/provisioning/ingest",
+        "apollo/provisioning/metered-chat",
+        "apollo/provisioning/pairing-gate",
+        "apollo/provisioning/path-enumeration",
+        "apollo/provisioning/problem-generation/_index",
+        "apollo/provisioning/problem-leak-guard",
+        "apollo/provisioning/promote",
+        "apollo/provisioning/promotion-lint",
+        "apollo/provisioning/provisioning-schema",
+        "apollo/provisioning/retrieval-adapter",
+        "apollo/provisioning/scrape",
+        "apollo/provisioning/scrape-sections",
+        "apollo/provisioning/solution",
+        "apollo/provisioning/tag-mint"
+      ]
+    },
+    "apollo/provisioning/authored-sets/_index": {
+      "path": "docs/architecture/apollo/provisioning/authored-sets/_index.md",
+      "children": [
+        "apollo/provisioning/authored-sets/api",
+        "apollo/provisioning/authored-sets/graph-derivation",
+        "apollo/provisioning/authored-sets/indexing",
+        "apollo/provisioning/authored-sets/observability",
+        "apollo/provisioning/authored-sets/orchestrator",
+        "apollo/provisioning/authored-sets/paired-retrieval",
+        "apollo/provisioning/authored-sets/structure-pass",
+        "apollo/provisioning/authored-sets/verification"
+      ]
+    },
+    "apollo/provisioning/problem-generation/_index": {
+      "path": "docs/architecture/apollo/provisioning/problem-generation/_index.md",
+      "children": [
+        "apollo/provisioning/problem-generation/api",
+        "apollo/provisioning/problem-generation/generator",
+        "apollo/provisioning/problem-generation/support"
+      ]
+    },
+    "apollo/resolution/_index": {
+      "path": "docs/architecture/apollo/resolution/_index.md",
+      "children": [
+        "apollo/resolution/assignment",
+        "apollo/resolution/candidates",
+        "apollo/resolution/content-tiers",
+        "apollo/resolution/embedding",
+        "apollo/resolution/guardrails",
+        "apollo/resolution/resolver",
+        "apollo/resolution/result"
+      ]
+    },
+    "apollo/schemas/_index": {
+      "path": "docs/architecture/apollo/schemas/_index.md",
+      "children": [
+        "apollo/schemas/authoring-schemas",
+        "apollo/schemas/problem"
+      ]
+    },
+    "apollo/solver/_index": {
+      "path": "docs/architecture/apollo/solver/_index.md",
+      "children": [
+        "apollo/solver/narrator",
+        "apollo/solver/sufficiency",
+        "apollo/solver/sympy-exec"
+      ]
+    },
+    "campaign/_index": {
+      "path": "docs/architecture/campaign/_index.md",
+      "children": [
+        "campaign/cast-personas",
+        "campaign/cast-student",
+        "campaign/cast-subjects-materials",
+        "campaign/cast-teacher",
+        "campaign/infra",
+        "campaign/judges-base",
+        "campaign/judges-s1-s2",
+        "campaign/judges-s3-s4",
+        "campaign/judges-s5",
+        "campaign/scripts-diff-eval",
+        "campaign/scripts-run-s1-s2",
+        "campaign/transcript-replay"
+      ]
+    },
+    "chats/_index": {
+      "path": "docs/architecture/chats/_index.md",
+      "children": [
+        "chats/bundle-cache",
+        "chats/routes",
+        "chats/service"
+      ]
+    },
+    "database/_index": {
+      "path": "docs/architecture/database/_index.md",
+      "children": [
+        "database/legacy-migrations",
+        "database/models",
+        "database/session",
+        "database/supabase-migrations",
+        "database/transforms"
+      ]
+    },
+    "indexing/_index": {
+      "path": "docs/architecture/indexing/_index.md",
+      "children": [
+        "indexing/checkpoint-indexer",
+        "indexing/chunking-embedding",
+        "indexing/connector-document",
+        "indexing/indexing-service",
+        "indexing/ocr-core",
+        "indexing/ocr-providers",
+        "indexing/persistence-hashing"
+      ]
+    },
+    "knowledge/_index": {
+      "path": "docs/architecture/knowledge/_index.md",
+      "children": [
+        "knowledge/teacher-pdf-ingestion",
+        "knowledge/teacher-weekly"
+      ]
+    },
+    "platform/_index": {
+      "path": "docs/architecture/platform/_index.md",
+      "children": [
+        "platform/auth",
+        "platform/ci-workflows",
+        "platform/config-contracts",
+        "platform/config-model-pins",
+        "platform/config-settings",
+        "platform/config-weights",
+        "platform/http-server",
+        "platform/ops-db-sql",
+        "platform/ops-db-tooling",
+        "platform/ops-eval-scripts",
+        "platform/ops-seed-scripts",
+        "platform/vendor-openai-client",
+        "platform/vendor-supabase-storage",
+        "platform/worker-and-procfile",
+        "platform/workspaces"
+      ]
+    },
+    "rag-pipeline/_index": {
+      "path": "docs/architecture/rag-pipeline/_index.md",
+      "children": [
+        "rag-pipeline/citations-formatter",
+        "rag-pipeline/context-packer",
+        "rag-pipeline/document-visibility",
+        "rag-pipeline/hybrid-search",
+        "rag-pipeline/main-ai",
+        "rag-pipeline/orchestrator",
+        "rag-pipeline/prompts-answer",
+        "rag-pipeline/prompts-keyword",
+        "rag-pipeline/prompts-parse-relevance",
+        "rag-pipeline/reranker",
+        "rag-pipeline/retrieve-pipeline",
+        "rag-pipeline/router-deferred",
+        "rag-pipeline/router-llm",
+        "rag-pipeline/router-mode",
+        "rag-pipeline/router-wiring",
+        "rag-pipeline/solver",
+        "rag-pipeline/store-bias",
+        "rag-pipeline/streaming",
+        "rag-pipeline/vision"
+      ]
+    },
+    "reports/_index": {
+      "path": "docs/architecture/reports/_index.md",
+      "children": [
+        "reports/ai-use-models",
+        "reports/ai-use-pdf",
+        "reports/ai-use-routes",
+        "reports/ai-use-service"
+      ]
+    }
+  }
+}

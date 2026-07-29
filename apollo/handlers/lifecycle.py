@@ -10,11 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import (
-    ApolloSession,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 
@@ -39,7 +39,7 @@ async def handle_retry(*, db: AsyncSession, session_id: int) -> dict[str, Any]:
     # (same posture as handle_next). SQLite ignores it.
     sess = (
         await db.execute(
-            select(ApolloSession).where(ApolloSession.id == session_id).with_for_update()
+            select(TutoringSession).where(TutoringSession.id == session_id).with_for_update()
         )
     ).scalar_one()
 
@@ -58,6 +58,8 @@ async def handle_retry(*, db: AsyncSession, session_id: int) -> dict[str, Any]:
     if current_attempt is not None and current_attempt.result is not None:
         new_attempt = ProblemAttempt(
             session_id=session_id,
+            course_id=sess.course_id,
+            user_id=sess.user_id,
             problem_id=current_attempt.problem_id,
             difficulty=current_attempt.difficulty,
         )
@@ -92,7 +94,7 @@ async def handle_end(
     lifecycle handlers (api.py threads it positionally-by-keyword); it is
     unused here now that no Neo4j write happens at end-of-session.
     """
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))).scalar_one()
     sess.status = SessionStatus.ended.value
     await db.commit()
 
@@ -105,7 +107,7 @@ async def handle_get_session(
     neo: Neo4jClient | None,
     session_id: int,
 ) -> dict[str, Any]:
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))).scalar_one()
 
     current_attempt_id: int | None = None
     if sess.current_problem_id:
@@ -128,9 +130,9 @@ async def handle_get_session(
             )
             kg = {"nodes": [], "edges": []}
         msgs = (await db.execute(
-            select(Message)
-            .where(Message.attempt_id == current_attempt_id)
-            .order_by(Message.turn_index)
+            select(TutoringMessage)
+            .where(TutoringMessage.attempt_id == current_attempt_id)
+            .order_by(TutoringMessage.turn_index)
         )).scalars().all()
     else:
         kg = {"nodes": [], "edges": []}
@@ -138,8 +140,10 @@ async def handle_get_session(
 
     problem = None
     if sess.current_problem_id and sess.concept_id is not None:
-        for p in await list_problems_for_concept(db, concept_id=sess.concept_id):
-            if p.id == sess.current_problem_id:
+        for p in await list_problems_for_concept(
+            db, concept_id=sess.concept_id, search_space_id=sess.course_id
+        ):
+            if p.database_id == sess.current_problem_id:
                 problem = {
                     "id": p.id,
                     "concept_id": p.concept_id,

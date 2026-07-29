@@ -21,10 +21,10 @@ from ai.router.mode import ModeDecision
 from chats.bundle_cache import CachedBundle
 from config.contracts import BundleSnippet, ParsedTask
 from database.models import (
-    AITADocument,
     ChatRouterDecision,
     ChatSession,
-    SearchSpace,
+    Course,
+    Document,
 )
 
 
@@ -227,29 +227,29 @@ def _fake_router(mode: str, confidence: float = 0.9) -> LLMRouter:
 
 @pytest.mark.integration
 async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
-    space = SearchSpace(
+    space = Course(
         name="Wiring test space",
         slug="wiring-test",
         subject_name="Calculus",
     )
     db_session.add(space)
     await db_session.flush()
-    doc = AITADocument(
+    doc = Document(
         title="Calc Textbook",
         content="content",
         content_hash="wiring-test-hash",
         unique_identifier_hash="wiring-test-uid",
-        search_space_id=space.id,
+        course_id=space.id,
         material_kind="textbook",
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(doc)
     await db_session.flush()
     chat = ChatSession(
-        chat_id="wiring-test-chat",
+        external_id="wiring-test-chat",
         user_id="00000000-0000-0000-0000-000000000002",
-        search_space_id=space.id,
-        meta={},
+        course_id=space.id,
+        metadata_={},
         memory_summary="",
     )
     db_session.add(chat)
@@ -266,7 +266,7 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
 
     # Turn 1: no cache yet → FRESH without an LLM call
     ctx1 = await wiring.prepare_router_context(
-        chat_id=chat.chat_id,
+        chat_id=chat.external_id,
         user_id=chat.user_id,
         search_space_id=space.id,
         question="What is a p-series?",
@@ -278,9 +278,11 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
     assert ctx1.cached is None
 
     # Persist turn 1's bundle (uses real chunk? no — snippet ids must be real chunks)
-    from database.models import AITAChunk
+    from database.models import DocumentChunk
 
-    chunk = AITAChunk(content="c", document_id=doc.id, chunk_type="body", page_number=1)
+    chunk = DocumentChunk(
+        course_id=doc.course_id, content="c", document_id=doc.id, chunk_type="body", page_number=1
+    )
     db_session.add(chunk)
     await db_session.flush()
 
@@ -292,7 +294,7 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
     )
     bundle1.provenance["citation_rankings"] = [_scoring_row(chunk.id, 0.8)]
     await wiring.persist_turn_outcome(
-        chat_id=chat.chat_id,
+        chat_id=chat.external_id,
         user_id=chat.user_id,
         ctx=ctx1,
         bundle=bundle1,
@@ -303,7 +305,7 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
 
     # Turn 2: cache present → fake router says NONE → cached bundle returned
     ctx2 = await wiring.prepare_router_context(
-        chat_id=chat.chat_id,
+        chat_id=chat.external_id,
         user_id=chat.user_id,
         search_space_id=space.id,
         question="B",
@@ -319,7 +321,7 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
 
     # Attachments force FRESH even with a warm cache
     ctx3 = await wiring.prepare_router_context(
-        chat_id=chat.chat_id,
+        chat_id=chat.external_id,
         user_id=chat.user_id,
         search_space_id=space.id,
         question="what is this?",
@@ -331,19 +333,19 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
 
     # A change to the visible document set invalidates the cache → FRESH
     # (new ready doc shifts the fingerprint away from the one stored at save)
-    doc2 = AITADocument(
+    doc2 = Document(
         title="Week 2 Notes",
         content="content",
         content_hash="wiring-test-hash-2",
         unique_identifier_hash="wiring-test-uid-2",
-        search_space_id=space.id,
+        course_id=space.id,
         material_kind="other",
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(doc2)
     await db_session.flush()
     ctx4 = await wiring.prepare_router_context(
-        chat_id=chat.chat_id,
+        chat_id=chat.external_id,
         user_id=chat.user_id,
         search_space_id=space.id,
         question="B",
@@ -452,6 +454,7 @@ async def test_persist_turn_outcome_never_raises(monkeypatch):
         user_id="u",
         ctx=wiring.RouterTurnContext(
             chat_session_id=1,
+            course_id=1,
             decision=ModeDecision(
                 mode="FRESH",
                 route="",
@@ -506,7 +509,7 @@ def test_prepare_solve_prompt_scorer_failure_yields_placeholder(monkeypatch):
 
 @pytest.mark.integration
 async def test_memory_loader_meta_refresh_preserves_cache_fingerprint(db_session, monkeypatch):
-    """Regression: the per-turn chat-memory loader refreshes session.meta with
+    """Regression: the per-turn chat-memory loader refreshes session metadata with
     workspace info; it must MERGE (not replace) or it erases the bundle_cache
     fingerprint and the router invalidates the session cache on every turn.
 
@@ -518,34 +521,34 @@ async def test_memory_loader_meta_refresh_preserves_cache_fingerprint(db_session
 
     import server
 
-    space = SearchSpace(
-        name="Meta merge test space", slug="meta-merge-test", subject_name="Calculus"
-    )
+    space = Course(name="Meta merge test space", slug="meta-merge-test", subject_name="Calculus")
     db_session.add(space)
     await db_session.flush()
-    doc = AITADocument(
+    doc = Document(
         title="Calc Textbook",
         content="content",
         content_hash="meta-merge-hash",
         unique_identifier_hash="meta-merge-uid",
-        search_space_id=space.id,
+        course_id=space.id,
         material_kind="textbook",
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(doc)
     await db_session.flush()
-    from database.models import AITAChunk
+    from database.models import DocumentChunk
 
-    chunk = AITAChunk(content="c", document_id=doc.id, chunk_type="body", page_number=1)
+    chunk = DocumentChunk(
+        course_id=doc.course_id, content="c", document_id=doc.id, chunk_type="body", page_number=1
+    )
     db_session.add(chunk)
     await db_session.flush()
 
     user_id = "00000000-0000-0000-0000-000000000004"
     chat = ChatSession(
-        chat_id="meta-merge-chat",
+        external_id="meta-merge-chat",
         user_id=user_id,
-        search_space_id=space.id,
-        meta={},
+        course_id=space.id,
+        metadata_={},
         memory_summary="",
     )
     db_session.add(chat)
@@ -562,7 +565,7 @@ async def test_memory_loader_meta_refresh_preserves_cache_fingerprint(db_session
 
     # Turn 1: prepare (FRESH) + persist writes the cache fingerprint into meta
     ctx1 = await wiring.prepare_router_context(
-        chat_id=chat.chat_id,
+        chat_id=chat.external_id,
         user_id=user_id,
         search_space_id=space.id,
         question="What is a p-series?",
@@ -576,27 +579,27 @@ async def test_memory_loader_meta_refresh_preserves_cache_fingerprint(db_session
     )
     bundle1.provenance["citation_rankings"] = [_scoring_row(chunk.id, 0.8)]
     await wiring.persist_turn_outcome(
-        chat_id=chat.chat_id, user_id=user_id, ctx=ctx1, bundle=bundle1, question="q1"
+        chat_id=chat.external_id, user_id=user_id, ctx=ctx1, bundle=bundle1, question="q1"
     )
-    assert "bundle_cache" in (chat.meta or {})
+    assert "bundle_cache" in (chat.metadata_ or {})
 
     # Turn 2 starts: the memory loader refreshes meta with workspace info —
     # this is the step that used to clobber the fingerprint.
     auth = SimpleNamespace(user_id=user_id)
     await server._load_memory_and_append_user_turn_async(
         auth=auth,
-        chat_id=chat.chat_id,
+        chat_id=chat.external_id,
         search_space_id=space.id,
         user_content="B",
         attachments=[],
         meta={"search_space_id": space.id, "class_name": "Calc", "subject_name": "Calculus"},
     )
-    assert "bundle_cache" in (chat.meta or {}), "memory loader must not erase bundle_cache"
-    assert chat.meta["class_name"] == "Calc"  # refresh still applied
+    assert "bundle_cache" in (chat.metadata_ or {}), "memory loader must not erase bundle_cache"
+    assert chat.metadata_["class_name"] == "Calc"  # refresh still applied
 
     # Turn 2 prepare: cache must survive and route NONE
     ctx2 = await wiring.prepare_router_context(
-        chat_id=chat.chat_id,
+        chat_id=chat.external_id,
         user_id=user_id,
         search_space_id=space.id,
         question="B",

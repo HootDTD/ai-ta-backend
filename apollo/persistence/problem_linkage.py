@@ -5,13 +5,17 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import ConceptProblem
+from apollo.persistence.models import Problem
 
 
-async def resolve_concept_problem_id(
-    db: AsyncSession, *, concept_id: int, problem_code: str
+async def resolve_problem_id(
+    db: AsyncSession,
+    *,
+    concept_id: int,
+    course_id: int,
+    problem_identity: str | int,
 ) -> int | None:
-    """Return the preferred live bank row for ``(concept_id, problem_code)``.
+    """Resolve either a public code or internal bigint within one course/concept.
 
     Tier-2 teachable rows win over tier-1 inventory twins; the newest row id is
     the deterministic tiebreak. Legacy or fixture problem codes may have no bank
@@ -19,13 +23,16 @@ async def resolve_concept_problem_id(
     """
     return (
         await db.execute(
-            select(ConceptProblem.id)
+            select(Problem.id)
             .where(
-                ConceptProblem.concept_id == concept_id,
-                ConceptProblem.problem_code == problem_code,
-                ConceptProblem.quarantined_at.is_(None),
+                Problem.course_id == course_id,
+                Problem.concept_id == concept_id,
+                (Problem.id == problem_identity)
+                if isinstance(problem_identity, int)
+                else (Problem.problem_code == problem_identity),
+                Problem.quarantined_at.is_(None),
             )
-            .order_by(ConceptProblem.tier.desc(), ConceptProblem.id.desc())
+            .order_by(Problem.tier.desc(), Problem.id.desc())
             .limit(1)
         )
     ).scalar_one_or_none()

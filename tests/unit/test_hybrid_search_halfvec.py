@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
 
-from database.models import EMBEDDING_DIM, AITAChunk
+from database.models import EMBEDDING_DIM, DocumentChunk
 from retrieval.hybrid_search import (
     _build_keyword_cte,
     _build_semantic_cte,
@@ -35,7 +35,7 @@ def test_both_operands_cast_to_halfvec():
     assert "halfvec" in sql
     # Both the column and the query vector must be cast (matches the index expression).
     assert sql.count(f"halfvec({EMBEDDING_DIM})") >= 2
-    assert f"halfvec({EMBEDDING_DIM})" in sql
+    assert sql.count(f"extensions.halfvec({EMBEDDING_DIM})") >= 2
 
 
 def test_uses_cosine_distance_operator():
@@ -70,22 +70,22 @@ def test_semantic_cte_limits_before_window():
 
 def test_semantic_cte_filters_by_doc_id_array_not_join():
     """The semantic candidate filter must be a chunk-local ``= ANY(array)`` over
-    document_id, NOT a join to aita_documents. Only the materialized-array form
+    document_id, NOT a join to app.documents. Only the materialized-array form
     lets the HNSW index engage under hnsw.iterative_scan (verified on the live
     DB: a join or ``IN (subquery)`` reverts to a brute-force Sort over every
     embedding). If this regresses to a join, the iterative scan silently no-ops.
     """
     cte = _build_semantic_cte([0.1] * EMBEDDING_DIM, [1, 2], n_results=300)
     sql = _compile_full(cte)
-    assert "aita_documents" not in sql, (
-        "semantic CTE must not join aita_documents — that blocks the HNSW index"
+    assert "app.documents" not in sql, (
+        "semantic CTE must not join app.documents — that blocks the HNSW index"
     )
     assert "= any(" in sql, "expected chunk-local document_id = ANY(array) filter"
     assert "integer[]" in sql, "doc-id array must be a bound integer[] param"
 
 
 def test_keyword_cte_limits_before_window():
-    tsvector = func.to_tsvector("english", AITAChunk.content)
+    tsvector = func.to_tsvector("english", DocumentChunk.content)
     tsquery = func.plainto_tsquery("english", "bernoulli equation")
     cte = _build_keyword_cte(tsvector, tsquery, [], n_results=300)
     sql = _compile_full(cte)

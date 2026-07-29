@@ -9,7 +9,7 @@ strips it. ``build_turn_order`` therefore:
 
   1. reads each node's ``created_at`` via the tiny ``KGStore.read_node_created_at``
      read (NOT ``read_graph``, NOT a schema change);
-  2. reads the student ``apollo_messages.turn_index`` reference points for the
+  2. reads student ``app.tutoring_messages.turn_index`` reference points for the
      attempt;
   3. groups node ids by distinct ``created_at``, sorts the distinct values
      ascending, and assigns each group the ``turn_index`` of the latest student
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
-from apollo.persistence.models import Message
+from apollo.persistence.models import TutoringMessage
 from apollo.persistence.neo4j_client import Neo4jClient
 
 
@@ -38,10 +38,10 @@ async def _read_student_turn_points(db: AsyncSession, *, attempt_id: int) -> lis
     string so it compares against the node ``created_at`` ISO strings."""
     rows = (
         await db.execute(
-            select(Message.turn_index, Message.created_at)
-            .where(Message.attempt_id == attempt_id)
-            .where(Message.role == "student")
-            .order_by(Message.turn_index)
+            select(TutoringMessage.turn_index, TutoringMessage.created_at)
+            .where(TutoringMessage.attempt_id == attempt_id)
+            .where(TutoringMessage.role == "student")
+            .order_by(TutoringMessage.turn_index)
         )
     ).all()
     points: list[tuple[int, str]] = []
@@ -81,7 +81,7 @@ async def build_turn_order(
     student_graph: KGGraph,
 ) -> dict[str, int]:
     """Map each KG ``node_id`` -> a monotone turn position sourced from the node's
-    Neo4j ``created_at`` (joined to ``apollo_messages.turn_index`` where possible).
+    Neo4j ``created_at`` (joined to tutoring-message ``turn_index`` where possible).
 
     A node with no ``created_at`` -> absent key (events.py tolerates via
     ``_SENTINEL_TURN``). ``student_graph`` is accepted for interface symmetry with

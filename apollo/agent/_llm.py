@@ -5,7 +5,7 @@ Two budget tiers:
   triviality, history summarizer). Uses `APOLLO_CHEAP_MODEL` env var with
   a `gpt-4o-mini` default.
 - `main_chat` — for reasoning calls (parser, draft reply, coverage matcher).
-  Uses `MAIN_MODEL` env var with a `gpt-4o` default.
+  Uses the pinned `config.models.MAIN_MODEL` (a per-call `model=` arg overrides).
 
 Both emit a structured log line per call so cost can be audited after a
 session. Callers pass `purpose=` so the audit log is grep-friendly.
@@ -18,10 +18,11 @@ from typing import Any
 
 from openai import OpenAI
 
+from config import models
+
 _LOG = logging.getLogger(__name__)
 
 _CHEAP_MODEL_DEFAULT = "gpt-4o-mini"
-_MAIN_MODEL_DEFAULT = "gpt-4o"
 
 
 def _client() -> OpenAI:
@@ -82,7 +83,7 @@ def main_chat(
     model: str | None = None,
 ) -> str:
     """Main-tier chat call. Returns the assistant message content (string)."""
-    used_model = model or _resolve_model("MAIN_MODEL", _MAIN_MODEL_DEFAULT)
+    used_model = model or models.MAIN_MODEL
     kwargs: dict[str, Any] = {
         "model": used_model,
         "messages": messages,

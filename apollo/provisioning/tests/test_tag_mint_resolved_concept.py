@@ -15,18 +15,19 @@ test_tag_mint.py. Tier-1: injected stubs, no network.
 from __future__ import annotations
 
 import random
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
+from apollo.persistence.models import Concept, EntityPrereq, LearnerEntity
 from apollo.provisioning.tag_mint import (
     ApprovedPair,
     ResolvedConcept,
     TagMintError,
     tag_and_mint,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 
 def _never_called(*_a, **_k) -> str:
@@ -83,13 +84,11 @@ def _problem_dict() -> dict:
 
 async def _seed_concept(db, *, slug: str = "integration-by-parts") -> tuple[int, int]:
     """Returns (search_space_id, concept_id) for a registered premade concept."""
-    space = SearchSpace(name=f"RC {slug}", slug=f"rc-{slug}-{random.random()}", subject_name="C2")
+    space = Course(name=f"RC {slug}", slug=f"rc-{slug}-{random.random()}", subject_name="C2")
     db.add(space)
     await db.flush()
-    subject = Subject(slug="calculus_2", display_name="Calculus 2", search_space_id=space.id)
-    db.add(subject)
-    await db.flush()
-    concept = Concept(subject_id=subject.id, slug=slug, display_name="Integration by Parts")
+    subject = SimpleNamespace(slug="calculus_2", display_name="Calculus 2", search_space_id=space.id)
+    concept = Concept(course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name, slug=slug, display_name="Integration by Parts")
     db.add(concept)
     await db.flush()
     return int(space.id), int(concept.id)
@@ -121,7 +120,7 @@ async def test_resolved_concept_skips_tag_chat_and_uses_given_concept(db_session
     assert len([c for c in n_concepts if int(c.id) == cid]) == 1
     # all three reference nodes minted under the resolved concept
     entities = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.concept_id == cid)))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.concept_id == cid)))
         .scalars()
         .all()
     )
@@ -155,8 +154,8 @@ async def test_resolved_concept_prereqs_mirror_depends_on(db_session):
         (
             await db_session.execute(
                 select(EntityPrereq)
-                .join(KGEntity, EntityPrereq.from_entity_id == KGEntity.id)
-                .where(KGEntity.concept_id == cid)
+                .join(LearnerEntity, EntityPrereq.from_entity_id == LearnerEntity.id)
+                .where(LearnerEntity.concept_id == cid)
             )
         )
         .scalars()

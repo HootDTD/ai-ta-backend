@@ -21,10 +21,21 @@ omit =
     .venv/*
     */__pycache__/*
     database/migrations/*
-    campaign/*
+    # campaign/* was blanket-omitted here (Phase 1) to protect the patch gate
+    # from campaign/validate_misconception_detector.py and
+    # campaign/infra/prewarm_nli.py, two live-LLM-cost scripts that could
+    # never run in CI. DB-18 (2026-07-21) found both already deleted by
+    # earlier cleanup (only stale __pycache__ remnants remain) and that this
+    # omit's `campaign/*` glob matches recursively in coverage.py — silently
+    # zeroing out coverage.xml for ALL of campaign/, including
+    # campaign/tests/'s own 159 passing tests that pytest.ini's testpaths
+    # entry (see its comment) was specifically changed to collect so
+    # campaign/** would be MEASURED, not omitted. Removed: campaign/** is now
+    # measured like any other source tree.
     # Live-LLM smoke harness: costs money + hits the network, so it can never
     # run in CI — unmeasured under source=. it would starve the diff-cover
-    # patch gate (same failure mode that got campaign/* omitted above).
+    # patch gate (the same failure mode campaign/* used to be blanket-omitted
+    # for, above, until campaign/** got its own real test coverage).
     scripts/wave1_live_smoke.py
     # DAG-4 live-LLM evaluation harness: same network/cost exclusion as the
     # wave-1 smoke above; the conductor runs it manually before merge.

@@ -1,50 +1,44 @@
-"""Unit tests for migration 029 SQLAlchemy ORM mapping (no DB).
-
-WU-5B4 adds ONE write-only JSONB column ``chat_turns.keywords`` (§10 RQ5 hedge:
-persist the per-/ask ``extract_and_filter_keywords`` output for offline
-class-level backfill). These tests assert the ORM ``ChatTurn`` class metadata
-mirrors the sibling ``attachments``/``citations`` JSONB-array shape EXACTLY —
-class metadata only, no DB connection required.
-"""
+"""Unit tests for the target ``app.chat_messages`` ORM mapping (no DB)."""
 
 import pytest
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY
 
-from database.models import ChatTurn
-
-
-@pytest.mark.unit
-def test_chat_turn_has_keywords_column():
-    cols = {c.name for c in ChatTurn.__table__.columns}
-    assert "keywords" in cols
+from database.models import ChatMessage
 
 
 @pytest.mark.unit
-def test_chat_turn_keywords_column_shape():
-    col = ChatTurn.__table__.columns["keywords"]
-    # NOT NULL, mirroring attachments/citations.
+def test_chat_message_target_shape():
+    cols = {c.name for c in ChatMessage.__table__.columns}
+    assert {
+        "course_id",
+        "learning_activity_id",
+        "kind",
+        "external_id",
+        "keywords",
+    } <= cols
+    assert "turn_id" not in cols
+    assert ChatMessage.__table__.schema == "app"
+
+
+@pytest.mark.unit
+def test_chat_message_keywords_column_shape():
+    col = ChatMessage.__table__.columns["keywords"]
     assert col.nullable is False
-    # JSONB type instance.
-    assert isinstance(col.type, JSONB)
-    # ORM-side default produces a fresh empty list (so omitted inserts default
-    # to []). SQLAlchemy wraps the `default=list` callable, so assert behavior
-    # (it is callable and yields []) rather than object identity.
+    assert isinstance(col.type, ARRAY)
+    assert col.type.item_type.python_type is str
     assert col.default is not None
     assert col.default.is_callable
     assert col.default.arg(None) == []
-    # Server default is the SQL literal '[]'::jsonb (so raw/legacy inserts are safe).
     assert col.server_default is not None
-    assert "'[]'::jsonb" in str(col.server_default.arg)
+    assert "'{}'::text[]" in str(col.server_default.arg)
 
 
 @pytest.mark.unit
-def test_chat_turn_keywords_matches_citations_shape():
-    """keywords copies the citations/attachments JSONB-array convention exactly."""
-    keywords = ChatTurn.__table__.columns["keywords"]
-    citations = ChatTurn.__table__.columns["citations"]
-    assert keywords.nullable == citations.nullable
-    assert type(keywords.type) is type(citations.type)
-    # Both wrap the same `default=list` convention (callable yielding []).
-    assert keywords.default.is_callable == citations.default.is_callable
-    assert keywords.default.arg(None) == citations.default.arg(None) == []
-    assert str(keywords.server_default.arg) == str(citations.server_default.arg)
+def test_chat_message_uniques_are_session_scoped():
+    unique_columns = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in ChatMessage.__table__.constraints
+        if constraint.__class__.__name__ == "UniqueConstraint"
+    }
+    assert ("learning_activity_id", "external_id") in unique_columns
+    assert ("learning_activity_id", "turn_index") in unique_columns

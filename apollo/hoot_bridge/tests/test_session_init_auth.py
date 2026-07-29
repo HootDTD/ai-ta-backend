@@ -18,14 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.errors import NoMatchingConceptError
 from apollo.hoot_bridge.session_init import init_session_from_hoot
-from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.persistence.models import ProblemAttempt, SessionPhase, SessionStatus, TutoringSession
 from apollo.schemas.problem import Problem, ReferenceStep
 from database.models import Base
 
 # WU-3D: the concept signal is now an int concept_id (not a cluster string); the
 # curriculum readers are async DB calls. These tests stay on SQLite by mocking
 # the concept-resolution + problem-selection I/O entirely (no apollo_concepts
-# rows needed), and assert apollo_sessions.concept_id is populated.
+# rows needed), and assert the tutoring activity concept_id is populated.
 _STUB_CONCEPT_ID = 7
 
 # ---------------------------------------------------------------------------
@@ -34,6 +34,7 @@ _STUB_CONCEPT_ID = 7
 
 _STUB_PROBLEM = Problem(
     id="stub_p1",
+    database_id=101,
     concept_id="stub_concept",
     difficulty="intro",
     problem_text="Stub problem text.",
@@ -92,12 +93,15 @@ async def db():
     We create only the tables needed by session_init rather than the full
     Base.metadata because some tables in database/models.py use JSONB columns
     that SQLAlchemy's SQLite dialect cannot compile. SQLite's FK enforcement is
-    off by default, so ApolloSession.search_space_id (→ aita_search_spaces.id)
+    off by default, so TutoringSession.search_space_id (→ app.courses.id)
     can hold any integer value without a matching parent row.
     """
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
@@ -131,7 +135,7 @@ async def test_init_session_creates_session_and_first_problem(db, monkeypatch):
     assert result["problem"]["concept_id"] == _STUB_PROBLEM.concept_id
     assert result["problem"]["target_unknown"] == _STUB_PROBLEM.target_unknown
 
-    sess = (await db.execute(select(ApolloSession))).scalar_one()
+    sess = (await db.execute(select(TutoringSession))).scalar_one()
     assert sess.user_id == TEST_USER_ID
     assert sess.search_space_id == TEST_SPACE_ID
     assert sess.status == SessionStatus.active.value
@@ -139,6 +143,7 @@ async def test_init_session_creates_session_and_first_problem(db, monkeypatch):
     assert sess.concept_id == _STUB_CONCEPT_ID
 
     pa = (await db.execute(select(ProblemAttempt))).scalar_one()
+    assert pa.problem_id == _STUB_PROBLEM.database_id
     assert pa.difficulty == "intro"
 
 
@@ -164,7 +169,7 @@ async def test_init_session_ends_stale_active_session_for_same_user(db, monkeypa
 
     assert second["session_id"] != first["session_id"]
 
-    sessions = (await db.execute(select(ApolloSession).order_by(ApolloSession.id))).scalars().all()
+    sessions = (await db.execute(select(TutoringSession).order_by(TutoringSession.id))).scalars().all()
     assert len(sessions) == 2
     assert sessions[0].id == first["session_id"]
     assert sessions[0].status == SessionStatus.ended.value
@@ -198,8 +203,8 @@ async def test_new_session_ends_only_this_users_active_session(db, monkeypatch):
         hoot_transcript="bernoulli",
         difficulty="intro",
     )
-    s1 = await db.get(ApolloSession, first["session_id"])
-    s2 = await db.get(ApolloSession, other["session_id"])
+    s1 = await db.get(TutoringSession, first["session_id"])
+    s2 = await db.get(TutoringSession, other["session_id"])
     assert s1.status == SessionStatus.ended.value
     assert s2.status == SessionStatus.active.value
 

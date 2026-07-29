@@ -1,7 +1,7 @@
 """Pure graph-diff helpers for the authored calc-2 eval (reversed provisioning).
 
 Aligns GENERATED authored-set problems (the upload path's promoted/held
-``apollo_concept_problems`` payloads) to the authored corpus
+``app.problems`` promoted fields) to the authored corpus
 (``apollo/provisioning/corpora/calc2/authored/authored_corpus.json``) by
 problem-text token overlap, scores concept-match accuracy against the corpus's
 private ``concept_slug`` ground truth, and diffs each generated reference

@@ -1,4 +1,5 @@
 import pytest as _pytest_module
+
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 KGGraph + Neo4j store + new parser/coverage signatures. "
     "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase.",
@@ -20,23 +21,34 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.api import register_exception_handlers, router as apollo_router
-from apollo.persistence.models import ApolloSession, KGEntry, Message, ProblemAttempt, StudentProgress
+from apollo.persistence.models import (
+    TutoringSession,
+    KGEntry,
+    TutoringMessage,
+    ProblemAttempt,
+    StudentProgress,
+)
 from database.models import Base
 from database.session import get_db_session
 
 
 @pytest_asyncio.fixture
 async def engine_with_schema():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
         StudentProgress.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables)
+        )
     yield engine
     await engine.dispose()
 
@@ -81,25 +93,47 @@ def test_full_slice0a_happy_path(
     app,
 ):
     mock_infer = MagicMock()
-    mock_infer.chat.completions.create.return_value = _mock_llm_response('{"cluster_id": "fluid_mechanics"}')
+    mock_infer.chat.completions.create.return_value = _mock_llm_response(
+        '{"cluster_id": "fluid_mechanics"}'
+    )
     mock_infer_client_cls.return_value = mock_infer
 
     mock_parser = MagicMock()
     mock_parser.chat.completions.create.side_effect = [
-        _mock_llm_response(json.dumps({"entries": [
-            {"type": "equation", "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"}}
-        ]})),
-        _mock_llm_response(json.dumps({"entries": [
-            {"type": "equation", "content": {
-                "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
-                "label": "Bernoulli",
-            }}
-        ]})),
+        _mock_llm_response(
+            json.dumps(
+                {
+                    "entries": [
+                        {
+                            "type": "equation",
+                            "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"},
+                        }
+                    ]
+                }
+            )
+        ),
+        _mock_llm_response(
+            json.dumps(
+                {
+                    "entries": [
+                        {
+                            "type": "equation",
+                            "content": {
+                                "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+                                "label": "Bernoulli",
+                            },
+                        }
+                    ]
+                }
+            )
+        ),
     ]
     mock_parser_client_cls.return_value = mock_parser
 
     mock_apollo = MagicMock()
-    mock_apollo.chat.completions.create.return_value = _mock_llm_response("Got it — can you tell me more?")
+    mock_apollo.chat.completions.create.return_value = _mock_llm_response(
+        "Got it — can you tell me more?"
+    )
     mock_apollo_client_cls.return_value = mock_apollo
 
     mock_diag = MagicMock()
@@ -107,28 +141,43 @@ def test_full_slice0a_happy_path(
     mock_diag_client_cls.return_value = mock_diag
 
     mock_coverage = MagicMock()
-    mock_coverage.chat.completions.create.return_value = _mock_llm_response(json.dumps({"score": 0.9}))
+    mock_coverage.chat.completions.create.return_value = _mock_llm_response(
+        json.dumps({"score": 0.9})
+    )
     mock_coverage_client_cls.return_value = mock_coverage
 
     client = TestClient(app)
 
-    r = client.post("/apollo/sessions/from_hoot", json={
-        "student_id": "stu-1",
-        "hoot_transcript": "Student asked about Bernoulli in horizontal pipes.",
-        "difficulty": "intro",
-    })
+    r = client.post(
+        "/apollo/sessions/from_hoot",
+        json={
+            "student_id": "stu-1",
+            "hoot_transcript": "Student asked about Bernoulli in horizontal pipes.",
+            "difficulty": "intro",
+        },
+    )
     assert r.status_code == 200, r.text
     start = r.json()
     session_id = start["session_id"]
     assert start["attempt_id"] is not None
-    assert start["problem"]["concept_id"] in ("bernoulli_principle", "continuity_equation", "volumetric_flow_rate")
+    assert start["problem"]["concept_id"] in (
+        "bernoulli_principle",
+        "continuity_equation",
+        "volumetric_flow_rate",
+    )
 
-    r = client.post(f"/apollo/sessions/{session_id}/chat", json={"message": "For incompressible flow, A1*v1 = A2*v2."})
+    r = client.post(
+        f"/apollo/sessions/{session_id}/chat",
+        json={"message": "For incompressible flow, A1*v1 = A2*v2."},
+    )
     assert r.status_code == 200, r.text
 
-    r = client.post(f"/apollo/sessions/{session_id}/chat", json={
-        "message": "Bernoulli: P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 = P2 + Rational(1,2)*rho*v2**2 + rho*g*h2."
-    })
+    r = client.post(
+        f"/apollo/sessions/{session_id}/chat",
+        json={
+            "message": "Bernoulli: P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 = P2 + Rational(1,2)*rho*v2**2 + rho*g*h2."
+        },
+    )
     assert r.status_code == 200, r.text
 
     r = client.post(f"/apollo/sessions/{session_id}/done")
@@ -143,7 +192,16 @@ def test_full_slice0a_happy_path(
         assert "letter" in done["rubric"][axis]
     assert "variables" not in done["rubric"]
     assert done["rubric"]["overall"]["letter"] in (
-        "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D", "F",
+        "A+",
+        "A",
+        "A-",
+        "B+",
+        "B",
+        "B-",
+        "C+",
+        "C",
+        "D",
+        "F",
     )
     assert "solver_indicator" in done
     assert isinstance(done["solver_indicator"]["reached"], bool)
@@ -192,11 +250,14 @@ def test_no_matching_concept_returns_409(mock_client_cls, app):
     mock_client_cls.return_value = client_mock
 
     client = TestClient(app)
-    r = client.post("/apollo/sessions/from_hoot", json={
-        "student_id": "stu-1",
-        "hoot_transcript": "How do I bake a cake?",
-        "difficulty": "intro",
-    })
+    r = client.post(
+        "/apollo/sessions/from_hoot",
+        json={
+            "student_id": "stu-1",
+            "hoot_transcript": "How do I bake a cake?",
+            "difficulty": "intro",
+        },
+    )
     assert r.status_code == 409
     assert r.json()["error_code"] == "no_matching_concept"
 
@@ -220,16 +281,27 @@ def test_e2e_switch_then_restart(
     from sqlalchemy import select
 
     mock_infer = MagicMock()
-    mock_infer.chat.completions.create.return_value = _mock_llm_response('{"cluster_id": "fluid_mechanics"}')
+    mock_infer.chat.completions.create.return_value = _mock_llm_response(
+        '{"cluster_id": "fluid_mechanics"}'
+    )
     mock_infer_client_cls.return_value = mock_infer
 
     # Parser always returns one continuity equation — good enough for parser side effects
     # across all chat turns on both attempts. Using return_value (not side_effect) keeps
     # the test robust to chat-turn count.
     mock_parser = MagicMock()
-    mock_parser.chat.completions.create.return_value = _mock_llm_response(json.dumps({"entries": [
-        {"type": "equation", "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"}}
-    ]}))
+    mock_parser.chat.completions.create.return_value = _mock_llm_response(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "type": "equation",
+                        "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"},
+                    }
+                ]
+            }
+        )
+    )
     mock_parser_client_cls.return_value = mock_parser
 
     mock_apollo = MagicMock()
@@ -241,17 +313,22 @@ def test_e2e_switch_then_restart(
     mock_diag_client_cls.return_value = mock_diag
 
     mock_coverage = MagicMock()
-    mock_coverage.chat.completions.create.return_value = _mock_llm_response(json.dumps({"score": 0.9}))
+    mock_coverage.chat.completions.create.return_value = _mock_llm_response(
+        json.dumps({"score": 0.9})
+    )
     mock_coverage_client_cls.return_value = mock_coverage
 
     client = TestClient(app)
 
     # 1. /from_hoot at intro → attempt A
-    r = client.post("/apollo/sessions/from_hoot", json={
-        "student_id": "stu-1",
-        "hoot_transcript": "teach me bernoulli",
-        "difficulty": "intro",
-    })
+    r = client.post(
+        "/apollo/sessions/from_hoot",
+        json={
+            "student_id": "stu-1",
+            "hoot_transcript": "teach me bernoulli",
+            "difficulty": "intro",
+        },
+    )
     assert r.status_code == 200, r.text
     start = r.json()
     session_id = start["session_id"]
@@ -273,17 +350,24 @@ def test_e2e_switch_then_restart(
     # Verify DB state: A abandoned, B fresh
     async def _check_attempts():
         async with db_factory() as s:
-            rows = (await s.execute(
-                select(ProblemAttempt)
-                .where(ProblemAttempt.session_id == session_id)
-                .order_by(ProblemAttempt.id)
-            )).scalars().all()
+            rows = (
+                (
+                    await s.execute(
+                        select(ProblemAttempt)
+                        .where(ProblemAttempt.session_id == session_id)
+                        .order_by(ProblemAttempt.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             assert len(rows) == 2
             assert rows[0].id == attempt_a
             assert rows[0].result == "abandoned"
             assert rows[1].id == attempt_b
             assert rows[1].result is None
             assert rows[1].difficulty == "standard"
+
     asyncio.get_event_loop().run_until_complete(_check_attempts())
 
     # 4. Chat + done on attempt B
@@ -305,24 +389,31 @@ def test_e2e_switch_then_restart(
     async def _check_after_restart():
         async with db_factory() as s:
             # Attempt B's KG + messages wiped
-            b_kg = (await s.execute(
-                select(KGEntry).where(KGEntry.attempt_id == attempt_b)
-            )).scalars().all()
-            b_msgs = (await s.execute(
-                select(Message).where(Message.attempt_id == attempt_b)
-            )).scalars().all()
+            b_kg = (
+                (await s.execute(select(KGEntry).where(KGEntry.attempt_id == attempt_b)))
+                .scalars()
+                .all()
+            )
+            b_msgs = (
+                (await s.execute(select(TutoringMessage).where(TutoringMessage.attempt_id == attempt_b)))
+                .scalars()
+                .all()
+            )
             assert b_kg == []
             assert b_msgs == []
             # Attempt A still has its seeded KG (from chat turn 2)
-            a_kg = (await s.execute(
-                select(KGEntry).where(KGEntry.attempt_id == attempt_a)
-            )).scalars().all()
+            a_kg = (
+                (await s.execute(select(KGEntry).where(KGEntry.attempt_id == attempt_a)))
+                .scalars()
+                .all()
+            )
             assert len(a_kg) >= 1
             # Attempt B row itself untouched (result field).
-            b_row = (await s.execute(
-                select(ProblemAttempt).where(ProblemAttempt.id == attempt_b)
-            )).scalar_one()
+            b_row = (
+                await s.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt_b))
+            ).scalar_one()
             # B was graded by /done, so its result should be non-null (solved/stuck/skipped).
             # Important: we're verifying restart did not touch the result.
             assert b_row.difficulty == "standard"
+
     asyncio.get_event_loop().run_until_complete(_check_after_restart())

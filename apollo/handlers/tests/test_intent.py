@@ -3,6 +3,7 @@
 These cover `apollo.handlers.intent` in isolation. Integration with the
 full chat handler lives in test_chat.py once the legacy V2 tests there
 are rewritten for V3 — out of scope for item #5."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from apollo.handlers.intent import (
+    _CLASSIFIER_PROMPT,
     INTENT_CONFIDENCE_THRESHOLD,
     classify_intent,
     confirmation_prompt_for,
@@ -26,43 +28,53 @@ def concept():
 
 # ---- detect_confirmation -------------------------------------------------
 
-@pytest.mark.parametrize("text", [
-    "yes",
-    "yep",
-    "Yeah grade me",
-    "sure, go ahead",
-    "ok",
-    "Sounds good!",
-    "let's do it",
-    "please",
-    "okay grade me",
-])
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "yes",
+        "yep",
+        "Yeah grade me",
+        "sure, go ahead",
+        "ok",
+        "Sounds good!",
+        "let's do it",
+        "please",
+        "okay grade me",
+    ],
+)
 def test_detect_confirmation_affirms(text):
     v = detect_confirmation(text)
     assert v.affirmed is True and v.rejected is False
 
 
-@pytest.mark.parametrize("text", [
-    "no",
-    "nope",
-    "not yet",
-    "wait, give me a sec",
-    "cancel",
-    "never mind",
-    "nevermind",
-    "hold on",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no",
+        "nope",
+        "not yet",
+        "wait, give me a sec",
+        "cancel",
+        "never mind",
+        "nevermind",
+        "hold on",
+    ],
+)
 def test_detect_confirmation_rejects(text):
     v = detect_confirmation(text)
     assert v.affirmed is False and v.rejected is True
 
 
-@pytest.mark.parametrize("text", [
-    "I want to add one more equation: A1*v1 = A2*v2",
-    "actually, let me explain density first",
-    "",
-    "the velocity is constant",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I want to add one more equation: A1*v1 = A2*v2",
+        "actually, let me explain density first",
+        "",
+        "the velocity is constant",
+    ],
+)
 def test_detect_confirmation_ambiguous(text):
     v = detect_confirmation(text)
     assert v.affirmed is False
@@ -78,12 +90,17 @@ def test_detect_confirmation_mixed_signal_falls_through():
 
 # ---- classify_intent ----------------------------------------------------
 
+
 def _patch_classifier(*, intent: str, confidence: float, reason: str = "test"):
     return patch(
         "apollo.handlers.intent.cheap_chat",
-        return_value=json.dumps({
-            "intent": intent, "confidence": confidence, "reason": reason,
-        }),
+        return_value=json.dumps(
+            {
+                "intent": intent,
+                "confidence": confidence,
+                "reason": reason,
+            }
+        ),
     )
 
 
@@ -140,7 +157,9 @@ def test_classify_non_numeric_confidence_safe(concept):
         return_value=json.dumps({"intent": "done", "confidence": "very high"}),
     ):
         v = classify_intent(
-            utterance="ok done", history=[], concept=concept,
+            utterance="ok done",
+            history=[],
+            concept=concept,
         )
     assert v.intent == "done"
     assert v.confidence == 0.0
@@ -149,7 +168,9 @@ def test_classify_non_numeric_confidence_safe(concept):
 def test_classify_confidence_clamped(concept):
     with _patch_classifier(intent="done", confidence=2.5):
         v = classify_intent(
-            utterance="grade me", history=[], concept=concept,
+            utterance="grade me",
+            history=[],
+            concept=concept,
         )
     assert v.confidence == 1.0
 
@@ -161,7 +182,9 @@ def test_classify_soft_fails_to_teaching_on_exception(concept):
         side_effect=RuntimeError("API down"),
     ):
         v = classify_intent(
-            utterance="ok done", history=[], concept=concept,
+            utterance="ok done",
+            history=[],
+            concept=concept,
         )
     assert v.intent == "teaching"
     assert v.confidence == 0.0
@@ -173,7 +196,9 @@ def test_classify_soft_fails_to_teaching_on_malformed_json(concept):
         return_value="not json",
     ):
         v = classify_intent(
-            utterance="ok done", history=[], concept=concept,
+            utterance="ok done",
+            history=[],
+            concept=concept,
         )
     assert v.intent == "teaching"
 
@@ -181,15 +206,15 @@ def test_classify_soft_fails_to_teaching_on_malformed_json(concept):
 def test_classify_history_tail_is_passed(concept):
     """The classifier should receive the tail of the history; verify
     payload shape via the patched call args."""
-    long_history = [
-        {"role": "user", "content": f"turn {i}"} for i in range(10)
-    ]
+    long_history = [{"role": "user", "content": f"turn {i}"} for i in range(10)]
     with patch(
         "apollo.handlers.intent.cheap_chat",
         return_value=json.dumps({"intent": "teaching", "confidence": 0.5}),
     ) as mock_chat:
         classify_intent(
-            utterance="latest", history=long_history, concept=concept,
+            utterance="latest",
+            history=long_history,
+            concept=concept,
         )
         # Inspect the user-message payload — should contain at most the
         # last _HISTORY_TAIL_LEN turns.
@@ -201,9 +226,17 @@ def test_classify_history_tail_is_passed(concept):
 
 # ---- confirmation_prompt_for --------------------------------------------
 
-@pytest.mark.parametrize("intent", [
-    "done", "restart", "next", "return_to_hoot", "help",
-])
+
+@pytest.mark.parametrize(
+    "intent",
+    [
+        "done",
+        "restart",
+        "next",
+        "return_to_hoot",
+        "help",
+    ],
+)
 def test_confirmation_prompt_exists_for_all_gated_intents(intent):
     prompt = confirmation_prompt_for(intent)
     assert prompt
@@ -214,3 +247,61 @@ def test_confirmation_prompt_exists_for_all_gated_intents(intent):
 @pytest.mark.parametrize("intent", ["teaching", "off_topic"])
 def test_confirmation_prompt_is_empty_for_fallthrough_intents(intent):
     assert confirmation_prompt_for(intent) == ""
+
+
+# ---- INTERACTION4 classifier dormancy -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("interaction4", "allowlist"),
+    [
+        (None, None),
+        ("1", None),
+        ("1", "network_effects, BERNOULLI_PRINCIPLE"),
+        ("1", "network_effects"),
+    ],
+)
+def test_classifier_prompt_never_contains_reference_question(
+    monkeypatch, concept, interaction4, allowlist
+):
+    if interaction4 is None:
+        monkeypatch.delenv("INTERACTION4", raising=False)
+    else:
+        monkeypatch.setenv("INTERACTION4", interaction4)
+    if allowlist is None:
+        monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    else:
+        monkeypatch.setenv("INTERACTION_CONCEPTS", allowlist)
+
+    with _patch_classifier(intent="teaching", confidence=0.9) as mock_chat:
+        classify_intent(
+            utterance="wait, what IS Bernoulli's principle?",
+            history=[],
+            concept=concept,
+        )
+
+    prompt = mock_chat.call_args.kwargs["messages"][0]["content"]
+    assert prompt == _CLASSIFIER_PROMPT
+    assert "reference_question" not in prompt
+
+
+def test_classify_intent_reference_question_is_unknown_label(concept):
+    with _patch_classifier(intent="reference_question", confidence=0.95):
+        verdict = classify_intent(
+            utterance="wait, what IS Bernoulli's principle?",
+            history=[],
+            concept=concept,
+        )
+    assert verdict.intent == "teaching"
+
+
+def test_classify_intent_ambiguous_defaults_to_teaching_with_flag_on(monkeypatch, concept):
+    """INTERACTION4 does not alter the ambiguous-case fallback."""
+    monkeypatch.setenv("INTERACTION4", "1")
+    with _patch_classifier(intent="teaching", confidence=0.3):
+        v = classify_intent(
+            utterance="hmm, not sure what to say",
+            history=[],
+            concept=concept,
+        )
+    assert v.intent == "teaching"

@@ -1,0 +1,11 @@
+{
+  "name": "hoot-ai-ta-backend-db-tooling",
+  "private": true,
+  "scripts": {
+    "db:drift": "node scripts/db/check-migration-drift.mjs",
+    "db:reset": "node scripts/db/reset-local.mjs"
+  },
+  "devDependencies": {
+    "supabase": "2.109.0"
+  }
+}

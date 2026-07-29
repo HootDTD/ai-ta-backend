@@ -6,10 +6,10 @@ count anywhere in the pipeline. ``MeteredChat`` re-invokes the OpenAI client
 ITSELF (it does NOT import or call ``_llm`` — that would couple every existing
 caller and still discard usage), captures ``response.usage.prompt_tokens`` /
 ``completion_tokens``, accumulates ``llm_calls`` / ``llm_tokens_in`` /
-``llm_tokens_out`` / ``llm_cost_usd`` onto the passed ``apollo_ingest_runs`` row,
+``llm_tokens_out`` / ``llm_cost_usd`` onto the passed content-ingest row,
 and after each call compares the running cumulative (in+out) token total against
 ``PER_DOCUMENT_TOKEN_CEILING``; on breach it raises ``CostBudgetExceeded`` — the
-abort signal the orchestrator (WU-3B2g) turns into an ``apollo_ingest_errors``
+abort signal the orchestrator turns into a content-ingest error
 row + a failed run.
 
 The ingest_run row is MUTATED IN PLACE via SQLAlchemy attribute assignment: the
@@ -18,8 +18,8 @@ row is the durable per-document aggregate, so this is the INTENDED ORM write
 The pure value object here (``CostBudgetExceeded``) carries only counts/ids.
 
 Model routing mirrors ``_llm`` EXACTLY (``APOLLO_CHEAP_MODEL`` default
-``gpt-4o-mini`` / ``MAIN_MODEL`` default ``gpt-4o``; an explicit ``model=`` arg
-overrides). ``cheap`` / ``main`` accept the SAME keyword shape as
+``gpt-4o-mini`` / main tier pinned to ``config.models.MAIN_MODEL``; an explicit
+``model=`` arg overrides). ``cheap`` / ``main`` accept the SAME keyword shape as
 ``_llm.cheap_chat`` / ``main_chat`` so a stage written against the injected
 ``chat_fn`` can be handed ``metered.cheap`` / ``metered.main`` unchanged;
 ``scrape_chat_fn`` covers the one positional-string seam (``scrape.py:141``).
@@ -41,11 +41,11 @@ from apollo.provisioning.cost_constants import (
     PER_DOCUMENT_TOKEN_CEILING,
     cost_usd_for,
 )
+from config import models
 
 _LOG = logging.getLogger(__name__)
 
 _CHEAP_MODEL_DEFAULT = "gpt-4o-mini"
-_MAIN_MODEL_DEFAULT = "gpt-4o"
 
 
 class CostBudgetExceeded(Exception):
@@ -79,7 +79,7 @@ def _make_default_client():  # pragma: no cover - exercised only when no client 
 
 class MeteredChat:
     """Wraps the OpenAI client to capture ``response.usage`` and accumulate
-    token/cost onto a passed ``apollo_ingest_runs`` row, raising
+    token/cost onto a passed content-ingest row, raising
     ``CostBudgetExceeded`` at the per-document ceiling."""
 
     def __init__(
@@ -127,8 +127,8 @@ class MeteredChat:
         model: str | None = None,
         reasoning_effort: str | None = None,
     ) -> str:
-        """Main-tier (gpt-4o default) metered call. main_chat-shaped."""
-        used_model = model or _resolve_model("MAIN_MODEL", _MAIN_MODEL_DEFAULT)
+        """Main-tier (config.models.MAIN_MODEL) metered call. main_chat-shaped."""
+        used_model = model or models.MAIN_MODEL
         return self._call(
             purpose=purpose,
             model=used_model,

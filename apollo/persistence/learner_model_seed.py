@@ -11,7 +11,10 @@ source files into migration-026 Layer-1 row specs:
   * each ``problem_*.json``     -> reference-derived entities (equations,
                                    conditions, simplifications, procedure steps)
                                    + an entity-link + declared-path annotation
-  * ``misconceptions.json``     -> ``misc.*`` entities carrying an opposes-link
+  * ``misconceptions.json``     -> ``misc.*`` EntitySpecs carrying an opposes-
+                                   link (DB-13: observability-only — NEVER
+                                   persisted as ``app.learner_entities`` rows,
+                                   the DDL's kind CHECK has no 'misconception')
   * ``_AUTHORED_DEFINITIONS``   -> the single ``def.pressure_velocity_tradeoff``
                                    a misconception opposes (§6.9). This is the
                                    bernoulli-specific case; generalized concepts
@@ -281,7 +284,13 @@ def reference_solution_to_entities(problem: dict) -> list[EntitySpec]:
 def misconceptions_to_entities(misc: dict) -> list[EntitySpec]:
     """One ``misc.<...>`` EntitySpec per misconceptions.json entry, kind
     'misconception', payload carrying ``opposes_entity_key`` (D3), trigger
-    phrases as aliases (§5 — misconceptions compete in every resolution)."""
+    phrases as aliases (§5 — misconceptions compete in every resolution).
+
+    DB-13: the app-schema DDL's ``learner_entities__kind__check`` has NO
+    'misconception' kind (misconceptions are excluded from the Postgres Layer-1
+    skill inventory entirely) — a caller must NEVER pass this function's output
+    to an entity upsert. The specs remain useful as pure, DB-free observability
+    (e.g. ``MintPlan.misconception_keys``)."""
     specs: list[EntitySpec] = []
     for entry in misc.get("misconceptions", []):
         specs.append(

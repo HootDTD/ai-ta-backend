@@ -17,6 +17,7 @@ Two-stage routing:
 Soft-fails CLOSED: classifier exception => intent="teaching" with low
 confidence. Better to let Apollo respond than to hijack the turn.
 """
+
 from __future__ import annotations
 
 import json
@@ -41,7 +42,13 @@ Intent = Literal[
 ]
 
 ALL_INTENTS: Final[tuple[Intent, ...]] = (
-    "teaching", "done", "restart", "next", "return_to_hoot", "help", "off_topic",
+    "teaching",
+    "done",
+    "restart",
+    "next",
+    "return_to_hoot",
+    "help",
+    "off_topic",
 )
 
 # Threshold above which a non-teaching intent triggers the confirmation

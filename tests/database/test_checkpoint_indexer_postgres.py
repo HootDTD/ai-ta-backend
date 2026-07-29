@@ -5,7 +5,7 @@ import contextlib
 import pytest
 from sqlalchemy import func, select
 
-from database.models import AITAChunk, AITADocument, SearchSpace
+from database.models import DocumentChunk, Document, Course
 from indexing import checkpoint_indexer as ci
 from tests.fakes.embeddings import fake_embedding
 
@@ -28,16 +28,16 @@ def _fake_embed(texts):
     return [fake_embedding(t) for t in texts]
 
 
-async def _make_document(db_session) -> AITADocument:
-    space = SearchSpace(name="Fluids", slug="fluids-ckpt", subject_name="ME")
+async def _make_document(db_session) -> Document:
+    space = Course(name="Fluids", slug="fluids-ckpt", subject_name="ME")
     db_session.add(space)
     await db_session.flush()
-    doc = AITADocument(
+    doc = Document(
         title="Textbook",
         content="Pending...",
         content_hash="ckpt-hash",
         unique_identifier_hash="ckpt-uid",
-        search_space_id=space.id,
+        course_id=space.id,
     )
     db_session.add(doc)
     await db_session.commit()
@@ -56,7 +56,7 @@ def _session_factory(db_session):
 
 async def _count_chunks(db_session, doc_id) -> int:
     res = await db_session.execute(
-        select(func.count()).select_from(AITAChunk).where(AITAChunk.document_id == doc_id)
+        select(func.count()).select_from(DocumentChunk).where(DocumentChunk.document_id == doc_id)
     )
     return int(res.scalar_one())
 
@@ -185,7 +185,7 @@ async def test_finalize_document_sets_ready_and_writes_null_page_chunks(db_sessi
         )
         await s.commit()
 
-    refreshed = await db_session.get(AITADocument, doc.id)
+    refreshed = await db_session.get(Document, doc.id)
     await db_session.refresh(refreshed)
     assert DocumentStatus.is_state(refreshed.status, DocumentStatus.READY)
     assert refreshed.page_count == 2

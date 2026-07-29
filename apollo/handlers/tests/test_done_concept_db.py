@@ -17,13 +17,14 @@ from apollo.conftest import TEST_USER_ID
 from apollo.handlers.done import _find_problem, handle_done
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
-    ApolloSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
+    problem_database_id,
     seed_course,
 )
 
@@ -43,17 +44,26 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         problems=_INTRO,
     )
     current_code = codes[0]
-    sess = ApolloSession(
+    current_problem_id = await problem_database_id(
+        db_session, concept_id=cid, problem_code=current_code
+    )
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=sid,
         concept_id=cid,
         status=SessionStatus.active.value,
         phase=SessionPhase.SOLVING.value,
-        current_problem_id=current_code,
+        current_problem_id=current_problem_id,
     )
     db_session.add(sess)
     await db_session.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id=current_code, difficulty="intro")
+    attempt = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=current_problem_id,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db_session.add(attempt)
     await db_session.flush()
 
@@ -71,15 +81,24 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
 
     captured = {}
 
-    async def _coverage(student, reference):
-        captured["reference_nodes"] = list(reference.nodes)
-        return {}
+    async def _coverage(
+        *, transcript, reference_graph, problem, course_evidence=None, hoot_asides=()
+    ):
+        captured["reference_nodes"] = list(reference_graph.nodes)
+        return {}, {}
 
     with (
         patch("apollo.handlers.done.KGStore.read_graph", new=AsyncMock(return_value=KGGraph())),
         patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
-        patch("apollo.handlers.done.compute_coverage", new=AsyncMock(side_effect=_coverage)),
+        patch(
+            "apollo.handlers.done.compute_transcript_coverage_with_spans",
+            new=AsyncMock(side_effect=_coverage),
+        ),
+        patch("apollo.handlers.done.write_artifacts", new=AsyncMock(return_value=None)),
+        # Neutralize topic serving so the mocked legacy rubric is what's served
+        # (this test isolates the DB problem -> reference-graph resolution).
+        patch("apollo.handlers.done.compute_topic_score", new=MagicMock(return_value=None)),
         patch("apollo.handlers.done._attempt_misconception_scores", new=AsyncMock(return_value={})),
         patch("apollo.handlers.done.compute_rubric", return_value={"overall": {"score": 0.5}}),
         patch("apollo.handlers.done.generate_diagnostic", return_value="narrative"),
@@ -94,7 +113,7 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         out = await handle_done(db=db_session, neo=MagicMock(), session_id=sess.id)
 
     assert out["rubric"] == {"overall": {"score": 0.5}}
-    # The reference graph passed to coverage came from the DB problem payload.
+    # The reference graph passed to the grader came from the DB problem payload.
     assert captured["reference_nodes"]
 
 
@@ -108,4 +127,4 @@ async def test_done_find_problem_raises_when_code_absent(db_session):
         problems=_INTRO,
     )
     with pytest.raises(RuntimeError):
-        await _find_problem(db_session, cid, "nonexistent_problem_code")
+        await _find_problem(db_session, cid, "nonexistent_problem_code", course_id=sid)

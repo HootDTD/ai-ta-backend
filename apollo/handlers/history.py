@@ -3,7 +3,7 @@
 Replaces the V2 "load every message every turn" pattern. Two changes:
 - Last `RAW_WINDOW_TURNS` turns are passed to the model verbatim.
 - Older turns are condensed into a rolling `history_summary` stored on
-  ApolloSession. The summary is refreshed when the unwindowed tail has
+  TutoringSession. The summary is refreshed when the unwindowed tail has
   grown by `REFRESH_EVERY_K_TURNS` since the last refresh, so each turn
   doesn't pay for a fresh summarization.
 
@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.agent._llm import cheap_chat
-from apollo.persistence.models import ApolloSession, Message
+from apollo.persistence.models import TutoringSession, TutoringMessage
 
 _LOG = logging.getLogger(__name__)
 
@@ -45,17 +45,17 @@ student has not named. Return ONLY a JSON object: {"summary": "..."}.
 
 async def _all_messages(
     db: AsyncSession, session_id: int, attempt_id: int | None,
-) -> list[Message]:
+) -> list[TutoringMessage]:
     result = await db.execute(
-        select(Message)
-        .where(Message.session_id == session_id)
-        .where(Message.attempt_id == attempt_id)
-        .order_by(Message.turn_index)
+        select(TutoringMessage)
+        .where(TutoringMessage.session_id == session_id)
+        .where(TutoringMessage.attempt_id == attempt_id)
+        .order_by(TutoringMessage.turn_index)
     )
     return list(result.scalars().all())
 
 
-def _format_for_llm(messages: list[Message]) -> list[dict[str, str]]:
+def _format_for_llm(messages: list[TutoringMessage]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for m in messages:
         role = "user" if m.role == "student" else "assistant"
@@ -63,7 +63,7 @@ def _format_for_llm(messages: list[Message]) -> list[dict[str, str]]:
     return out
 
 
-def _summarize(turns: list[Message]) -> str | None:
+def _summarize(turns: list[TutoringMessage]) -> str | None:
     """Generate a rolling summary. Soft-fails to None on any error."""
     if not turns:
         return None
@@ -97,7 +97,7 @@ def _summarize(turns: list[Message]) -> str | None:
 async def load_windowed_history(
     *,
     db: AsyncSession,
-    session: ApolloSession,
+    session: TutoringSession,
     attempt_id: int | None,
 ) -> tuple[str | None, list[dict[str, str]]]:
     """Return `(summary_or_none, raw_window)` for one attempt only.

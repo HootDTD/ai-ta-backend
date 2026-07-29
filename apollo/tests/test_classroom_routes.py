@@ -21,7 +21,7 @@ import pytest
 from fastapi import HTTPException
 
 import apollo.api as apollo_api
-from apollo.persistence.models import KGEntity, LearnerState
+from apollo.persistence.models import LearnerEntity, LearnerState
 from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
 from auth import AuthContext
 
@@ -68,7 +68,9 @@ async def test_heatmap_route_requires_teacher(db_session, monkeypatch):
 
 async def test_heatmap_route_returns_rows(db_session, monkeypatch):
     sid, cid = await _seed_scope(db_session)
-    entity = KGEntity(concept_id=cid, canonical_key="eq.a", kind="equation", display_name="eq.a")
+    entity = LearnerEntity(
+        course_id=sid, concept_id=cid, canonical_key="eq.a", kind="equation", display_name="eq.a"
+    )
     db_session.add(entity)
     await db_session.flush()
     db_session.add(

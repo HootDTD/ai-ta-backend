@@ -70,3 +70,48 @@ def test_validator_rejects_negotiation_counts_negative_or_bool_value(bad_value):
 def test_validate_score_map_directly_rejects_non_dict():
     with pytest.raises(ValueError, match="procedure_scores must be a dict"):
         _validate_score_map(["not", "a", "dict"], key="procedure_scores")
+
+
+# --------------------------------------------------------------------------- #
+# INTERACTION5 — optional additive ``hoot_assisted`` per-node flag map
+# --------------------------------------------------------------------------- #
+def test_validator_accepts_optional_hoot_assisted_map():
+    value = _valid()
+    value["hoot_assisted"] = {"n": True}
+    validate_coverage_verdict(value)
+
+
+def test_validator_still_accepts_verdict_without_hoot_assisted():
+    """The key is optional: the pre-feature 4-key verdict is still valid."""
+    validate_coverage_verdict(_valid())
+
+
+def test_validator_rejects_hoot_assisted_not_a_dict():
+    value = _valid()
+    value["hoot_assisted"] = ["n"]
+    with pytest.raises(ValueError, match="hoot_assisted must be a dict"):
+        validate_coverage_verdict(value)
+
+
+@pytest.mark.parametrize("bad_map", [{"n": 1}, {"n": "true"}, {123: True}])
+def test_validator_rejects_hoot_assisted_non_bool_or_non_str_key(bad_map):
+    """A stray int/str value or non-string key is rejected — only genuine
+    booleans keyed by string node ids are allowed (bool is not coerced)."""
+    value = _valid()
+    value["hoot_assisted"] = bad_map
+    with pytest.raises(ValueError, match="hoot_assisted must map string node ids to booleans"):
+        validate_coverage_verdict(value)
+
+
+def test_validator_rejects_non_dict_value():
+    with pytest.raises(ValueError, match="coverage keys must be exactly"):
+        validate_coverage_verdict(["not", "a", "dict"])
+
+
+def test_validator_rejects_unknown_extra_key():
+    """``hoot_assisted`` is the ONLY permitted optional key; anything else is a
+    contract violation."""
+    value = _valid()
+    value["surprise"] = {"n": True}
+    with pytest.raises(ValueError, match="coverage keys must be exactly"):
+        validate_coverage_verdict(value)

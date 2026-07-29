@@ -2,14 +2,15 @@
 ``apollo.projections.mastery.update_mastery_from_artifact``.
 
 Builds a real ``apollo_kg_entities`` row under a seeded course/concept, a
-``GradingArtifact`` row referencing it by ``canonical_key`` in its
-``node_ledger`` (constructed directly rather than through ``write_artifacts``
-— this module tests the PROJECTION, not the artifact writer), and asserts the
-appended ``MasteryEvent`` + upserted ``LearnerState`` rows.
+``GradingRun`` row referencing it by ``canonical_key`` in its ``node_ledger``
+(constructed directly rather than through ``write_artifacts`` — this module
+tests the PROJECTION, not the artifact writer), and asserts the appended
+``MasteryEvent`` + upserted ``LearnerState`` rows.
 
-Mirrors ``apollo/handlers/tests/test_artifact_writer.py``'s harness (real
-pgvector ``db_session``, ``seed_search_space``/``seed_concept`` curriculum
-helpers)."""
+``GradingRun`` (DB-14/A7 artifacts-only merge onto ``internal.grading_runs``)
+has a NOT NULL FK ``problem_id -> app.problems.id`` (ON DELETE RESTRICT), so
+every seeded attempt here also seeds a real problem row via the shared
+curriculum fixtures rather than a bare literal id."""
 
 from __future__ import annotations
 
@@ -19,17 +20,23 @@ import pytest
 from sqlalchemy import select
 
 from apollo.persistence.models import (
-    ApolloSession,
-    GradingArtifact,
-    KGEntity,
+    GradingRun,
+    LearnerEntity,
     LearnerState,
     MasteryEvent,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.projections.mastery import EVENT_KIND, update_mastery_from_artifact
-from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
+from apollo.subjects.tests._curriculum_fixtures import (
+    minimal_problem_payload,
+    problem_database_id,
+    seed_concept,
+    seed_problems,
+    seed_search_space,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -47,34 +54,11 @@ async def _seed_scope(db) -> tuple[int, int]:
     return sid, cid
 
 
-async def _seed_attempt(db, *, search_space_id: int, concept_id: int | None) -> int:
-    """A real ``apollo_problem_attempts`` row — ``GradingArtifact.attempt_id``
-    is a NOT NULL FK, so a bare literal id (as the pure/mocked artifact_writer
-    tests use) is not enough here."""
-    sess = ApolloSession(
-        user_id=_USER_ID,
-        search_space_id=search_space_id,
-        concept_id=concept_id,
-        # "ended" (not "active"): the partial-unique-index
-        # ix_apollo_sessions_unique_active_per_user allows only one ACTIVE
-        # session per user, and several tests in this module seed more than
-        # one session for the same _USER_ID.
-        status=SessionStatus.ended.value,
-        phase=SessionPhase.REPORT.value,
-        current_problem_id="p1",
-    )
-    db.add(sess)
-    await db.flush()
-    attempt = ProblemAttempt(
-        session_id=sess.id, problem_id="p1", difficulty="intro", result="graded"
-    )
-    db.add(attempt)
-    await db.flush()
-    return int(attempt.id)
-
-
-async def _seed_entity(db, *, concept_id: int, canonical_key: str, kind: str = "equation") -> int:
-    entity = KGEntity(
+async def _seed_entity(
+    db, *, course_id: int, concept_id: int, canonical_key: str, kind: str = "equation"
+) -> int:
+    entity = LearnerEntity(
+        course_id=course_id,
         concept_id=concept_id,
         canonical_key=canonical_key,
         kind=kind,
@@ -85,9 +69,58 @@ async def _seed_entity(db, *, concept_id: int, canonical_key: str, kind: str = "
     return int(entity.id)
 
 
+async def _seed_problem(db, *, search_space_id: int) -> int:
+    """A real ``app.problems`` row under a throwaway concept, decoupled from
+    the attempt's own session concept (which some tests deliberately leave
+    ``None``) -- only ``GradingRun.problem_id``'s FK cares that it exists."""
+    problem_concept_id = await seed_concept(
+        db,
+        search_space_id=search_space_id,
+        subject_slug=f"subj-{uuid.uuid4().hex[:8]}",
+        concept_slug=f"pconcept-{uuid.uuid4().hex[:8]}",
+    )
+    code = f"p-{uuid.uuid4().hex[:8]}"
+    await seed_problems(db, concept_id=problem_concept_id, payloads=[minimal_problem_payload(code=code)])
+    return await problem_database_id(db, concept_id=problem_concept_id, problem_code=code)
+
+
+async def _seed_attempt(db, *, search_space_id: int, concept_id: int | None) -> tuple[int, int]:
+    """A real ``app.problem_attempts`` row plus a real ``app.problems`` row —
+    ``GradingRun.attempt_id``/``problem_id`` are both NOT NULL FKs, so a bare
+    literal id (as the pure/mocked artifact_writer tests use) is not enough
+    here. Returns ``(attempt_id, problem_id)``."""
+    problem_id = await _seed_problem(db, search_space_id=search_space_id)
+    sess = TutoringSession(
+        user_id=_USER_ID,
+        search_space_id=search_space_id,
+        concept_id=concept_id,
+        # "ended" (not "active"): the partial-unique-index
+        # learning_activities__active_tutoring_user_course__uidx allows one ACTIVE
+        # session per user, and several tests in this module seed more than
+        # one session for the same _USER_ID.
+        status=SessionStatus.ended.value,
+        phase=SessionPhase.REPORT.value,
+        current_problem_id=1,
+    )
+    db.add(sess)
+    await db.flush()
+    attempt = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=problem_id,
+        difficulty="intro",
+        result="graded",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
+    db.add(attempt)
+    await db.flush()
+    return int(attempt.id), problem_id
+
+
 def _artifact_row(
     *,
     attempt_id: int,
+    problem_id: int,
     user_id: str,
     search_space_id: int,
     concept_id: int | None,
@@ -95,22 +128,24 @@ def _artifact_row(
     node_ledger: list[dict],
     normalization_confidence: float | None = 0.8,
     role: str = "canonical",
-) -> GradingArtifact:
-    return GradingArtifact(
+) -> GradingRun:
+    return GradingRun(
         attempt_id=attempt_id,
         role=role,
         grader_used="graph",
+        grader_version="v1",
         user_id=user_id,
         search_space_id=search_space_id,
         concept_id=concept_id,
-        problem_id="p1",
-        versions={"grader": "v1"},
+        problem_id=problem_id,
+        version_details={"grader": "v1"},
         node_ledger=node_ledger,
         edge_ledger=[],
-        misconceptions=[],
-        clarification_trace=[],
-        scores={"composite": composite},
-        abstention={"normalization_confidence": normalization_confidence},
+        score_details={"composite": composite},
+        composite_score=composite,
+        abstained=False,
+        abstention_details={"normalization_confidence": normalization_confidence},
+        grader_payload={"misconceptions": [], "clarification_trace": []},
         grading_latency_ms=None,
     )
 
@@ -130,10 +165,13 @@ def _ledger(*keys_and_status: tuple[str, str]) -> list[dict]:
 
 async def test_cold_start_mastery_equals_composite(db_session):
     sid, cid = await _seed_scope(db_session)
-    entity_id = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
-    attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
+    entity_id = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli"
+    )
+    attempt_id, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     artifact = _artifact_row(
         attempt_id=attempt_id,
+        problem_id=problem_id,
         user_id=_USER_ID,
         search_space_id=sid,
         concept_id=cid,
@@ -174,11 +212,16 @@ async def test_cold_start_mastery_equals_composite(db_session):
 async def test_second_attempt_moves_mastery_toward_new_composite(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_MASTERY_EWMA_ALPHA", "0.5")
     sid, cid = await _seed_scope(db_session)
-    entity_id = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
+    entity_id = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli"
+    )
 
-    attempt_id_1 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
+    attempt_id_1, problem_id_1 = await _seed_attempt(
+        db_session, search_space_id=sid, concept_id=cid
+    )
     first = _artifact_row(
         attempt_id=attempt_id_1,
+        problem_id=problem_id_1,
         user_id=_USER_ID,
         search_space_id=sid,
         concept_id=cid,
@@ -190,9 +233,12 @@ async def test_second_attempt_moves_mastery_toward_new_composite(db_session, mon
     await update_mastery_from_artifact(db_session, artifact_row=first)
     await db_session.commit()
 
-    attempt_id_2 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
+    attempt_id_2, problem_id_2 = await _seed_attempt(
+        db_session, search_space_id=sid, concept_id=cid
+    )
     second = _artifact_row(
         attempt_id=attempt_id_2,
+        problem_id=problem_id_2,
         user_id=_USER_ID,
         search_space_id=sid,
         concept_id=cid,
@@ -226,10 +272,13 @@ async def test_second_attempt_moves_mastery_toward_new_composite(db_session, mon
 
 async def test_retry_of_same_attempt_is_idempotent(db_session):
     sid, cid = await _seed_scope(db_session)
-    entity_id = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
-    attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
+    entity_id = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli"
+    )
+    attempt_id, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     artifact = _artifact_row(
         attempt_id=attempt_id,
+        problem_id=problem_id,
         user_id=_USER_ID,
         search_space_id=sid,
         concept_id=cid,
@@ -271,9 +320,10 @@ async def test_retry_of_same_attempt_is_idempotent(db_session):
 
 async def test_unresolved_ledger_rows_and_unmapped_keys_are_skipped(db_session):
     sid, cid = await _seed_scope(db_session)
-    attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
+    attempt_id, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     artifact = _artifact_row(
         attempt_id=attempt_id,
+        problem_id=problem_id,
         user_id=_USER_ID,
         search_space_id=sid,
         concept_id=cid,
@@ -295,9 +345,10 @@ async def test_unresolved_ledger_rows_and_unmapped_keys_are_skipped(db_session):
 
 async def test_no_op_when_concept_id_is_none(db_session):
     sid, _cid = await _seed_scope(db_session)
-    attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=None)
+    attempt_id, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=None)
     artifact = _artifact_row(
         attempt_id=attempt_id,
+        problem_id=problem_id,
         user_id=_USER_ID,
         search_space_id=sid,
         concept_id=None,
@@ -316,9 +367,10 @@ async def test_no_op_when_concept_id_is_none(db_session):
 
 async def test_no_op_when_ledger_has_no_credited_or_misconception_rows(db_session):
     sid, cid = await _seed_scope(db_session)
-    attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
+    attempt_id, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     artifact = _artifact_row(
         attempt_id=attempt_id,
+        problem_id=problem_id,
         user_id=_USER_ID,
         search_space_id=sid,
         concept_id=cid,
@@ -336,13 +388,21 @@ async def test_no_op_when_ledger_has_no_credited_or_misconception_rows(db_sessio
 
 
 async def test_misconception_key_projects_like_credited(db_session):
+    """The subject under test is the ledger row's ``status="misconception"``
+    (an open JSON value on ``node_ledger``, unrelated to the entity's SQL-CHECK'd
+    ``kind`` column) resolving and projecting like a credited row —
+    ``_entity_id_lookups`` only ever keys on ``canonical_key``. DB-13 dropped
+    ``kind='misconception'`` from ``learner_entities__kind__check``, so the seeded
+    entity here uses a surviving kind ("equation"); the misconception-ness lives
+    entirely in the ledger status, not the entity kind."""
     sid, cid = await _seed_scope(db_session)
     entity_id = await _seed_entity(
-        db_session, concept_id=cid, canonical_key="misc.reversal", kind="misconception"
+        db_session, course_id=sid, concept_id=cid, canonical_key="misc.reversal", kind="equation"
     )
-    attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
+    attempt_id, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     artifact = _artifact_row(
         attempt_id=attempt_id,
+        problem_id=problem_id,
         user_id=_USER_ID,
         search_space_id=sid,
         concept_id=cid,

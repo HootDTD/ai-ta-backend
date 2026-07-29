@@ -22,6 +22,7 @@ DISCRIMINATING by design (independent-mutation discipline):
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -33,9 +34,7 @@ from apollo.persistence.learner_model_seed import (
 from apollo.persistence.models import (
     Concept,
     EntityPrereq,
-    KGEntity,
-    Misconception,
-    Subject,
+    LearnerEntity,
 )
 from apollo.provisioning import run_promotion_lint
 from apollo.provisioning.tag_mint import (
@@ -44,7 +43,7 @@ from apollo.provisioning.tag_mint import (
     TagMintError,
     tag_and_mint,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 # pytest.ini sets asyncio_mode = auto, so async tests need no mark and the pure
 # tests stay sync.
@@ -180,15 +179,13 @@ def _approved_pair(
 
 
 async def _seed_course(db, *, slug: str):
-    """Seed SearchSpace -> Subject for one course. Returns (search_space_id,
+    """Seed Course -> Subject for one course. Returns (search_space_id,
     subject_id). The concept is resolved/created by tag_and_mint itself."""
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
-    return space.id, subj.id
+    subj = SimpleNamespace(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
+    return space.id, subj
 
 
 # --------------------------------------------------------------------------- #
@@ -302,8 +299,8 @@ async def test_tag_and_mint_authors_canonical_symbols(db_session):
     assert concept.canonical_symbols  # non-empty dict
     # Stored in the CanonicalSymbols shape ({"symbols": [...]}), NOT a flat
     # {symbol: True} map — the runtime reader requires the list form.
-    assert isinstance(concept.canonical_symbols.get("symbols"), list)
-    assert concept.canonical_symbols["symbols"]  # non-empty symbol list
+    assert isinstance(concept.canonical_symbols, list)
+    assert concept.canonical_symbols  # non-empty symbol list
     assert concept.normalization_map  # non-empty (P1/P2 → P)
 
 
@@ -328,7 +325,9 @@ async def test_authored_canonical_symbols_round_trip_through_reader(db_session):
     )
 
     # The real teaching-session reader must accept the authored columns.
-    definition = await load_concept_definition(db_session, concept_id=plan.concept_id)
+    definition = await load_concept_definition(
+        db_session, concept_id=plan.concept_id, search_space_id=ss_id
+    )
     assert definition.canonical_symbols.symbols  # list[str], non-empty
     # the authored symbols survive the round-trip (base symbols P/v/rho present).
     for sym in plan.authored_symbols:
@@ -352,7 +351,7 @@ async def test_author_symbols_first_writer_wins_union(db_session):
     ).scalar_one()
     # canonical_symbols is the CanonicalSymbols shape ({"symbols": [...]}); the
     # union operates over that LIST, not over dict keys.
-    first_symbols = list(concept.canonical_symbols["symbols"])
+    first_symbols = list(concept.canonical_symbols)
 
     # second problem: introduces a NEW symbol Q (different given/target).
     problem2 = _problem_dict(
@@ -369,7 +368,7 @@ async def test_author_symbols_first_writer_wins_union(db_session):
         embed_fn=_embed_distinct,
     )
     await db_session.refresh(concept)
-    union_symbols = list(concept.canonical_symbols["symbols"])
+    union_symbols = list(concept.canonical_symbols)
     # the first writer's symbols all survive (never rewritten)...
     for sym in first_symbols:
         assert sym in union_symbols
@@ -398,7 +397,7 @@ async def test_tag_and_mint_mints_reference_entities(db_session):
     assert "eq.bernoulli" in plan.minted_entity_ids
     assert "proc.solve_p2" in plan.minted_entity_ids
     rows = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.concept_id == plan.concept_id)))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.concept_id == plan.concept_id)))
         .scalars()
         .all()
     )
@@ -409,10 +408,11 @@ async def test_tag_and_mint_mints_reference_entities(db_session):
     assert by_key["eq.bernoulli"].scope_summary
 
 
-async def test_minted_misconception_is_kg_entity(db_session):
-    """THE DEVIATION. An apollo_kg_entities row with kind='misconception' and
-    payload['opposes_entity_key'] exists (via misconceptions_to_entities); NO
-    write to apollo_misconceptions."""
+async def test_minted_misconception_is_observability_only_not_persisted(db_session):
+    """DB-13: the app-schema ``learner_entities__kind__check`` dropped
+    'misconception', so a misconception is surfaced ONLY via
+    ``MintPlan.misconception_keys`` (observability) — it is NEVER written as a
+    ``LearnerEntity`` row (no write to ``apollo_misconceptions`` either)."""
     ss_id, _subj = await _seed_course(db_session, slug="c-misc")
     misc = [
         {
@@ -434,23 +434,16 @@ async def test_minted_misconception_is_kg_entity(db_session):
     rows = (
         (
             await db_session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == plan.concept_id)
-                .where(KGEntity.kind == "misconception")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == plan.concept_id)
+                .where(LearnerEntity.kind == "misconception")
             )
         )
         .scalars()
         .all()
     )
-    assert len(rows) == 1
-    payload = rows[0].payload
-    assert payload["opposes_entity_key"] == "eq.bernoulli"
-    # the second-pass link resolved opposes_entity_key → opposes_entity_id.
-    assert "opposes_entity_id" in payload
+    assert rows == []  # no LearnerEntity row ever minted for the misconception
 
-    # NO write to apollo_misconceptions (the DEVIATION — entities ONLY).
-    misc_rows = (await db_session.execute(select(Misconception))).scalars().all()
-    assert misc_rows == []
 
 
 async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):
@@ -460,10 +453,11 @@ async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):
     ss_id, subj_id = await _seed_course(db_session, slug="c-dedup")
     # Pre-seed a concept + an entity whose canonical_key EXACTLY matches one the
     # mint will produce (eq.bernoulli) so the slug tier merges it deterministically.
-    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
-    existing = KGEntity(
+    existing = LearnerEntity(
+        course_id=ss_id,
         concept_id=concept.id,
         canonical_key="eq.bernoulli",
         kind="equation",
@@ -489,9 +483,9 @@ async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):
     rows = (
         (
             await db_session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept.id)
-                .where(KGEntity.canonical_key == "eq.bernoulli")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept.id)
+                .where(LearnerEntity.canonical_key == "eq.bernoulli")
             )
         )
         .scalars()
@@ -850,10 +844,11 @@ async def test_insert_prereqs_rejects_persisted_cycle_at_writer_boundary(db_sess
     from apollo.provisioning.tag_mint_persist import insert_prereqs
 
     _ss_id, subj_id = await _seed_course(db_session, slug="c-writercycle")
-    concept = Concept(subject_id=subj_id, slug="writer-cycle", display_name="WC")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="writer-cycle", display_name="WC")
     db_session.add(concept)
     await db_session.flush()
-    ea = KGEntity(
+    ea = LearnerEntity(
+        course_id=_ss_id,
         concept_id=concept.id,
         canonical_key="eq.a",
         kind="equation",
@@ -861,7 +856,8 @@ async def test_insert_prereqs_rejects_persisted_cycle_at_writer_boundary(db_sess
         payload={},
         aliases=[],
     )
-    eb = KGEntity(
+    eb = LearnerEntity(
+        course_id=_ss_id,
         concept_id=concept.id,
         canonical_key="eq.b",
         kind="equation",
@@ -875,14 +871,22 @@ async def test_insert_prereqs_rejects_persisted_cycle_at_writer_boundary(db_sess
 
     # Persist A->B directly (as if minted by an earlier call).
     inserted, _skipped, dropped = await insert_prereqs(
-        db_session, concept_id=int(concept.id), key_to_id=key_to_id, pairs=[("eq.a", "eq.b")]
+        db_session,
+        course_id=_ss_id,
+        concept_id=int(concept.id),
+        key_to_id=key_to_id,
+        pairs=[("eq.a", "eq.b")],
     )
     assert inserted == 1
     assert dropped == []
 
     # A second, direct call drafting the REVERSE must be refused.
     inserted2, _skipped2, dropped2 = await insert_prereqs(
-        db_session, concept_id=int(concept.id), key_to_id=key_to_id, pairs=[("eq.b", "eq.a")]
+        db_session,
+        course_id=_ss_id,
+        concept_id=int(concept.id),
+        key_to_id=key_to_id,
+        pairs=[("eq.b", "eq.a")],
     )
     assert inserted2 == 0
     assert ("eq.b", "eq.a") in dropped2
@@ -918,12 +922,13 @@ async def test_tag_and_mint_drops_self_loop_prereq(db_session):
     assert plan.prereq_pairs == []
 
 
-async def test_tag_and_mint_links_opposes_bare_id(db_session):
-    """REGRESSION (H1): link_opposes shares the BLOCKER's bare/prefixed key bug.
-    A misconception whose opposes names a reference node by BARE id (bernoulli)
-    must link to the minted entity (eq.bernoulli), not raise. DISCRIMINATING:
-    reverting the bare-id alias REDs with TagMintError ('misconception opposes an
-    unknown entity key')."""
+async def test_tag_and_mint_bare_id_opposes_does_not_raise(db_session):
+    """A misconception whose opposes names a reference node by BARE id
+    (bernoulli, not eq.bernoulli) must not raise TagMintError. Historically
+    (H1) this exercised link_opposes's bare/prefixed key resolution against a
+    persisted misconception row; DB-13 made misconception persistence a
+    permanent no-op (no LearnerEntity row is ever minted for it), so this is
+    now a smoke test that the bare-id draft mints cleanly regardless."""
     ss_id, _subj = await _seed_course(db_session, slug="c-bareopp")
     misc = [
         {
@@ -938,21 +943,19 @@ async def test_tag_and_mint_links_opposes_bare_id(db_session):
     plan = await tag_and_mint(
         db_session, pair, chat_fn=_chat_returning(_tag_payload()), embed_fn=_embed_distinct
     )
+    assert "misc.pressure_follows_speed" in plan.misconception_keys
     rows = (
         (
             await db_session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == plan.concept_id)
-                .where(KGEntity.kind == "misconception")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == plan.concept_id)
+                .where(LearnerEntity.kind == "misconception")
             )
         )
         .scalars()
         .all()
     )
-    assert len(rows) == 1
-    payload = rows[0].payload
-    assert payload["opposes_entity_key"] == "bernoulli"  # raw draft key preserved
-    assert payload["opposes_entity_id"] == plan.minted_entity_ids["eq.bernoulli"]
+    assert rows == []  # no LearnerEntity row ever minted for the misconception
 
 
 async def test_tag_and_mint_idempotent(db_session):
@@ -972,13 +975,13 @@ async def test_tag_and_mint_idempotent(db_session):
         return stmt
 
     rows1 = (
-        (await db_session.execute(_count(KGEntity, concept_id=plan1.concept_id))).scalars().all()
+        (await db_session.execute(_count(LearnerEntity, concept_id=plan1.concept_id))).scalars().all()
     )
     edges1 = (await db_session.execute(select(EntityPrereq))).scalars().all()
 
     plan2 = await tag_and_mint(db_session, pair, chat_fn=chat, embed_fn=_embed_distinct)
     rows2 = (
-        (await db_session.execute(_count(KGEntity, concept_id=plan2.concept_id))).scalars().all()
+        (await db_session.execute(_count(LearnerEntity, concept_id=plan2.concept_id))).scalars().all()
     )
     edges2 = (await db_session.execute(select(EntityPrereq))).scalars().all()
 
@@ -988,11 +991,14 @@ async def test_tag_and_mint_idempotent(db_session):
     assert plan2.authored_symbols == []  # nothing new to author (all unioned)
 
 
-async def test_tag_and_mint_drops_unlinkable_minted_misconception(db_session, caplog):
-    """THIS mint's misconception opposing a key that resolves to no entity is
-    DROPPED (entity row deleted, key pruned from the plan, event logged) and the
-    candidate keeps minting — the 2026-07-14 policy change (staging set 12:
-    'proc.proc_explain_causality' rejected 2/19 otherwise-valid problems)."""
+async def test_tag_and_mint_unresolvable_misconception_opposes_is_inert(db_session, caplog):
+    """A misconception opposing a key that resolves to no entity mints cleanly
+    and does not raise. Historically (2026-07-14 policy change, staging set 12)
+    this exercised drop_unlinkable_minted_misconceptions deleting THIS mint's
+    rogue row and logging a drop event; DB-13 made misconception persistence a
+    permanent no-op (nothing is ever minted for a misconception, so there is
+    nothing to drop) — the drop event never fires and the candidate still
+    mints, which is what this now proves."""
     import logging
 
     ss_id, _subj = await _seed_course(db_session, slug="c-fail")
@@ -1015,12 +1021,13 @@ async def test_tag_and_mint_drops_unlinkable_minted_misconception(db_session, ca
     )
 
     assert "misc.bad" not in plan.minted_entity_ids
+    assert "misc.bad" in plan.misconception_keys
     rogue = (
         (
             await db_session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == plan.concept_id)
-                .where(KGEntity.canonical_key == "misc.bad")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == plan.concept_id)
+                .where(LearnerEntity.canonical_key == "misc.bad")
             )
         )
         .scalars()
@@ -1032,8 +1039,7 @@ async def test_tag_and_mint_drops_unlinkable_minted_misconception(db_session, ca
         for r in caplog.records
         if getattr(r, "event", None) == "tag_mint_dropped_unlinkable_misconceptions"
     ]
-    assert len(events) == 1
-    assert events[0].dropped[0]["opposes_entity_key"] == "eq.does_not_exist"
+    assert events == []  # nothing was minted, so nothing was dropped
 
 
 async def test_preexisting_unlinkable_misconception_stays_fail_closed(db_session):
@@ -1050,7 +1056,8 @@ async def test_preexisting_unlinkable_misconception_stays_fail_closed(db_session
         embed_fn=_embed_distinct,
     )
     db_session.add(
-        KGEntity(
+        LearnerEntity(
+            course_id=ss_id,
             concept_id=plan.concept_id,
             canonical_key="misc.prior_rogue",
             kind="misconception",
@@ -1084,7 +1091,8 @@ async def test_preexisting_linked_misconception_is_skipped_not_fatal(db_session)
         embed_fn=_embed_distinct,
     )
     db_session.add(
-        KGEntity(
+        LearnerEntity(
+            course_id=ss_id,
             concept_id=plan.concept_id,
             canonical_key="emergent.proc.prior_linked",
             kind="misconception",
@@ -1109,9 +1117,9 @@ async def test_preexisting_linked_misconception_is_skipped_not_fatal(db_session)
     row = (
         (
             await db_session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == plan.concept_id)
-                .where(KGEntity.canonical_key == "emergent.proc.prior_linked")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == plan.concept_id)
+                .where(LearnerEntity.canonical_key == "emergent.proc.prior_linked")
             )
         )
         .scalars()
@@ -1240,11 +1248,12 @@ async def test_insert_prereqs_drops_cross_concept_endpoint(db_session):
     from apollo.provisioning.tag_mint_persist import insert_prereqs
 
     _ss_id, subj_id = await _seed_course(db_session, slug="c-xconcept")
-    ca = Concept(subject_id=subj_id, slug="concept-a", display_name="A")
-    cb = Concept(subject_id=subj_id, slug="concept-b", display_name="B")
+    ca = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="concept-a", display_name="A")
+    cb = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="concept-b", display_name="B")
     db_session.add_all([ca, cb])
     await db_session.flush()
-    ea = KGEntity(
+    ea = LearnerEntity(
+        course_id=_ss_id,
         concept_id=ca.id,
         canonical_key="eq.local",
         kind="equation",
@@ -1252,7 +1261,8 @@ async def test_insert_prereqs_drops_cross_concept_endpoint(db_session):
         payload={},
         aliases=[],
     )
-    eb = KGEntity(
+    eb = LearnerEntity(
+        course_id=_ss_id,
         concept_id=cb.id,
         canonical_key="eq.foreign",
         kind="equation",
@@ -1266,6 +1276,7 @@ async def test_insert_prereqs_drops_cross_concept_endpoint(db_session):
     key_to_id = {"eq.local": int(ea.id), "eq.foreign": int(eb.id)}
     inserted, _skipped, dropped = await insert_prereqs(
         db_session,
+        course_id=_ss_id,
         concept_id=int(ca.id),
         key_to_id=key_to_id,
         pairs=[("eq.local", "eq.foreign")],
@@ -1282,10 +1293,11 @@ async def test_insert_prereqs_keeps_same_concept_edge(db_session):
     from apollo.provisioning.tag_mint_persist import insert_prereqs
 
     _ss_id, subj_id = await _seed_course(db_session, slug="c-sameconcept")
-    ca = Concept(subject_id=subj_id, slug="concept-a2", display_name="A")
+    ca = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="concept-a2", display_name="A")
     db_session.add(ca)
     await db_session.flush()
-    e1 = KGEntity(
+    e1 = LearnerEntity(
+        course_id=_ss_id,
         concept_id=ca.id,
         canonical_key="eq.one",
         kind="equation",
@@ -1293,7 +1305,8 @@ async def test_insert_prereqs_keeps_same_concept_edge(db_session):
         payload={},
         aliases=[],
     )
-    e2 = KGEntity(
+    e2 = LearnerEntity(
+        course_id=_ss_id,
         concept_id=ca.id,
         canonical_key="proc.two",
         kind="procedure",
@@ -1306,6 +1319,7 @@ async def test_insert_prereqs_keeps_same_concept_edge(db_session):
     key_to_id = {"eq.one": int(e1.id), "proc.two": int(e2.id)}
     inserted, _skipped, dropped = await insert_prereqs(
         db_session,
+        course_id=_ss_id,
         concept_id=int(ca.id),
         key_to_id=key_to_id,
         pairs=[("proc.two", "eq.one")],
@@ -1352,10 +1366,11 @@ async def test_tag_and_mint_drops_cross_concept_edge_before_acyclicity(db_sessio
 
     ss_id, subj_id = await _seed_course(db_session, slug="c-phantom")
     # A FOREIGN concept in the same course, holding the merge-target entity F.
-    foreign = Concept(subject_id=subj_id, slug="concept-foreign", display_name="Foreign")
+    foreign = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="concept-foreign", display_name="Foreign")
     db_session.add(foreign)
     await db_session.flush()
-    f_entity = KGEntity(
+    f_entity = LearnerEntity(
+        course_id=ss_id,
         concept_id=foreign.id,
         canonical_key="eq.x",
         kind="equation",
@@ -1447,10 +1462,11 @@ async def test_tag_and_mint_escalates_to_judge(db_session):
     callable. The pre-seeded entity uses the 'BANDSEED' scope_summary that
     ``_embed_in_band`` places at cosine 0.87."""
     ss_id, subj_id = await _seed_course(db_session, slug="c-band")
-    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
-    seed_entity = KGEntity(
+    seed_entity = LearnerEntity(
+        course_id=ss_id,
         concept_id=concept.id,
         canonical_key="eq.preexisting",  # different slug → no slug-tier merge
         kind="equation",
@@ -1505,13 +1521,14 @@ async def test_tag_and_mint_re_update_existing_entity(db_session):
     )
     entity_id, inserted = await upsert_entity(
         db_session,
+        course_id=ss_id,
         concept_id=plan1.concept_id,
         spec=spec,
         scope_summary="updated summary",
     )
     assert inserted is False  # the RE-UPDATE branch
     assert entity_id == plan1.minted_entity_ids["eq.bernoulli"]
-    row = (await db_session.execute(select(KGEntity).where(KGEntity.id == entity_id))).scalar_one()
+    row = (await db_session.execute(select(LearnerEntity).where(LearnerEntity.id == entity_id))).scalar_one()
     assert row.display_name == "Bernoulli (renamed)"
     assert row.scope_summary == "updated summary"
 
@@ -1521,7 +1538,7 @@ async def test_resolve_or_create_concept_creates_subject_when_absent(db_session)
     provisional subject first (covers the no-subject branch)."""
     from apollo.provisioning.tag_mint_persist import resolve_or_create_concept
 
-    space = SearchSpace(name="No-subj tag", slug="c-tag-nosubj", subject_name="X")
+    space = Course(name="No-subj tag", slug="c-tag-nosubj", subject_name="X")
     db_session.add(space)
     await db_session.flush()
     cid = await resolve_or_create_concept(
@@ -1540,15 +1557,16 @@ async def test_link_opposes_skips_empty_opposes(db_session):
     ``if not opposes_key: continue`` branch). Asserted via a misconception entity
     whose payload lacks opposes_entity_key minted through tag_and_mint with a
     misconception that has an EMPTY opposes value."""
-    from apollo.persistence.models import KGEntity as _KGE
+    from apollo.persistence.models import LearnerEntity as _KGE
     from apollo.provisioning.tag_mint_persist import link_opposes
 
     ss_id, subj_id = await _seed_course(db_session, slug="c-noopp")
-    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
     # A misconception entity carrying NO opposes_entity_key in its payload.
     misc = _KGE(
+        course_id=ss_id,
         concept_id=concept.id,
         canonical_key="misc.noopposes",
         kind="misconception",
@@ -1959,9 +1977,9 @@ async def test_tag_and_mint_collapses_duplicate_role_entities(db_session):
     rows = (
         (
             await db_session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == plan.concept_id)
-                .where(KGEntity.kind == "equation")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == plan.concept_id)
+                .where(LearnerEntity.kind == "equation")
             )
         )
         .scalars()
@@ -2069,9 +2087,9 @@ async def test_tag_and_mint_cross_mint_equivalent_equation_merges(db_session):
     rows = (
         (
             await db_session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == plan1.concept_id)
-                .where(KGEntity.kind == "equation")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == plan1.concept_id)
+                .where(LearnerEntity.kind == "equation")
             )
         )
         .scalars()
@@ -2280,7 +2298,7 @@ async def test_two_upload_finding_d_dedupes_all_kinds(db_session):
         embed_fn=_embed_distinct,
     )
     after1 = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.concept_id == plan1.concept_id)))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.concept_id == plan1.concept_id)))
         .scalars()
         .all()
     )
@@ -2304,7 +2322,7 @@ async def test_two_upload_finding_d_dedupes_all_kinds(db_session):
     assert set(plan2.minted_entity_ids) == {"def.def_time"}
 
     rows = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.concept_id == plan1.concept_id)))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.concept_id == plan1.concept_id)))
         .scalars()
         .all()
     )
@@ -2328,13 +2346,14 @@ async def test_two_upload_symbol_bearing_variable_dedup_is_label_independent(db_
     behaviour directly against pre-seeded rows so the m≡M invariant is covered wherever
     a symbol payload IS present."""
     ss_id, subj_id = await _seed_course(db_session, slug="c-var-symbol")
-    concept = Concept(subject_id=subj_id, slug="linear_motion", display_name="Linear motion")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="linear_motion", display_name="Linear motion")
     db_session.add(concept)
     await db_session.flush()
     # Pre-seed two variable entities differing ONLY by symbol case (a vs A).
     db_session.add_all(
         [
-            KGEntity(
+            LearnerEntity(
+                course_id=ss_id,
                 concept_id=concept.id,
                 canonical_key="varmap.a",
                 kind="variable",
@@ -2343,7 +2362,8 @@ async def test_two_upload_symbol_bearing_variable_dedup_is_label_independent(db_
                 aliases=[],
                 scope_summary="acceleration | symbol a | kind variable",
             ),
-            KGEntity(
+            LearnerEntity(
+                course_id=ss_id,
                 concept_id=concept.id,
                 canonical_key="varmap.big_a",
                 kind="variable",
@@ -2390,11 +2410,12 @@ async def test_two_upload_different_label_definition_not_deterministically_merge
     embedding/LLM-judge tier's job — the deterministic pass never guesses. This pins
     the boundary so a future fuzzy-widening change is a conscious decision."""
     ss_id, subj_id = await _seed_course(db_session, slug="c-diff-label")
-    concept = Concept(subject_id=subj_id, slug="linear_motion", display_name="Linear motion")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="linear_motion", display_name="Linear motion")
     db_session.add(concept)
     await db_session.flush()
     db_session.add(
-        KGEntity(
+        LearnerEntity(
+            course_id=ss_id,
             concept_id=concept.id,
             canonical_key="def.def_acceleration",
             kind="definition",

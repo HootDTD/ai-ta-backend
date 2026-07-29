@@ -3,16 +3,20 @@ spec ``docs/superpowers/specs/2026-07-10-apollo-topic-score-design.md``
 section 2/3).
 
 ONE serializer, reused by BOTH the canonical artifact's ``scores.topic_score``
-block (``apollo/handlers/artifact_writer.py``, flag-independent) and the
-served ``student_response["topics"]`` payload (``apollo/handlers/done.py``,
-under ``APOLLO_TOPIC_SCORE_SERVED``) — so the two surfaces can never drift in
-field names. Field names are pinned exactly to the spec's §2 shape:
+block (``apollo/handlers/artifact_writer.py``) and the served
+``student_response["topics"]`` payload (``apollo/handlers/done.py``, served
+whenever the topic score computed successfully) — so the two surfaces can never
+drift in field names. Field names are pinned exactly to the spec's §2 shape:
 
     {score, letter, coverage_component, misconception_dock, topics: [
-        {canonical_key, display_name, credit, status, weight, misconceptions: [
-            {canonical_key, resolved, dock_points, evidence_span}
-        ]}
+        {canonical_key, display_name, credit, status, weight, evidence_span,
+         hoot_assisted,
+         misconceptions: [{canonical_key, resolved, dock_points, evidence_span}]}
     ]}
+
+``hoot_assisted`` (INTERACTION5) is additive and defaults ``False``; it is
+``True`` only when a Hoot lookup aside credit-capped the topic. Absent-safe for
+older UI clients that ignore the key.
 
 Pure module: no IO. Kept separate from ``topic_score.py`` (the already-landed,
 100%-covered pure-computation module) so this additive serialization concern
@@ -40,6 +44,10 @@ def _serialize_topic(topic: TopicCredit) -> dict:
         "credit": topic.credit,
         "status": topic.status,
         "weight": topic.weight,
+        "evidence_span": topic.evidence_span,
+        # INTERACTION5: additive per-topic flag (default False). True only when a
+        # Hoot lookup aside capped this topic. Absent-safe for old UI clients.
+        "hoot_assisted": topic.hoot_assisted,
         "misconceptions": [_serialize_misconception(m) for m in topic.misconceptions],
     }
 

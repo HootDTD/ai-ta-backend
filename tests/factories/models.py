@@ -12,29 +12,29 @@ import uuid
 import factory
 
 from database.models import (
-    AITAChunk,
-    AITADocument,
+    DocumentChunk,
+    Document,
     ChatSession,
     CourseMembership,
-    SearchSpace,
-    TeacherUpload,
+    Course,
+    Upload,
 )
 from tests.fakes.embeddings import fake_embedding
 
 
-class SearchSpaceFactory(factory.Factory):
+class CourseFactory(factory.Factory):
     class Meta:
-        model = SearchSpace
+        model = Course
 
     name = factory.Sequence(lambda n: f"Course {n}")
     slug = factory.Sequence(lambda n: f"course-{n}")
     subject_name = "Aerospace Engineering"
-    weight_overrides = factory.LazyFunction(dict)
+    retrieval_weights = factory.LazyFunction(dict)
 
 
-class AITADocumentFactory(factory.Factory):
+class DocumentFactory(factory.Factory):
     class Meta:
-        model = AITADocument
+        model = Document
 
     title = factory.Sequence(lambda n: f"Lecture {n}")
     document_type = "EDUCATIONAL_FILE"
@@ -42,13 +42,13 @@ class AITADocumentFactory(factory.Factory):
     content = factory.Sequence(lambda n: f"Body text for lecture {n}.")
     content_hash = factory.Sequence(lambda n: f"hash-{n:08d}")
     embedding = factory.LazyAttribute(lambda o: fake_embedding(o.title))
-    status = factory.LazyFunction(lambda: {"state": "ready"})
-    # search_space_id is required (FK) — always pass it explicitly.
+    status = "ready"
+    # course_id is required (FK) — always pass it explicitly.
 
 
-class AITAChunkFactory(factory.Factory):
+class DocumentChunkFactory(factory.Factory):
     class Meta:
-        model = AITAChunk
+        model = DocumentChunk
 
     content = factory.Sequence(lambda n: f"Chunk {n} content.")
     embedding = factory.LazyAttribute(lambda o: fake_embedding(o.content))
@@ -62,7 +62,7 @@ class CourseMembershipFactory(factory.Factory):
 
     user_id = factory.LazyFunction(lambda: str(uuid.uuid4()))
     role = "student"
-    # search_space_id is required (FK) — always pass it explicitly.
+    # course_id is required (FK) — always pass it explicitly.
 
 
 class ChatSessionFactory(factory.Factory):
@@ -76,12 +76,12 @@ class ChatSessionFactory(factory.Factory):
     # search_space_id is required (FK) — always pass it explicitly.
 
 
-class TeacherUploadFactory(factory.Factory):
+class UploadFactory(factory.Factory):
     class Meta:
-        model = TeacherUpload
+        model = Upload
 
     week = 1
-    kind = "lecture"
+    kind = "notes"
     title = factory.Sequence(lambda n: f"Week {n} notes")
     status = "ready"
-    # search_space_id is required (FK) — always pass it explicitly.
+    # course_id is required (FK) — always pass it explicitly.

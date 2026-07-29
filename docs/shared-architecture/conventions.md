@@ -5,7 +5,7 @@ owns: []
 related:
   - ai-ta-backend/_overview
   - shared/security
-last_verified: 2026-06-10
+last_verified: 2026-07-23
 stub: false
 ---
 
@@ -31,7 +31,7 @@ Defined in `ai-ta-backend/pytest.ini`, `ai-ta-backend/tests/conftest.py`, and `a
 - **Real pgvector**: SQLite cannot evaluate `<=>`/`<->` or HNSW, so retrieval/DB tests use a session-scoped `pgvector/pgvector:pg16` Testcontainer (`_pg_url`) and a function-scoped `db_session` fixture that rolls back a savepoint-joined transaction after each test. Skips cleanly if Docker is down.
 - **Neo4j**: Apollo KG integration tests use a session-scoped `neo4j:5.25` container with a function-scoped `neo4j_client` fixture that wipes the graph before and after each test.
 - LLM calls are never live in CI: `CI=true` forces VCR `record_mode=none`; fake embeddings are deterministic.
-- Coverage expectation: **patch coverage ≥80% on new code** (diff-cover gate in CI); repo-wide coverage ratchets up over time per the plan (~65–70% target gate).
+- Coverage expectation: **patch coverage ≥95% on changed lines** (diff-cover gate in CI, `--fail-under=95`); repo-wide coverage ratchets up over time per the plan.
 - Run locally: `pytest tests/ -v --tb=short`, or `pytest -m "not integration"` for the fast no-Docker subset.
 
 ## CI gates (ai-ta-backend/.github/workflows/ci.yml)
@@ -43,7 +43,8 @@ Triggered on PRs and pushes to `main`, `staging`, `ApolloV3`. Parallel jobs:
 | `quality` | Ruff on changed files — **blocking** for added files (check + format), advisory for modified files |
 | `typecheck` | Mypy on changed files — advisory (`continue-on-error`), tightened in Phase 3 |
 | `unit` | `pytest -m "not integration" -n auto` with coverage — blocking, no Docker |
-| `integration` | Full suite on real pgvector + Neo4j Testcontainers, then diff-cover **≥80% patch coverage** — blocking; the patch gate is skipped on promotion PRs into `ApolloV3` |
+| `integration` | Full suite on real pgvector + Neo4j Testcontainers, then diff-cover **≥95% patch coverage** — blocking; the patch gate is skipped on promotion PRs |
+| `docs` | `check_owns_coverage.py` — architecture-doc ownership bijection + size + `related` + `_index`-freshness + `last_verified` — **blocking** (in `ci-passed`) |
 | `ci-passed` | Aggregation job — the single required branch-protection status |
 
 A nightly workflow (`ai-ta-backend/.github/workflows/nightly.yml`) exists for off-PR-path runs; evals and other nondeterministic/costly checks belong there, never on the PR path.
@@ -68,7 +69,7 @@ A nightly workflow (`ai-ta-backend/.github/workflows/nightly.yml`) exists for of
 
 - Python: snake_case modules organized by domain (`retrieval/`, `indexing/`, `knowledge/`, `chats/`, `apollo/`, `citations/`); handler functions `handle_*` (e.g. `apollo/handlers/done.py:handle_done`); domain-specific exception classes per module (`apollo/errors.py`: `FilterRejectedError`, `SessionFrozenError`, ...).
 - Database: legacy tables carry the `aita_` prefix (`aita_search_spaces`, `aita_documents`, `aita_chunks`) with matching `AITA*` SQLAlchemy models; newer tables are plain snake_case (`chat_sessions`, `chat_turns`, `teacher_uploads`, `teacher_upload_jobs`, `course_memberships`, `course_invite_links`).
-- Config: all runtime configuration via env vars surfaced through `config/settings.py` (e.g. `MAIN_MODEL`, `EMBEDDING_DIM`, `CHAT_MEMORY_WINDOW_TURNS`). Copy `.env.example` to `.env`; never modify `.env` files or commit secrets.
+- Config: most runtime configuration via env vars surfaced through `config/settings.py` (e.g. `PARSER_MODEL`, `EMBEDDING_DIM`, `CHAT_MEMORY_WINDOW_TURNS`); the served solver model is the exception — pinned as code constants in `config/models.py` (`MAIN_MODEL`/`MAIN_REASONING_EFFORT`) since the 2026-07 flag reset. Copy `.env.example` to `.env`; never modify `.env` files or commit secrets.
 
 ## Non-negotiable product rules (from ai-ta-backend/CLAUDE.md)
 

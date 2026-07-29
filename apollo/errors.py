@@ -162,7 +162,7 @@ class RetentionError(ApolloError):
 
 
 # Closed reason set for LearnerUpdateUnreconstructableError. The janitor's
-# pre-flight (WU-5B3a build_rerun_inputs) raises with exactly one of these.
+# The retired grading retry pre-flight raised with exactly one of these.
 LEARNER_UPDATE_UNRECONSTRUCTABLE_REASONS = (
     "diagnostic_report_missing",  # attempt.diagnostic_report is None
     "rubric_missing",             # "rubric" absent, or rubric lacks "overall"
@@ -173,7 +173,7 @@ LEARNER_UPDATE_UNRECONSTRUCTABLE_REASONS = (
 class LearnerUpdateUnreconstructableError(ApolloError):
     """The Done-time re-run inputs cannot be reconstructed from durable state,
     so the learner-model retry can NEVER succeed — a TERMINAL dead-letter, not a
-    transient failure. Raised by `build_rerun_inputs`'s pre-flight BEFORE any LLM
+    transient failure. Historically raised before any LLM
     call when `attempt.diagnostic_report` is None / lacks `rubric` / the rubric
     lacks `overall` (calibration.py:88,93 dereference it unconditionally) OR the
     frozen Neo4j subgraph has no `graded_at` (empty/never-stamped → no done_ts to

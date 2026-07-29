@@ -17,10 +17,11 @@ from typing import Optional
 from sqlalchemy import Integer, cast, func, select, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import joinedload
 from pgvector.sqlalchemy import HALFVEC
 
-from database.models import AITAChunk, AITADocument, EMBEDDING_DIM
+from database.models import DocumentChunk, Document, EMBEDDING_DIM
 from indexing.document_embedder import embed_text
 from .document_visibility import active_document_conditions, build_chunk_metadata
 
@@ -33,6 +34,16 @@ _RRF_K = 60
 # coming from the env is rejected — these strings are interpolated into SQL.
 _ITERATIVE_SCAN_MODES = {"relaxed_order", "strict_order"}
 _ITERATIVE_SCAN_OFF = {"", "off", "0", "false", "disabled", "none"}
+
+
+class _ExtensionsHalfVector(HALFVEC):
+    """Render pgvector's halfvec type from its non-public extension schema."""
+
+
+@compiles(_ExtensionsHalfVector, "postgresql")
+def _compile_extensions_halfvec(type_, compiler, **kw):
+    del compiler, kw
+    return f"extensions.halfvec({type_.dim})"
 
 
 def _env_int(name: str, default: int, lo: int, hi: int) -> int:
@@ -93,7 +104,7 @@ def _iterative_scan_statements() -> list[str]:
 def _halfvec_cosine_distance(query_embedding):
     """Cosine distance computed in ``halfvec(EMBEDDING_DIM)``.
 
-    The production vector index is ``idx_aita_chunks_embedding_hnsw`` on
+    The production vector index is ``document_chunks__embedding_halfvec_hnsw__idx`` on
     ``(embedding::halfvec(3072)) halfvec_cosine_ops``. Casting BOTH operands to
     halfvec makes the query expression match that index and, more importantly,
     runs the distance math in 16-bit (6 KB/vector) instead of 32-bit
@@ -101,8 +112,8 @@ def _halfvec_cosine_distance(query_embedding):
     identical ranking order. RRF fuses on rank, not raw distance, so fusion is
     unaffected.
     """
-    return AITAChunk.embedding.cast(HALFVEC(EMBEDDING_DIM)).op("<=>")(
-        cast(query_embedding, HALFVEC(EMBEDDING_DIM))
+    return DocumentChunk.embedding.cast(_ExtensionsHalfVector(EMBEDDING_DIM)).op("<=>")(
+        cast(query_embedding, _ExtensionsHalfVector(EMBEDDING_DIM))
     )
 
 
@@ -119,7 +130,7 @@ def _build_semantic_cte(query_embedding, visible_doc_ids, n_results: int):
        index is off).
 
     2. The filter is a CHUNK-LOCAL ``document_id = ANY(:ids)`` over a
-       materialized id array, NOT a join to ``aita_documents`` and NOT an
+       materialized id array, NOT a join to ``app.documents`` and NOT an
        ``IN (subquery)``. This is the only form that lets the HNSW index engage
        under ``hnsw.iterative_scan`` (pgvector >= 0.8): the planner pushes the
        array membership test into the index scan and iterates in distance order
@@ -138,11 +149,11 @@ def _build_semantic_cte(query_embedding, visible_doc_ids, n_results: int):
     # ``= ANY(CAST(:ids AS integer[]))`` — one bound array param. This exact
     # materialized-array form is what lets the HNSW index engage (verified via
     # EXPLAIN); a join or an ``IN (subquery)`` does not.
-    doc_filter = AITAChunk.document_id == func.any(
+    doc_filter = DocumentChunk.document_id == func.any(
         cast(list(visible_doc_ids), ARRAY(Integer))
     )
     inner = (
-        select(AITAChunk.id.label("id"), distance.label("distance"))
+        select(DocumentChunk.id.label("id"), distance.label("distance"))
         .where(doc_filter)
         .order_by(distance)
         .limit(n_results)
@@ -161,8 +172,8 @@ def _build_keyword_cte(tsvector, tsquery, base_conditions, n_results: int):
     """Index-friendly FTS candidates CTE (same inner-LIMIT-then-rank shape)."""
     text_rank = func.ts_rank_cd(tsvector, tsquery)
     inner = (
-        select(AITAChunk.id.label("id"), text_rank.label("text_rank"))
-        .join(AITADocument, AITAChunk.document_id == AITADocument.id)
+        select(DocumentChunk.id.label("id"), text_rank.label("text_rank"))
+        .join(Document, DocumentChunk.document_id == Document.id)
         .where(*base_conditions)
         .where(tsvector.op("@@")(tsquery))
         .order_by(text_rank.desc())
@@ -179,7 +190,7 @@ def _build_keyword_cte(tsvector, tsquery, base_conditions, n_results: int):
 
 
 class AITAHybridSearchRetriever:
-    """Hybrid search over aita_chunks using pgvector cosine + PostgreSQL FTS, fused with RRF."""
+    """Hybrid search over internal.document_chunks using pgvector cosine + PostgreSQL FTS, fused with RRF."""
 
     def __init__(self, db_session: AsyncSession, search_space_id: int) -> None:
         self.db_session = db_session
@@ -204,20 +215,20 @@ class AITAHybridSearchRetriever:
         # How many candidate results to pull from each search before RRF fusion
         n_results = top_k * 5
 
-        tsvector = func.to_tsvector("english", AITAChunk.content)
+        tsvector = func.to_tsvector("english", DocumentChunk.content)
         tsquery = func.plainto_tsquery("english", query_text)
 
         # Base filter conditions (search space + optional material kind)
         base_conditions = active_document_conditions(self.search_space_id)
         if material_kind:
-            base_conditions.append(AITADocument.material_kind == material_kind)
+            base_conditions.append(Document.material_kind == material_kind)
 
         # Resolve the visible document ids once (cheap index scan on
-        # aita_documents). The semantic arm filters chunks by this materialized
+        # app.documents). The semantic arm filters chunks by this materialized
         # id array so the HNSW index can engage under hnsw.iterative_scan — a
         # join or IN (subquery) makes the planner brute-force the scan instead.
         visible_doc_rows = await self.db_session.execute(
-            select(AITADocument.id).where(*base_conditions)
+            select(Document.id).where(*base_conditions)
         )
         visible_doc_ids = [row[0] for row in visible_doc_rows.all()]
         if not visible_doc_ids:
@@ -227,7 +238,7 @@ class AITAHybridSearchRetriever:
         # inside, rank outside)
         semantic_cte = _build_semantic_cte(query_embedding, visible_doc_ids, n_results)
 
-        # CTE 2: Keyword search (PostgreSQL FTS, joins aita_documents — FTS is
+        # CTE 2: Keyword search (PostgreSQL FTS, joins app.documents — FTS is
         # GIN-indexed and not the cold-cache bottleneck, so it stays as-is)
         keyword_cte = _build_keyword_cte(tsvector, tsquery, base_conditions, n_results)
 
@@ -235,7 +246,7 @@ class AITAHybridSearchRetriever:
         # score = 1/(k + sem_rank) + 1/(k + kw_rank)
         final_query = (
             select(
-                AITAChunk,
+                DocumentChunk,
                 (
                     func.coalesce(1.0 / (_RRF_K + semantic_cte.c.rank), 0.0)
                     + func.coalesce(1.0 / (_RRF_K + keyword_cte.c.rank), 0.0)
@@ -249,10 +260,10 @@ class AITAHybridSearchRetriever:
                 )
             )
             .join(
-                AITAChunk,
-                AITAChunk.id == func.coalesce(semantic_cte.c.id, keyword_cte.c.id),
+                DocumentChunk,
+                DocumentChunk.id == func.coalesce(semantic_cte.c.id, keyword_cte.c.id),
             )
-            .options(joinedload(AITAChunk.document))
+            .options(joinedload(DocumentChunk.document))
             .order_by(text("score DESC"))
             .limit(top_k)
         )
@@ -274,7 +285,7 @@ class AITAHybridSearchRetriever:
         chunks_out = []
         for chunk, score in rows:
             doc = chunk.document
-            doc_meta = dict(getattr(doc, "document_metadata", None) or {})
+            doc_meta = dict(getattr(doc, "metadata_", None) or {})
             chunk_meta = build_chunk_metadata(doc_meta, chunk.page_number)
             chunk_meta.update(
                 {

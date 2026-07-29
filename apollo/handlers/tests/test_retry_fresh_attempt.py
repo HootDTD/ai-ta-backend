@@ -8,22 +8,25 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.lifecycle import handle_retry
 from apollo.persistence.models import (
-    ApolloSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from database.models import Base
 
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(
                 sync_conn,
-                tables=[ApolloSession.__table__, ProblemAttempt.__table__],
+                tables=[TutoringSession.__table__, ProblemAttempt.__table__],
             )
         )
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -33,13 +36,13 @@ async def db():
 
 
 async def _seed(db: AsyncSession, *, result: str | None):
-    session = ApolloSession(
+    session = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
         status=SessionStatus.active.value,
         phase=SessionPhase.REPORT.value,
-        current_problem_id="p1",
+        current_problem_id=1,
         pending_intent="done",
         history_summary="old attempt summary",
         history_summary_up_to_turn=12,
@@ -48,8 +51,10 @@ async def _seed(db: AsyncSession, *, result: str | None):
     await db.flush()
     attempt = ProblemAttempt(
         session_id=session.id,
-        problem_id="p1",
+        problem_id=1,
         difficulty="intro",
+        user_id=session.user_id,
+        course_id=session.course_id,
         result=result,
     )
     db.add(attempt)

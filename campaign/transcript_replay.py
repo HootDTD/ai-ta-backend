@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from apollo.overseer.misconception_detector.centrality import compute_centrality
-from apollo.overseer.topic_score import compute_topic_score
+from apollo.overseer.topic_score import compute_centrality, compute_topic_score
 from apollo.overseer.transcript_coverage import compute_transcript_coverage, validate_span
 from apollo.schemas.problem import Problem
 
@@ -41,7 +40,6 @@ async def replay_fixture(path: Path) -> ReplayOutcome:
         coverage=cast(dict, coverage),
         reference_nodes=graph.nodes,
         centrality=compute_centrality(graph),
-        detection_outcome=None,
     )
     credited = sum(topic.credit > 0 for topic in topic_score.topics)
     student_messages = [content for role, content in transcript if role == "student"]

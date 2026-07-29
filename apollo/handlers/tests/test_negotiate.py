@@ -5,6 +5,7 @@ Tests `handle_challenge`, `handle_paraphrase`, `handle_skip`, and
 Neo4j client. Validation rules on the Pydantic request models are
 tested directly.
 """
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -13,7 +14,6 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
@@ -30,12 +30,11 @@ from apollo.handlers.negotiate import (
 from apollo.knowledge_graph.store import _node_to_neo4j_props
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.persistence.models import (
-    ApolloSession,
-    KGNegotiation,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -44,9 +43,11 @@ from database.models import Base
 # the handler test so each surface owns its own fake without an import.
 # ---------------------------------------------------------------------------
 
+
 class _FakeRecord:
     def __init__(self, data: dict[str, Any]) -> None:
         self._data = data
+
     def __getitem__(self, key: str) -> Any:
         return self._data[key]
 
@@ -54,12 +55,15 @@ class _FakeRecord:
 class _FakeResult:
     def __init__(self, record: _FakeRecord | None) -> None:
         self._rec = record
+
     async def single(self) -> _FakeRecord | None:
         return self._rec
+
     def __aiter__(self):
         async def gen():
             if self._rec is not None:
                 yield self._rec
+
         return gen()
 
 
@@ -70,7 +74,8 @@ class _FakeNeo4jSession:
     async def run(self, cypher: str, **params: Any) -> _FakeResult:
         # Negotiation SET-and-RETURN paths.
         if "SET" in cypher and "RETURN n AS props" in cypher:
-            aid = int(params["aid"]); nid = str(params["nid"])
+            aid = int(params["aid"])
+            nid = str(params["nid"])
             key = (aid, nid)
             if key not in self._nodes:
                 return _FakeResult(None)
@@ -82,14 +87,22 @@ class _FakeNeo4jSession:
                 node["status"] = "DUAL"
             elif "n.status = 'DISPUTED'" in cypher:
                 node["status"] = "DISPUTED"
-            return _FakeResult(_FakeRecord({
-                "props": dict(node["_bag"]) | {
-                    "status": node["status"],
-                    **({"student_belief": node["student_belief"]}
-                       if node.get("student_belief") is not None else {}),
-                },
-                "labels": list(node["_labels"]),
-            }))
+            return _FakeResult(
+                _FakeRecord(
+                    {
+                        "props": dict(node["_bag"])
+                        | {
+                            "status": node["status"],
+                            **(
+                                {"student_belief": node["student_belief"]}
+                                if node.get("student_belief") is not None
+                                else {}
+                            ),
+                        },
+                        "labels": list(node["_labels"]),
+                    }
+                )
+            )
 
         # read_graph paths — the snapshot helper calls this.
         if "MATCH (n:_KGNode {attempt_id: $aid})" in cypher and "RETURN n AS props" in cypher:
@@ -98,23 +111,35 @@ class _FakeNeo4jSession:
             for (a, _), node in self._nodes.items():
                 if a != aid:
                     continue
-                records.append(_FakeRecord({
-                    "props": dict(node["_bag"]) | {
-                        "status": node.get("status", "ACCEPTED"),
-                        **({"student_belief": node["student_belief"]}
-                           if node.get("student_belief") is not None else {}),
-                    },
-                    "labels": list(node["_labels"]),
-                }))
+                records.append(
+                    _FakeRecord(
+                        {
+                            "props": dict(node["_bag"])
+                            | {
+                                "status": node.get("status", "ACCEPTED"),
+                                **(
+                                    {"student_belief": node["student_belief"]}
+                                    if node.get("student_belief") is not None
+                                    else {}
+                                ),
+                            },
+                            "labels": list(node["_labels"]),
+                        }
+                    )
+                )
 
             class _MultiResult:
                 def __init__(self, recs):
                     self._recs = recs
+
                 async def single(self):
                     return self._recs[0] if self._recs else None
+
                 def __aiter__(self):
                     async def gen():
-                        for r in self._recs: yield r
+                        for r in self._recs:
+                            yield r
+
                     return gen()
 
             return _MultiResult(records)  # type: ignore[return-value]
@@ -124,9 +149,14 @@ class _FakeNeo4jSession:
             class _Empty:
                 def __aiter__(self):
                     async def gen():
-                        if False: yield
+                        if False:
+                            yield
+
                     return gen()
-                async def single(self): return None
+
+                async def single(self):
+                    return None
+
             return _Empty()  # type: ignore[return-value]
 
         raise AssertionError(f"unsupported cypher in fake: {cypher!r}")
@@ -156,14 +186,17 @@ class _FakeNeo4jClient:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
-        KGNegotiation.__table__,
+        TutoringMessage.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -175,16 +208,26 @@ async def db():
 
 @pytest_asyncio.fixture
 async def session(db: AsyncSession):
-    s = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+    s = TutoringSession(
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=1,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
     )
     db.add(s)
     await db.flush()
-    a = ProblemAttempt(session_id=s.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=s.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=s.user_id,
+        course_id=s.course_id,
+    )
     db.add(a)
     await db.commit()
-    await db.refresh(s); await db.refresh(a)
+    await db.refresh(s)
+    await db.refresh(a)
     return s, a
 
 
@@ -195,7 +238,9 @@ def neo():
 
 def _seed(neo: _FakeNeo4jClient, attempt_id: int):
     eq = build_node(
-        node_type="equation", node_id="eq1", attempt_id=attempt_id,
+        node_type="equation",
+        node_id="eq1",
+        attempt_id=attempt_id,
         source="parser",
         content={"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
         parser_confidence=0.45,
@@ -207,13 +252,17 @@ def _seed(neo: _FakeNeo4jClient, attempt_id: int):
 # handle_challenge
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_challenge_returns_updated_entry_and_kg_envelope(db, session, neo):
     _, attempt = session
     _seed(neo, attempt.id)
 
     out = await handle_challenge(
-        db=db, neo=neo, session_id=attempt.session_id, entry_id="eq1",
+        db=db,
+        neo=neo,
+        session_id=attempt.session_id,
+        entry_id="eq1",
         body=ChallengeRequest(reason="that's not what I said"),
     )
     assert out["move"] == "challenge"
@@ -223,13 +272,6 @@ async def test_challenge_returns_updated_entry_and_kg_envelope(db, session, neo)
     assert "nodes" in out["kg"]
     assert any(n["node_id"] == "eq1" for n in out["kg"]["nodes"])
 
-    rows = (await db.execute(
-        select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")
-    )).scalars().all()
-    assert len(rows) == 1
-    assert rows[0].move == "challenge"
-    assert rows[0].payload == {"reason": "that's not what I said"}
-
 
 @pytest.mark.asyncio
 async def test_challenge_404_for_unknown_entry(db, session, neo):
@@ -237,7 +279,10 @@ async def test_challenge_404_for_unknown_entry(db, session, neo):
     _seed(neo, attempt.id)
     with pytest.raises(KGEntryNotFoundError):
         await handle_challenge(
-            db=db, neo=neo, session_id=attempt.session_id, entry_id="ghost",
+            db=db,
+            neo=neo,
+            session_id=attempt.session_id,
+            entry_id="ghost",
             body=ChallengeRequest(reason="?"),
         )
 
@@ -246,14 +291,22 @@ async def test_challenge_404_for_unknown_entry(db, session, neo):
 async def test_challenge_invalid_phase_when_no_attempt(db, neo):
     """Sessions with no ProblemAttempt — student hasn't started a problem
     yet — get InvalidPhaseError. The exception handler maps to 409."""
-    s = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+    s = TutoringSession(
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=1,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
     )
-    db.add(s); await db.commit(); await db.refresh(s)
+    db.add(s)
+    await db.commit()
+    await db.refresh(s)
     with pytest.raises(InvalidPhaseError):
         await handle_challenge(
-            db=db, neo=neo, session_id=s.id, entry_id="eq1",
+            db=db,
+            neo=neo,
+            session_id=s.id,
+            entry_id="eq1",
             body=ChallengeRequest(reason="?"),
         )
 
@@ -262,13 +315,17 @@ async def test_challenge_invalid_phase_when_no_attempt(db, neo):
 # handle_paraphrase
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_paraphrase_sets_dual_with_belief(db, session, neo):
     _, attempt = session
     _seed(neo, attempt.id)
 
     out = await handle_paraphrase(
-        db=db, neo=neo, session_id=attempt.session_id, entry_id="eq1",
+        db=db,
+        neo=neo,
+        session_id=attempt.session_id,
+        entry_id="eq1",
         body=ParaphraseRequest(surface_form="rho A v stays the same"),
     )
     assert out["move"] == "paraphrase"
@@ -282,7 +339,10 @@ async def test_paraphrase_404_for_unknown_entry(db, session, neo):
     _seed(neo, attempt.id)
     with pytest.raises(KGEntryNotFoundError):
         await handle_paraphrase(
-            db=db, neo=neo, session_id=attempt.session_id, entry_id="missing",
+            db=db,
+            neo=neo,
+            session_id=attempt.session_id,
+            entry_id="missing",
             body=ParaphraseRequest(surface_form="x"),
         )
 
@@ -291,13 +351,17 @@ async def test_paraphrase_404_for_unknown_entry(db, session, neo):
 # handle_skip
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_skip_sets_dual_no_belief(db, session, neo):
     _, attempt = session
     _seed(neo, attempt.id)
 
     out = await handle_skip(
-        db=db, neo=neo, session_id=attempt.session_id, entry_id="eq1",
+        db=db,
+        neo=neo,
+        session_id=attempt.session_id,
+        entry_id="eq1",
     )
     assert out["move"] == "skip"
     assert out["entry"]["status"] == "DUAL"
@@ -308,27 +372,40 @@ async def test_skip_sets_dual_no_belief(db, session, neo):
 # handle_get_trace
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_get_trace_returns_chronological_moves(db, session, neo):
+async def test_get_trace_moves_stay_empty_after_negotiate_calls(db, session, neo):
+    """DB-13/A6: the Postgres audit log is gone — trace["moves"] is always
+    [], even after a challenge + skip on the node."""
     _, attempt = session
     _seed(neo, attempt.id)
     await handle_challenge(
-        db=db, neo=neo, session_id=attempt.session_id, entry_id="eq1",
+        db=db,
+        neo=neo,
+        session_id=attempt.session_id,
+        entry_id="eq1",
         body=ChallengeRequest(reason="r1"),
     )
     await handle_skip(
-        db=db, neo=neo, session_id=attempt.session_id, entry_id="eq1",
+        db=db,
+        neo=neo,
+        session_id=attempt.session_id,
+        entry_id="eq1",
     )
     trace = await handle_get_trace(
-        db=db, neo=neo, session_id=attempt.session_id, entry_id="eq1",
+        db=db,
+        neo=neo,
+        session_id=attempt.session_id,
+        entry_id="eq1",
     )
-    assert [m["move"] for m in trace["moves"]] == ["challenge", "skip"]
+    assert trace["moves"] == []
     assert trace["node_id"] == "eq1"
 
 
 # ---------------------------------------------------------------------------
 # Pydantic validation
 # ---------------------------------------------------------------------------
+
 
 def test_challenge_reason_min_length():
     with pytest.raises(ValidationError):

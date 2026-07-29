@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 from database.session import run_async, get_async_session
-from database.models import SearchSpace, AITADocument, AITAChunk
+from database.models import Course, Document, DocumentChunk
 from sqlalchemy import select, func
 
 
@@ -19,11 +19,11 @@ async def _run():
     async with get_async_session() as session:
         # 1. List search spaces
         result = await session.execute(
-            select(SearchSpace).order_by(SearchSpace.name).limit(5)
+            select(Course).order_by(Course.name).limit(5)
         )
         spaces = result.scalars().all()
         if not spaces:
-            print("ERROR: No search spaces found in aita_search_spaces!")
+            print("ERROR: No courses found in app.courses!")
             sys.exit(1)
 
         print("=== available search spaces ===")
@@ -34,8 +34,8 @@ async def _run():
 
         # 2. List documents for this space
         result = await session.execute(
-            select(AITADocument)
-            .where(AITADocument.search_space_id == space.id)
+            select(Document)
+            .where(Document.course_id == space.id)
             .limit(5)
         )
         docs = result.scalars().all()
@@ -51,8 +51,8 @@ async def _run():
         # 3. Count chunks
         doc_ids = [d.id for d in docs]
         result = await session.execute(
-            select(func.count(AITAChunk.id))
-            .where(AITAChunk.document_id.in_(doc_ids))
+            select(func.count(DocumentChunk.id))
+            .where(DocumentChunk.document_id.in_(doc_ids))
         )
         chunk_count = result.scalar()
         print(f"=== chunk count ===")
@@ -60,8 +60,8 @@ async def _run():
 
         # 4. Sample chunks
         result = await session.execute(
-            select(AITAChunk)
-            .where(AITAChunk.document_id.in_(doc_ids))
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id.in_(doc_ids))
             .limit(3)
         )
         chunks = result.scalars().all()

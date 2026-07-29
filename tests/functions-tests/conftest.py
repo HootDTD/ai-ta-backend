@@ -94,23 +94,3 @@ def pytest_ignore_collect(collection_path, path=None, config=None):
     if "reports" in path_obj.parts:
         return True
     return False
-
-
-# ---- Supabase mock store for tests ----
-import pytest  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _mock_supabase(monkeypatch):
-    """Automatically mock supabase_client for all function-tests.
-
-    Uses the shared SupabaseMock (tests/support/supabase_mock.py) with
-    ``auto_id=True`` to preserve this suite's historical behaviour of filling
-    in ``id`` / ``created_at`` on insert.
-    """
-    from tests.support.supabase_mock import SupabaseMock
-
-    mock = SupabaseMock(auto_id=True)
-    mock.install(monkeypatch)
-    yield
-    mock.reset()

@@ -13,7 +13,7 @@ Three concerns, all env-overridable with committed defaults pinned by tests
     terminal ``failed`` state once ``attempt_count >= MAX_ATTEMPTS``.
   * ``MODEL_PRICES`` + ``cost_usd_for`` — the model->price table (USD per 1M
     tokens, ADJ #7) and a pure Decimal cost helper. ``Decimal`` is load-bearing:
-    ``apollo_ingest_runs.llm_cost_usd`` is ``NUMERIC(12,6)`` and float rounding
+    ``internal.content_ingest_runs.llm_cost_usd`` is ``NUMERIC(12,6)`` and float rounding
     would drift the exact cost-math tests.
 """
 

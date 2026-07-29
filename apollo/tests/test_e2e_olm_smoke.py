@@ -11,6 +11,7 @@ LLM and Neo4j boundaries:
 
 If any link breaks, the failing assertion pinpoints which join.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,12 +34,11 @@ from apollo.ontology import NODE_LABELS, KGGraph, build_node
 from apollo.overseer.coverage import compute_coverage
 from apollo.overseer.diagnostic import _append_negotiation_line
 from apollo.persistence.models import (
-    ApolloSession,
-    KGNegotiation,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -48,19 +48,28 @@ from database.models import Base
 # methods.
 # ---------------------------------------------------------------------------
 
+
 class _Rec:
-    def __init__(self, d): self._d = d
-    def __getitem__(self, k): return self._d[k]
+    def __init__(self, d):
+        self._d = d
+
+    def __getitem__(self, k):
+        return self._d[k]
 
 
 class _Sess:
-    def __init__(self, nodes): self._n = nodes
+    def __init__(self, nodes):
+        self._n = nodes
+
     async def run(self, cypher: str, **params: Any):
         if "SET" in cypher and "RETURN n AS props" in cypher:
             key = (int(params["aid"]), str(params["nid"]))
             if key not in self._n:
+
                 class _Empty:
-                    async def single(self): return None
+                    async def single(self):
+                        return None
+
                 return _Empty()
             n = self._n[key]
             if "n.status = 'DUAL', n.student_belief = $belief" in cypher:
@@ -70,16 +79,24 @@ class _Sess:
                 n["status"] = "DUAL"
             elif "n.status = 'DISPUTED'" in cypher:
                 n["status"] = "DISPUTED"
+
             class _R:
                 async def single(_self):
-                    return _Rec({
-                        "props": dict(n["_bag"]) | {
-                            "status": n["status"],
-                            **({"student_belief": n["student_belief"]}
-                               if n.get("student_belief") is not None else {}),
-                        },
-                        "labels": list(n["_labels"]),
-                    })
+                    return _Rec(
+                        {
+                            "props": dict(n["_bag"])
+                            | {
+                                "status": n["status"],
+                                **(
+                                    {"student_belief": n["student_belief"]}
+                                    if n.get("student_belief") is not None
+                                    else {}
+                                ),
+                            },
+                            "labels": list(n["_labels"]),
+                        }
+                    )
+
             return _R()
         if "MATCH (n:_KGNode {attempt_id: $aid})" in cypher:
             aid = int(params["aid"])
@@ -87,36 +104,55 @@ class _Sess:
             for (a, _), n in self._n.items():
                 if a != aid:
                     continue
-                recs.append(_Rec({
-                    "props": dict(n["_bag"]) | {
-                        "status": n.get("status", "ACCEPTED"),
-                        **({"student_belief": n["student_belief"]}
-                           if n.get("student_belief") is not None else {}),
-                    },
-                    "labels": list(n["_labels"]),
-                }))
+                recs.append(
+                    _Rec(
+                        {
+                            "props": dict(n["_bag"])
+                            | {
+                                "status": n.get("status", "ACCEPTED"),
+                                **(
+                                    {"student_belief": n["student_belief"]}
+                                    if n.get("student_belief") is not None
+                                    else {}
+                                ),
+                            },
+                            "labels": list(n["_labels"]),
+                        }
+                    )
+                )
+
             class _R:
-                async def single(_self): return recs[0] if recs else None
+                async def single(_self):
+                    return recs[0] if recs else None
+
                 def __aiter__(_self):
                     async def gen():
                         for r in recs:
                             yield r
+
                     return gen()
+
             return _R()
+
         # Edges + everything else: empty.
         class _R:
-            async def single(_self): return None
+            async def single(_self):
+                return None
+
             def __aiter__(_self):
                 async def gen():
                     if False:
                         yield
+
                 return gen()
+
         return _R()
 
 
 class _Neo:
     def __init__(self):
         self.nodes: dict[tuple[int, str], dict[str, Any]] = {}
+
     def add_node(self, *, attempt_id: int, node):
         bag = _node_to_neo4j_props(node)
         bag["source"] = node.source
@@ -127,6 +163,7 @@ class _Neo:
             "status": node.status,
             "student_belief": node.student_belief,
         }
+
     @asynccontextmanager
     async def session(self):
         yield _Sess(self.nodes)
@@ -136,14 +173,17 @@ class _Neo:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
-        KGNegotiation.__table__,
+        TutoringMessage.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -155,13 +195,22 @@ async def db():
 
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
-    sess = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+    sess = TutoringSession(
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=1,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
     )
     db.add(sess)
     await db.flush()
-    a = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(a)
     await db.commit()
     await db.refresh(sess)
@@ -173,9 +222,12 @@ async def attempt(db: AsyncSession):
 # Smoke
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_negotiable_olm_chain_to_coverage_to_narration(
-    monkeypatch, db, attempt,
+    monkeypatch,
+    db,
+    attempt,
 ):
     """One pass through every join in the OLM chain. Each assertion
     pinpoints exactly which join broke if a regression lands."""
@@ -185,20 +237,26 @@ async def test_negotiable_olm_chain_to_coverage_to_narration(
     # ---- Stage 1: parser writes nodes — one low-conf, one normal-conf,
     # plus an extra flagged via DISPUTED status to exercise both reasons.
     low_conf = build_node(
-        node_type="equation", node_id="eq_low", attempt_id=att.id,
+        node_type="equation",
+        node_id="eq_low",
+        attempt_id=att.id,
         source="parser",
         content={"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
         parser_confidence=0.45,
     )
     disputed = build_node(
-        node_type="definition", node_id="def_disp", attempt_id=att.id,
+        node_type="definition",
+        node_id="def_disp",
+        attempt_id=att.id,
         source="parser",
         content={"concept": "density", "meaning": "stuff per place"},
         parser_confidence=0.95,
         status="DISPUTED",
     )
     high_conf = build_node(
-        node_type="condition", node_id="c_ok", attempt_id=att.id,
+        node_type="condition",
+        node_id="c_ok",
+        attempt_id=att.id,
         source="parser",
         content={"applies_when": "incompressible", "label": ""},
         parser_confidence=1.0,
@@ -208,7 +266,10 @@ async def test_negotiable_olm_chain_to_coverage_to_narration(
 
     # ---- Stage 3: paraphrase the low-conf entry.
     out = await handle_paraphrase(
-        db=db, neo=neo, session_id=sess.id, entry_id="eq_low",
+        db=db,
+        neo=neo,
+        session_id=sess.id,
+        entry_id="eq_low",
         body=ParaphraseRequest(surface_form="ρ A v stays the same"),
     )
     assert out["entry"]["status"] == "DUAL"
@@ -216,7 +277,10 @@ async def test_negotiable_olm_chain_to_coverage_to_narration(
 
     # ---- Stage 4: skip the disputed entry.
     out = await handle_skip(
-        db=db, neo=neo, session_id=sess.id, entry_id="def_disp",
+        db=db,
+        neo=neo,
+        session_id=sess.id,
+        entry_id="def_disp",
     )
     assert out["entry"]["status"] == "DUAL"
     assert out["entry"]["student_belief"] is None
@@ -229,22 +293,22 @@ async def test_negotiable_olm_chain_to_coverage_to_narration(
     captured: dict = {}
 
     def _create(**kwargs):
-        captured.setdefault("bodies", []).append(
-            json.loads(kwargs["messages"][1]["content"])
-        )
-        return MagicMock(choices=[MagicMock(message=MagicMock(
-            content='{"matches":[]}'
-        ))])
+        captured.setdefault("bodies", []).append(json.loads(kwargs["messages"][1]["content"]))
+        return MagicMock(choices=[MagicMock(message=MagicMock(content='{"matches":[]}'))])
 
     # A minimal reference graph with one equation triggers exactly one
     # binary-type LLM call (compute_coverage skips types with no refs).
-    reference_graph = KGGraph(nodes=[
-        build_node(
-            node_type="equation", node_id="ref_eq", attempt_id=att.id,
-            source="reference",
-            content={"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
-        ),
-    ])
+    reference_graph = KGGraph(
+        nodes=[
+            build_node(
+                node_type="equation",
+                node_id="ref_eq",
+                attempt_id=att.id,
+                source="reference",
+                content={"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
+            ),
+        ]
+    )
     with patch("apollo.overseer.coverage.OpenAI") as mc:
         mc.return_value.chat.completions.create.side_effect = _create
         cov = await compute_coverage(post_graph, reference_graph)
@@ -255,8 +319,8 @@ async def test_negotiable_olm_chain_to_coverage_to_narration(
     assert eq_bodies, "expected one equation-type LLM call"
     student_entries = eq_bodies[0]["student_entries"]
     eq_low_payload = next(
-        (e for e in student_entries
-         if e.get("symbolic") == "A1*v1 - A2*v2"), None,
+        (e for e in student_entries if e.get("symbolic") == "A1*v1 - A2*v2"),
+        None,
     )
     assert eq_low_payload is not None
     assert eq_low_payload["student_belief"] == "ρ A v stays the same"
@@ -284,6 +348,7 @@ async def test_negotiable_olm_chain_to_coverage_to_narration(
 # Done-gate uses, so the smoke exercises read_graph + the fake.
 # ---------------------------------------------------------------------------
 
+
 async def _read_graph(neo: _Neo, attempt_id: int) -> KGGraph:
     """Mimic KGStore.read_graph against the fake. Doesn't bother with
     edges — the gate doesn't read them."""
@@ -295,5 +360,6 @@ async def _read_graph(neo: _Neo, attempt_id: int) -> KGGraph:
         )
         async for rec in result:
             from apollo.knowledge_graph.store import _record_to_node
+
             nodes.append(_record_to_node(dict(rec["props"]), list(rec["labels"])))
     return KGGraph(nodes=nodes, edges=[])

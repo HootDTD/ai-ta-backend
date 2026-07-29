@@ -2,7 +2,7 @@
 
 ``make_course_retrieve_fn(db, *, search_space_id, top_k)`` returns the async
 ``retrieve(question)`` closure that ``find_or_generate`` / ``validate_pair`` call.
-It runs the existing hybrid search (pgvector + FTS over ``aita_chunks``) scoped to
+It runs the existing hybrid search (pgvector + FTS over ``internal.document_chunks``) scoped to
 ``search_space_id`` and maps each chunk dict into an immutable ``GroundingSpan`` —
 real course grounding for the generator and the stage-3 faithfulness judge
 (replacing the v1 no-span stub that rejected every candidate).

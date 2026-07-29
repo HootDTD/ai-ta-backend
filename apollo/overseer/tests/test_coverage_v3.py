@@ -1,17 +1,19 @@
 """V3 coverage tests (item #10): retry, batch, confidence, no soft-fail."""
-from __future__ import annotations
-import asyncio
 
+from __future__ import annotations
+
+import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from apollo.errors import CoverageGradingError
-from apollo.ontology import Edge, EdgeType, KGGraph, build_node
+from apollo.ontology import KGGraph, build_node
 from apollo.overseer.coverage import (
     _RETRY_ATTEMPTS,
     _batch_binary_match,
+    _sign_gate_equation_verdicts,
     compute_coverage,
 )
 
@@ -26,8 +28,7 @@ def _eq_node(node_id: str, symbolic: str, label: str = "", *, attempt_id: int = 
     )
 
 
-def _cond_node(node_id: str, applies_when: str, label: str = "",
-               *, attempt_id: int = 1):
+def _cond_node(node_id: str, applies_when: str, label: str = "", *, attempt_id: int = 1):
     return build_node(
         node_type="condition",
         node_id=node_id,
@@ -69,24 +70,36 @@ def _mock_openai_always(payload: str):
 
 # ---- compute_coverage end-to-end ----------------------------------------
 
+
 @patch("apollo.overseer.coverage.OpenAI")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_compute_coverage_batches_binary_calls(mock_client_cls):
     """One LLM call per binary type, regardless of how many ref nodes."""
-    student = KGGraph(nodes=[
-        _eq_node("stu_eq1", "A1*v1 - A2*v2"),
-        _eq_node("stu_eq2", "P1 + 0.5*rho*v1**2 - P2 - 0.5*rho*v2**2"),
-    ])
-    reference = KGGraph(nodes=[
-        _eq_node("ref_continuity", "rho*A1*v1 - rho*A2*v2", "Continuity",
-                 attempt_id=1),
-        _eq_node("ref_bernoulli", "P1 + 0.5*rho*v1**2 - P2 - 0.5*rho*v2**2",
-                 "Bernoulli", attempt_id=1),
-    ])
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_continuity", "covered": True, "confidence": 0.9},
-        {"ref_id": "ref_bernoulli", "covered": True, "confidence": 0.9},
-    ]})
+    student = KGGraph(
+        nodes=[
+            _eq_node("stu_eq1", "A1*v1 - A2*v2"),
+            _eq_node("stu_eq2", "P1 + 0.5*rho*v1**2 - P2 - 0.5*rho*v2**2"),
+        ]
+    )
+    reference = KGGraph(
+        nodes=[
+            _eq_node("ref_continuity", "rho*A1*v1 - rho*A2*v2", "Continuity", attempt_id=1),
+            _eq_node(
+                "ref_bernoulli",
+                "P1 + 0.5*rho*v1**2 - P2 - 0.5*rho*v2**2",
+                "Bernoulli",
+                attempt_id=1,
+            ),
+        ]
+    )
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_continuity", "covered": True, "confidence": 0.9},
+                {"ref_id": "ref_bernoulli", "covered": True, "confidence": 0.9},
+            ]
+        }
+    )
     client = _mock_openai_always(payload)
     mock_client_cls.return_value = client
 
@@ -105,12 +118,18 @@ def test_low_confidence_covered_downgraded_to_missing(mock_client_cls):
     """Below-floor confidence on covered=true => downgraded to missing
     (item #10 confidence gate)."""
     student = KGGraph(nodes=[_eq_node("stu_eq1", "A*v")])
-    reference = KGGraph(nodes=[
-        _eq_node("ref_eq1", "rho*A*v", "Continuity"),
-    ])
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_eq1", "covered": True, "confidence": 0.2},
-    ]})
+    reference = KGGraph(
+        nodes=[
+            _eq_node("ref_eq1", "rho*A*v", "Continuity"),
+        ]
+    )
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_eq1", "covered": True, "confidence": 0.2},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
 
     result = asyncio.run(compute_coverage(student, reference))
@@ -124,10 +143,12 @@ def test_low_confidence_covered_downgraded_to_missing(mock_client_cls):
 def test_empty_student_short_circuits_without_llm(mock_client_cls):
     """No student equations of a type => no LLM call needed; all missing."""
     student = KGGraph(nodes=[])  # empty
-    reference = KGGraph(nodes=[
-        _eq_node("ref_eq1", "x"),
-        _cond_node("ref_c1", "y"),
-    ])
+    reference = KGGraph(
+        nodes=[
+            _eq_node("ref_eq1", "x"),
+            _cond_node("ref_c1", "y"),
+        ]
+    )
     client = MagicMock()
     mock_client_cls.return_value = client
 
@@ -142,9 +163,13 @@ def test_empty_student_short_circuits_without_llm(mock_client_cls):
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_retry_on_transient_then_succeeds(mock_client_cls):
     """First call raises; second succeeds. Final result is the success."""
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_eq1", "covered": True, "confidence": 0.9},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_eq1", "covered": True, "confidence": 0.9},
+            ]
+        }
+    )
     success = MagicMock(choices=[MagicMock(message=MagicMock(content=payload))])
     client = MagicMock()
     client.chat.completions.create.side_effect = [
@@ -182,13 +207,18 @@ def test_retry_exhausted_raises_coverage_grading_error(mock_client_cls):
 
 # ---- _batch_binary_match unit tests -------------------------------------
 
+
 @patch("apollo.overseer.coverage.OpenAI")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_batch_returns_verdict_per_ref_id(mock_client_cls):
-    payload = json.dumps({"matches": [
-        {"ref_id": "a", "covered": True, "confidence": 0.8},
-        {"ref_id": "b", "covered": False, "confidence": 0.9},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "a", "covered": True, "confidence": 0.8},
+                {"ref_id": "b", "covered": False, "confidence": 0.9},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
     refs = [_eq_node("a", "x"), _eq_node("b", "y")]
     students = [_eq_node("s1", "x")]
@@ -209,9 +239,13 @@ def test_batch_fills_missing_ref_with_not_covered(mock_client_cls):
     """If LLM returns matches for fewer ref_ids than asked, fill the
     remainder with covered=false at confidence 0 — orchestrator must
     have a verdict for every ref."""
-    payload = json.dumps({"matches": [
-        {"ref_id": "a", "covered": True, "confidence": 0.9},
-    ]})  # missing "b"
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "a", "covered": True, "confidence": 0.9},
+            ]
+        }
+    )  # missing "b"
     mock_client_cls.return_value = _mock_openai_always(payload)
     refs = [_eq_node("a", "x"), _eq_node("b", "y")]
     students = [_eq_node("s1", "x")]
@@ -248,6 +282,7 @@ def test_batch_with_no_student_short_circuits_to_all_missing():
 
 # ---- procedure scoring with retry / confidence --------------------------
 
+
 @patch("apollo.overseer.coverage.OpenAI")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_procedure_score_with_confidence(mock_client_cls):
@@ -276,3 +311,55 @@ def test_procedure_retry_exhausted_raises(mock_client_cls):
     with pytest.raises(CoverageGradingError) as exc_info:
         asyncio.run(compute_coverage(student, reference))
     assert exc_info.value.stage == "procedure_match"
+
+
+# ---- _sign_gate_equation_verdicts (pure, no LLM) -------------------------
+
+
+def test_sign_gate_keeps_sign_exact_covered_verdict():
+    """A student equation sign-exact equivalent to the reference stays
+    covered — the gate is downgrade-only and never touches genuine matches."""
+    ref = _eq_node("ref_eq", "x - y")
+    student = _eq_node("stu_eq", "x - y")
+    verdicts = {"ref_eq": {"covered": True, "confidence": 0.9}}
+
+    gated = _sign_gate_equation_verdicts(
+        verdicts=verdicts,
+        reference_nodes=[ref],
+        student_nodes=[student],
+    )
+
+    assert gated["ref_eq"]["covered"] is True
+
+
+def test_sign_gate_downgrades_sign_reversed_false_positive():
+    """D4/T10: the student wrote the SIGN-REVERSED mutant of the reference —
+    the LLM's covered=True is forced to False, and the input verdict mapping
+    is never mutated (a NEW dict is returned)."""
+    ref = _eq_node("ref_eq", "x - y")
+    student = _eq_node("stu_eq", "y - x")
+    verdicts = {"ref_eq": {"covered": True, "confidence": 0.9}}
+
+    gated = _sign_gate_equation_verdicts(
+        verdicts=verdicts,
+        reference_nodes=[ref],
+        student_nodes=[student],
+    )
+
+    assert gated["ref_eq"]["covered"] is False
+    assert verdicts["ref_eq"]["covered"] is True  # input never mutated
+
+
+def test_sign_gate_empty_student_pool_returns_verdicts_unchanged():
+    """No student equations -> an empty comparison pool — the gate returns
+    the verdicts mapping as-is (nothing to compare against)."""
+    ref = _eq_node("ref_eq", "x - y")
+    verdicts = {"ref_eq": {"covered": True, "confidence": 0.9}}
+
+    gated = _sign_gate_equation_verdicts(
+        verdicts=verdicts,
+        reference_nodes=[ref],
+        student_nodes=[],
+    )
+
+    assert gated is verdicts

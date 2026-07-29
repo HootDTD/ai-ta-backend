@@ -69,7 +69,7 @@ def _spy_append_turn(monkeypatch):
     db_session.commit = AsyncMock(return_value=None)
     monkeypatch.setattr(server, "get_async_session", lambda: _FakeSessionCM(db_session))
 
-    fake_chat = SimpleNamespace(id=7, search_space_id=1, updated_at=None)
+    fake_chat = SimpleNamespace(id=7, course_id=1, updated_at=None)
     monkeypatch.setattr(
         server,
         "get_chat_session_for_user",
