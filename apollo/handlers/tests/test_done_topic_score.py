@@ -280,7 +280,7 @@ async def test_remediation_flag_on_adds_review_with_mocked_retrieval(monkeypatch
 
     assert "review" not in out["feedback"]["topic_feedback"][0]
     assert out["feedback"]["topic_feedback"][1]["review"] == [
-        {"doc_id": 55, "label": "[Textbook, p. 18]", "page": 18}
+        {"doc_id": 55, "label": "[Textbook, p. 18]", "page": 18, "upload_id": None}
     ]
     retrieve.assert_awaited_once()
 
@@ -306,7 +306,7 @@ async def test_remediation_matching_concept_adds_review(monkeypatch):
     )
 
     assert out["feedback"]["topic_feedback"][1]["review"] == [
-        {"doc_id": 55, "label": "[Textbook, p. 18]", "page": 18}
+        {"doc_id": 55, "label": "[Textbook, p. 18]", "page": 18, "upload_id": None}
     ]
     retrieve.assert_awaited_once()
 
