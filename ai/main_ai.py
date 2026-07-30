@@ -80,9 +80,14 @@ def normalize_query(text: str) -> str:
 
 
 def check_question_relevance(
-    question: str, subject: str | None = None
+    question: str, subject: str | None = None, current_topic: str | None = None
 ) -> Dict[str, str]:
     """Use the LLM to classify question relevance as full, partial, or none.
+
+    ``current_topic`` anchors the guard to what the student is studying right
+    now (concept + problem context) — without it the classifier judges the
+    bare question against the subject title alone, which rejects module-level
+    content the title doesn't cover.
 
     Returns a dict with keys: relevance, on_topic_portion, off_topic_portion, reason.
     """
@@ -98,11 +103,13 @@ def check_question_relevance(
 
     client = _client()
     subject = subject or get_subject_name()
-    system = relevance_guard_prompt(subject)
+    system = relevance_guard_prompt(subject, current_topic=current_topic)
     payload = {
         "subject": subject,
         "question": cleaned,
     }
+    if current_topic:
+        payload["current_topic"] = current_topic
 
     fail_open: Dict[str, str] = {
         "relevance": "full",

@@ -365,10 +365,17 @@ class Orchestrator:
         return False
 
     def _check_question_relevance(self, question: str) -> Dict[str, str]:
-        """Return graduated relevance classification for the question."""
+        """Return graduated relevance classification for the question.
+
+        Classifies against the per-request course subject (``cfg.subject_name``)
+        — the global fallback is the uninformative "course/textbook" placeholder
+        whenever TEXTBOOK_SUBJECT is unset, under which the guard rejects
+        in-scope questions on phrasing alone.
+        """
 
         try:
-            return check_question_relevance(question)
+            subject_name = self.cfg.subject_name if self.cfg else get_subject_name()
+            return check_question_relevance(question, subject_name)
         except Exception:
             log.error("Subject relevance check failed, defaulting to allow", exc_info=True)
             return {

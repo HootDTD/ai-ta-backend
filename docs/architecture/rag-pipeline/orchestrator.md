@@ -6,7 +6,7 @@ owns:
 related:
   - rag-pipeline/main-ai
   - rag-pipeline/prompts-parse-relevance
-last_verified: 2026-07-25
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -29,9 +29,11 @@ mistake it for the live scope filter.
 `run()` parses the question, then loops `_iterative_research` up to
 `max_retrieval_rounds`, **doubling `token_budget` and `k_sem`/`k_lex` (capped) on
 each `bundle.validate()` failure**. The **pre-retrieval relevance guard**
-(`check_question_relevance`, full/partial/none, fail-open) and **partial-relevance
-splitting** (`RelevanceNote`, only fires when `bundle.provenance.relevance_level
-== "partial"`, set only here) live on THIS path — not the live one.
+(`check_question_relevance`, full/partial/none, fail-open; classifies against
+`cfg.subject_name` when a `RequestConfig` is present, else the global
+`get_subject_name()`) and **partial-relevance splitting** (`RelevanceNote`, only
+fires when `bundle.provenance.relevance_level == "partial"`, set only here) live
+on THIS path — not the live one.
 
 ## Invariants & gotchas
 
