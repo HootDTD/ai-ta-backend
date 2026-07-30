@@ -10,7 +10,7 @@ related:
   - apollo/overseer/topic-score
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-07-28
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -50,7 +50,7 @@ With `INTERACTION3` enabled and the problem concept allowed by
 `INTERACTION_CONCEPTS`, `done.py` passes successful structured feedback to
 `remediation.py`. A non-null session grounding bundle is reused exclusively;
 only a null bundle triggers fresh per-topic retrieval (`top_k=3`, 800 tokens).
-The helper returns citation-only `{doc_id, label, page}` pointers.
+The helper returns citation-only `{doc_id, label, page, upload_id}` pointers — `upload_id` (int `app.uploads.id` from chunk metadata `teacher_upload_id`, None on pre-storage paths or junk values) lets the UI link the chip to the stored source PDF via `GET /materials/file-url`.
 
 ## Invariants & gotchas
 

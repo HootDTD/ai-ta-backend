@@ -7,7 +7,7 @@ related:
   - apollo/conversation/routing/router
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
-last_verified: 2026-07-29
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -32,7 +32,14 @@ stub: false
   `ask_hoot_available` — mirrors the chat-handler aside gate (INTERACTION4 +
   `interaction_allowed_for_concept(problem.concept_id)`, False with no current
   problem) so the student UI only renders the Ask Hoot button where the
-  INTERACTION4 hint lane can actually run.
+  INTERACTION4 hint lane can actually run. Messages serialize via
+  `_snapshot_message`: INTERACTION4 aside rows carry the **wire** intent
+  `"reference_aside"` (translated from the stored `ASIDE_MESSAGE_INTENT_TAG`;
+  the only intent value the student UI keys on — other rows' internal intents
+  are not exposed) plus an `aside: {text, citations, in_scope}` payload
+  rebuilt from the row's `message_metadata` (written by `handlers/chat` since
+  2026-07-30; older aside rows come back with the intent but no payload, so
+  the UI's card renders without chips).
 
 ## Data flow
 

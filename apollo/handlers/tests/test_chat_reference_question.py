@@ -123,6 +123,14 @@ async def test_reference_question_allowed_returns_aside_and_persona_resume(monke
     assert persisted[1].intent == ASIDE_MESSAGE_INTENT_TAG
     assert persisted[0].intent is None
     assert persisted[2].intent is None
+    # The structured payload persists on the aside row so the session
+    # snapshot can replay citations after a reload; the flanking rows
+    # carry no aside metadata.
+    assert persisted[1].message_metadata == {
+        "aside": {"citations": [{"label": "Week 2, p. 4"}], "in_scope": True}
+    }
+    assert persisted[0].message_metadata == {}
+    assert persisted[2].message_metadata == {}
 
 
 async def test_reference_question_nonmatching_concept_never_executes_aside(monkeypatch):

@@ -84,7 +84,16 @@ def _pointer(snippet: BundleSnippet | dict[str, Any]) -> dict[str, Any]:
         doc_label = DOC_TYPE_LABELS.get(kind, get_citation_label())
         label = f"[{doc_label}, p. {page}]" if page is not None else f"[{doc_label}]"
 
-    return {"doc_id": doc_id, "label": label, "page": page}
+    # teacher_upload_id (app.uploads.id) resolves the pointer to its stored
+    # source PDF via GET /materials/file-url; None for pre-storage ingestion
+    # paths, where the UI keeps the chip unlinked.
+    raw_upload_id = metadata.get("teacher_upload_id")
+    try:
+        upload_id = int(raw_upload_id) if raw_upload_id not in (None, "") else None
+    except (TypeError, ValueError):
+        upload_id = None
+
+    return {"doc_id": doc_id, "label": label, "page": page, "upload_id": upload_id}
 
 
 def _citation_pointers(
