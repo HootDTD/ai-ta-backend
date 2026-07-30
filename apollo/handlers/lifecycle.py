@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.hoot_bridge.reference_answer import is_enabled as _interaction4_enabled
 from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import (
@@ -17,6 +18,7 @@ from apollo.persistence.models import (
     TutoringSession,
 )
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
+from config.settings import interaction_allowed_for_concept
 
 _LOG = logging.getLogger(__name__)
 
@@ -139,11 +141,13 @@ async def handle_get_session(
         msgs = []
 
     problem = None
+    problem_concept_slug: str | None = None
     if sess.current_problem_id and sess.concept_id is not None:
         for p in await list_problems_for_concept(
             db, concept_id=sess.concept_id, search_space_id=sess.course_id
         ):
             if p.database_id == sess.current_problem_id:
+                problem_concept_slug = p.concept_id
                 problem = {
                     "id": p.id,
                     "concept_id": p.concept_id,
@@ -154,6 +158,16 @@ async def handle_get_session(
                 }
                 break
 
+    # Mirrors the chat-handler aside gate (INTERACTION4 + concept allowlist)
+    # so the UI only renders the Ask Hoot button where the lane can run;
+    # off-allowlist ask_hoot requests would otherwise silently fall through
+    # to an ordinary teaching turn.
+    ask_hoot_available = bool(
+        problem is not None
+        and _interaction4_enabled()
+        and interaction_allowed_for_concept(problem_concept_slug)
+    )
+
     return {
         "session_id": sess.id,
         "user_id": sess.user_id,
@@ -163,6 +177,7 @@ async def handle_get_session(
         "phase": sess.phase,
         "problem": problem,
         "kg": kg,
+        "ask_hoot_available": ask_hoot_available,
         "messages": [
             {"role": m.role, "content": m.content, "turn_index": m.turn_index}
             for m in msgs
