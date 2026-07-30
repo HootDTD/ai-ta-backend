@@ -339,6 +339,15 @@ async def _execute_reference_question(
             content=result.text,
             turn_index=next_idx + 1,
             intent=ASIDE_MESSAGE_INTENT_TAG,
+            # The structured payload rides with the row so the session
+            # snapshot can replay the aside card WITH its citations after a
+            # reload (text is `content`, so only citations/in_scope persist).
+            message_metadata={
+                "aside": {
+                    "citations": result.citations,
+                    "in_scope": result.in_scope,
+                }
+            },
         )
     )
     db.add(
