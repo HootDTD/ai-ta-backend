@@ -7,7 +7,7 @@ related:
   - apollo/conversation/routing/router
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
-last_verified: 2026-07-25
+last_verified: 2026-07-29
 stub: false
 ---
 
@@ -28,7 +28,11 @@ stub: false
   are PERSISTED, not deleted, at end).
 - `handle_get_session(*, db, neo, session_id) -> dict` — GET `/sessions/{id}`
   snapshot: session fields + current problem + KG panel + messages; degrades the
-  KG to `{nodes:[], edges:[]}` on `KG_DEGRADED_ERRORS`.
+  KG to `{nodes:[], edges:[]}` on `KG_DEGRADED_ERRORS`. Also returns
+  `ask_hoot_available` — mirrors the chat-handler aside gate (INTERACTION4 +
+  `interaction_allowed_for_concept(problem.concept_id)`, False with no current
+  problem) so the student UI only renders the Ask Hoot button where the
+  INTERACTION4 hint lane can actually run.
 
 ## Data flow
 
