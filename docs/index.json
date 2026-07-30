@@ -1,8 +1,8 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-07-28",
-  "repo": "aside-tutor",
+  "generated_at": "2026-07-30",
+  "repo": "class-perf",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -118,6 +118,7 @@
     "apollo/projections/__init__.py": "apollo/projections/mastery",
     "apollo/projections/classroom.py": "apollo/projections/classroom",
     "apollo/projections/mastery.py": "apollo/projections/mastery",
+    "apollo/projections/performance.py": "apollo/projections/performance",
     "apollo/projections/scorecard.py": "apollo/projections/scorecard",
     "apollo/provisioning/__init__.py": "apollo/provisioning/_index",
     "apollo/provisioning/authored_problem.py": "apollo/provisioning/authored-problem",
@@ -900,6 +901,14 @@
       "owns": [
         "apollo/projections/mastery.py",
         "apollo/projections/__init__.py"
+      ]
+    },
+    "apollo/projections/performance": {
+      "path": "docs/architecture/apollo/projections/performance.md",
+      "kind": "leaf",
+      "description": "class_performance \u2014 the teacher classroom-performance payload (roster, best-wins grades, distribution, activity, rubric-loss signal, concept rollup) aggregated from served grade snapshots.",
+      "owns": [
+        "apollo/projections/performance.py"
       ]
     },
     "apollo/projections/scorecard": {
@@ -2078,6 +2087,7 @@
       "children": [
         "apollo/projections/classroom",
         "apollo/projections/mastery",
+        "apollo/projections/performance",
         "apollo/projections/scorecard"
       ]
     },

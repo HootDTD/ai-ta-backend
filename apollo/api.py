@@ -60,6 +60,7 @@ from apollo.projections.classroom import (
     mastery_heatmap,
     struggle_signals,
 )
+from apollo.projections.performance import class_performance
 from apollo.provisioning.authored_sets.api import router as authored_sets_router
 from apollo.provisioning.concepts_api import router as teacher_concepts_router
 from apollo.provisioning.problem_generation.api import router as problem_generation_router
@@ -427,6 +428,17 @@ async def classroom_struggles(
         search_space_id=search_space_id,
         window_days=window_days,
     )
+
+
+@router.get("/teacher/classroom/{search_space_id}/performance")
+async def classroom_performance(
+    search_space_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    auth = await require_user(request)
+    await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
+    return await class_performance(db, search_space_id=search_space_id)
 
 
 # ----------------------------------------------------------------------
