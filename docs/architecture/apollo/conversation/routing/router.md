@@ -10,7 +10,7 @@ related:
   - apollo/conversation/agent/persona-reply
   - apollo/persistence/neo4j-client
   - apollo/provisioning/_index
-last_verified: 2026-07-27
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -50,6 +50,7 @@ Route → handler → auth dep (owned by `routing/auth-deps`):
 | GET `/problems` | `handle_list_problems` | user + course_member |
 | POST `/sessions/{id}/kg/{entry}/{challenge,paraphrase,skip}`, GET `.../trace` | `handle_*` (negotiate) | session_owner |
 | GET `/teacher/classroom/{id}/heatmap`,`/struggles` | `mastery_heatmap`/`struggle_signals` | course_teacher |
+| GET `/teacher/classroom/{id}/performance` | `class_performance` (projections/performance) | course_teacher |
 
 Session-scoped routes inject the auth dep only for its gate side-effect (401/403/404); the identity is unused at this layer. Teacher classroom routes are teacher-gated (they expose every student's state).
 
