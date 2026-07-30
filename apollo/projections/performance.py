@@ -31,6 +31,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.overseer.rubric import LETTER_BANDS, score_to_letter
+from apollo.projections import performance_insights
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +51,12 @@ _LETTER_EXPR = """
     )
 """
 
-# The four rubric axes persisted under diagnostic_report -> 'rubric' by the
-# Done-time grading path (apollo/overseer/rubric.compute_rubric).
-_RUBRIC_DIMENSIONS = ("procedure", "justification", "simplification", "misconception_corrected")
+# The rubric axes persisted under diagnostic_report -> 'rubric' by the Done-time
+# grading path (apollo/overseer/rubric.compute_rubric) that the teacher panel
+# surfaces as the "where does the class lose points" signal. The fourth axis the
+# grader also writes (misconception_corrected) is deliberately NOT surfaced — v2
+# dropped it as noise (design spec 2026-07-30 §2).
+_RUBRIC_DIMENSIONS = ("procedure", "justification", "simplification")
 
 
 def _round1(value: Any) -> float:
@@ -274,14 +278,17 @@ async def _roster_counts(db: AsyncSession, *, search_space_id: int) -> dict[str,
     return {"students": counts.get("student", 0), "teachers": counts.get("teacher", 0)}
 
 
-async def _progress_rows(db: AsyncSession, *, search_space_id: int) -> dict[str, dict[str, Any]]:
+async def _progress_rows(db: AsyncSession, *, search_space_id: int) -> dict[str, str | None]:
+    """``user_id -> last-updated ISO timestamp`` for every student with a
+    progress row. v2 no longer surfaces xp/level, but this set still drives the
+    ``signed_in_only`` derivation (a progress row with no attempts) and supplies
+    those students' ``last_active``."""
     rows = (
         (
             await db.execute(
                 text(
                     """
-                SELECT sp.user_id AS user_id, sp.xp_total AS xp_total, sp.level AS level,
-                       sp.updated_at AS updated_at
+                SELECT sp.user_id AS user_id, sp.updated_at AS updated_at
                 FROM app.student_progress sp
                 WHERE sp.course_id = :search_space_id
                 """
@@ -293,11 +300,7 @@ async def _progress_rows(db: AsyncSession, *, search_space_id: int) -> dict[str,
         .all()
     )
     return {
-        str(row["user_id"]): {
-            "xp": int(row["xp_total"]),
-            "level": int(row["level"]),
-            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
-        }
+        str(row["user_id"]): (row["updated_at"].isoformat() if row["updated_at"] else None)
         for row in rows
     }
 
@@ -352,6 +355,103 @@ def _distribution(best_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"letter": letter, "count": counts.get(letter, 0)} for letter in letters]
 
 
+async def _problem_meta(db: AsyncSession, *, problem_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """``problem_id -> {problem_code, concept_id, concept_name}`` for the given
+    problems (those with >=1 graded best row), joined through their concept."""
+    if not problem_ids:
+        return {}
+    rows = (
+        (
+            await db.execute(
+                text(
+                    """
+                SELECT p.id AS problem_id, p.problem_code AS problem_code,
+                       c.id AS concept_id, c.display_name AS concept_name
+                FROM app.problems p
+                JOIN app.concepts c ON c.id = p.concept_id
+                WHERE p.id = ANY(:problem_ids)
+                """
+                ),
+                {"problem_ids": problem_ids},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return {
+        int(row["problem_id"]): {
+            "problem_code": row["problem_code"],
+            "concept_id": int(row["concept_id"]),
+            "concept_name": row["concept_name"],
+        }
+        for row in rows
+    }
+
+
+def _problems_block(
+    best_rows: list[dict[str, Any]], meta_by_problem: dict[int, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """One row per problem with >=1 graded best attempt: best-wins letter
+    distribution (all bands incl. zeros), mean best score, and distinct graded
+    students. Ordered by concept_name, then problem_code."""
+    by_problem: dict[int, list[dict[str, Any]]] = {}
+    for row in best_rows:
+        by_problem.setdefault(row["problem_id"], []).append(row)
+    problems: list[dict[str, Any]] = []
+    for problem_id, rows in by_problem.items():
+        meta = meta_by_problem.get(problem_id)
+        if meta is None:  # pragma: no cover - best_rows FK-guaranteed to a problem
+            continue
+        scores = [r["score"] for r in rows]
+        problems.append(
+            {
+                "problem_id": problem_id,
+                "problem_code": meta["problem_code"],
+                "concept_id": meta["concept_id"],
+                "concept_name": meta["concept_name"],
+                "students_graded": len(rows),  # one best row per distinct student
+                "avg_best": _round1(sum(scores) / len(scores)),
+                "distribution": _distribution(rows),
+            }
+        )
+    problems.sort(key=lambda p: (p["concept_name"], p["problem_code"]))
+    return problems
+
+
+def _student_row(
+    user_id: str,
+    *,
+    email: str | None,
+    full_name: str | None,
+    attempts: int,
+    graded: int,
+    problems_tried: int,
+    best_grades: list[dict[str, Any]],
+    avg_best: float | None,
+    last_active: str | None,
+    engagement_core: dict[str, Any] | None,
+    aggs: list[performance_insights.ProblemAgg],
+) -> dict[str, Any]:
+    """One student row incl. the algorithmic ``engagement`` block + ``flags``
+    (composed by ``performance_insights.student_extras`` — a signed-in-only
+    student with no messages/attempts still gets ``not_started``)."""
+    return {
+        "user_id": user_id,
+        "email": email,
+        "full_name": full_name,
+        "attempts": attempts,
+        "graded": graded,
+        "problems_tried": problems_tried,
+        "best_grades": best_grades,
+        "avg_best": avg_best,
+        "letter": score_to_letter(round(avg_best)) if avg_best is not None else None,
+        "last_active": last_active,
+        **performance_insights.student_extras(
+            attempts=attempts, engagement_core=engagement_core, aggs=aggs
+        ),
+    }
+
+
 async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[str, Any]:
     """Assemble the full teacher classroom-performance payload for a course.
 
@@ -362,6 +462,10 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
     totals = await _attempt_totals(db, search_space_id=search_space_id)
     roster = await _roster_counts(db, search_space_id=search_space_id)
     progress = await _progress_rows(db, search_space_id=search_space_id)
+    engagement = await performance_insights.load_engagement(db, search_space_id=search_space_id)
+    aggregates = await performance_insights.load_problem_aggregates(
+        db, search_space_id=search_space_id, score_expr=_SCORE_EXPR
+    )
 
     active_ids = {row["user_id"] for row in totals}
     signed_in_only = [uid for uid in progress if uid not in active_ids]
@@ -379,37 +483,35 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
         best = sorted(best_by_user.get(uid, []), key=lambda b: -b["score"])
         avg_best = _round1(sum(b["score"] for b in best) / len(best)) if best else None
         students.append(
-            {
-                "user_id": uid,
-                "email": identities.get(uid, {}).get("email"),
-                "full_name": identities.get(uid, {}).get("full_name"),
-                "attempts": row["attempts"],
-                "graded": row["graded"],
-                "problems_tried": row["problems_tried"],
-                "best_grades": best,
-                "avg_best": avg_best,
-                "letter": score_to_letter(round(avg_best)) if avg_best is not None else None,
-                "xp": progress.get(uid, {}).get("xp", 0),
-                "level": progress.get(uid, {}).get("level", 1),
-                "last_active": row["last_active"],
-            }
+            _student_row(
+                uid,
+                email=identities.get(uid, {}).get("email"),
+                full_name=identities.get(uid, {}).get("full_name"),
+                attempts=row["attempts"],
+                graded=row["graded"],
+                problems_tried=row["problems_tried"],
+                best_grades=best,
+                avg_best=avg_best,
+                last_active=row["last_active"],
+                engagement_core=engagement.get(uid),
+                aggs=aggregates.get(uid, []),
+            )
         )
     for uid in signed_in_only:
         students.append(
-            {
-                "user_id": uid,
-                "email": identities.get(uid, {}).get("email"),
-                "full_name": identities.get(uid, {}).get("full_name"),
-                "attempts": 0,
-                "graded": 0,
-                "problems_tried": 0,
-                "best_grades": [],
-                "avg_best": None,
-                "letter": None,
-                "xp": progress[uid]["xp"],
-                "level": progress[uid]["level"],
-                "last_active": progress[uid]["updated_at"],
-            }
+            _student_row(
+                uid,
+                email=identities.get(uid, {}).get("email"),
+                full_name=identities.get(uid, {}).get("full_name"),
+                attempts=0,
+                graded=0,
+                problems_tried=0,
+                best_grades=[],
+                avg_best=None,
+                last_active=progress[uid],
+                engagement_core=engagement.get(uid),
+                aggs=aggregates.get(uid, []),
+            )
         )
     students.sort(key=lambda s: (0 if s["avg_best"] is not None else 1, -(s["avg_best"] or 0.0)))
 
@@ -419,6 +521,17 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
         if graded_student_avgs
         else None
     )
+
+    problem_ids = sorted({row["problem_id"] for row in best_rows})
+    problems = _problems_block(best_rows, await _problem_meta(db, problem_ids=problem_ids))
+    # Correlation / quartiles run only over students who have a served grade;
+    # the point carries the same avg_best the row shows and the email label.
+    graded_points = [
+        {"turns": s["engagement"]["teaching_turns"], "avg_best": s["avg_best"], "email": s["email"]}
+        for s in students
+        if s["avg_best"] is not None
+    ]
+    insights = performance_insights.build_insights(graded_points, aggregates)
 
     return {
         "roster": roster,
@@ -437,5 +550,7 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
         "activity_by_day": await _activity_by_day(db, search_space_id=search_space_id),
         "rubric_averages": await _rubric_averages(db, search_space_id=search_space_id),
         "concepts": await _concept_rollup(db, search_space_id=search_space_id),
+        "problems": problems,
         "students": students,
+        "insights": insights,
     }

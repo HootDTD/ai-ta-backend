@@ -1,5 +1,7 @@
-# SHA-256 after the DB-03 retirement guards and approved Interaction-1 migration
-# 048; frozen migration newlines are normalized to LF before hashing.
+# SHA-256 after the DB-03 retirement guards and the two approved sequential
+# exceptions: Interaction-1 migration 048 and Class-Performance-v2 migration 049
+# (auth.users identity grant); frozen migration newlines are normalized to LF
+# before hashing.
 cebf49c1757d8d62e7fd2400058d99964f6b25cf70c6634e079e3bd025ab3840  001_create_schema.py
 7d849f8c1f41a2ac0e3c834195c6113f27161c6da9ebe190a646a65f8c24fa8a  002_seed_from_supabase.py
 9e8cd3b654f5f9f9328895b3292bd89c22d680957ab3c11d42c4b51621f531b3  003_reindex_existing.py
@@ -49,3 +51,4 @@ f17c6882f524162d92bb2a07fd87946dfa78042cc4bc0ce96e0aa27492348bc2  043_apollo_ded
 91558f676824a9cd2592d149f134f45a26129a742410fcc4e93d1f3256f04a53  046_apollo_solution_source_llm_paired.sql
 7ffc4ed14a6f49b9c0f19ea0eed171f5cf876239f542637f6f79fbe91751d427  047_apollo_question_tally.sql
 f7b8760571f8bc8415aee8c3c462fe61dcc89a814fa72f500d45d0f04134bc52  048_apollo_session_grounding_bundle.sql
+36a662300d9cabb4f0f7bd58afcb35f7f4439b4e7a2f94d84bc6b2fe94588915  049_auth_users_identity_grant.sql

@@ -9,6 +9,7 @@ stub: false
 
 # Apollo projections — read-side reshapes of the grading artifact
 
+
 Every projection here is a **pure reshape of an already-built / already-persisted
 canonical grading artifact** — no fresh grading, resolution, LLM, or computing
 DB reads. `handlers/done.py` calls the scorecard + mastery projections after the
@@ -22,6 +23,7 @@ artifact row is durable.
 | [mastery](mastery.md) | `update_mastery_from_artifact` — flat-EWMA mastery ledger write (+ namespace init) | `apollo/projections/mastery.py`, `apollo/projections/__init__.py` |
 | [classroom](classroom.md) | `mastery_heatmap` / `struggle_signals` — teacher-facing SQL aggregations | `apollo/projections/classroom.py` |
 | [performance](performance.md) | `class_performance` — teacher class-performance payload over served grade snapshots | `apollo/projections/performance.py` |
+| [performance-insights](performance-insights.md) | Algorithmic engagement / retry / correlation / quartile / flag helpers behind the performance payload | `apollo/projections/performance_insights.py` |
 
 ## Cross-cutting invariants
 

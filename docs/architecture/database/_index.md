@@ -3,7 +3,7 @@ doc: database/_index
 description: Router for core persistence — the database/ + supabase/ slice, with the schema truth hierarchy and the add-a-column recipe.
 owns: []
 related: []
-last_verified: 2026-07-26
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -17,7 +17,7 @@ monolith (`chats/`, `knowledge/`, `reports/` moved to their own domains).
 | [models](models.md) | Core SQLAlchemy 2 ORM (course/document/upload/chat) | `database/models.py`, `__init__.py` |
 | [session](session.md) | Async engine/session + run_async bridge + DB-08b RLS | `database/session.py` |
 | [transforms](transforms.md) | Column-value coercion helpers | `database/transforms.py` |
-| [legacy-migrations](legacy-migrations.md) | FROZEN numbered chain through exception 048 | `database/migrations/**` (sentinel + manifest) |
+| [legacy-migrations](legacy-migrations.md) | FROZEN numbered chain through exceptions 048/049 | `database/migrations/**` (sentinel + manifest) |
 | [supabase-migrations](supabase-migrations.md) | ACTIVE timestamped chain + config/seed | `supabase/migrations/**`, `config.toml`, `seed.sql`, `.gitignore` |
 
 ## Cross-cutting invariants (truth hierarchy)
@@ -25,9 +25,10 @@ monolith (`chats/`, `knowledge/`, `reports/` moved to their own domains).
 - **`supabase/migrations/` (timestamped) = the CURRENT forward schema** — the
   28-table app/internal target (18 `app` / 10 `internal`, forced-RLS, enforced
   `app_runtime` role per DB-08b/c). `database/models.py` ORM MUST track it.
-- **`database/migrations/` 001–048 = FROZEN numbered history** — checksum-locked,
-  retired Python runners. `048` is the explicit Interaction-1 sequential
-  exception and targets the current `app` schema; do not extend it implicitly.
+- **`database/migrations/` 001–049 = FROZEN numbered history** — checksum-locked,
+  retired Python runners. `048` (Interaction-1) and `049` (Class-Performance-v2
+  `auth.users` grant) are the two explicit sequential exceptions, each a numbered
+  twin of an active-chain migration; do not extend the chain implicitly.
 - Three distinct `models.py` owners: [models](models.md) (core), apollo
   learner/grading ([apollo/persistence/models](../apollo/persistence/models.md)),
   reports (`reports/ai-use-models`). No overlap; `models.py` owns the FILE while
@@ -38,7 +39,7 @@ monolith (`chats/`, `knowledge/`, `reports/` moved to their own domains).
 To add a column on a tutoring/learner table: change the ORM model
 ([apollo/persistence/models](../apollo/persistence/models.md)) **and** normally add
 a migration to the active supabase chain
-([supabase-migrations](supabase-migrations.md)) in the SAME commit. Interaction-1
-is the explicit numbered exception at frozen `048`.
+([supabase-migrations](supabase-migrations.md)) in the SAME commit. `048`/`049`
+are the only explicit numbered exceptions in the frozen chain.
 For a core table (`app.courses`/`documents`/`chat_messages`/…) the ORM lives in
 [models](models.md); the same active-chain rule applies.
