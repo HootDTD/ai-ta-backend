@@ -78,8 +78,8 @@ def _strip_trailing_citations_block(text: str) -> str:
 def is_enabled() -> bool:
     """True iff INTERACTION4 is truthy. Default OFF.
 
-    Ishaan sets this in his local `.env` and tests before any deploy — never
-    added to Railway (brief, "Failure domain & flags").
+    Live on prod Railway since 2026-07-30 (`INTERACTION4=true`,
+    `INTERACTION_CONCEPTS=ethics`); local `.env` mirrors it for testing.
     """
     return os.getenv("INTERACTION4", "").lower() in {"1", "true", "yes", "on"}
 
@@ -96,6 +96,59 @@ class ReferenceAsideResult:
     in_scope: bool
     text: str
     citations: list[dict[str, Any]]
+
+
+async def _course_subject(db: AsyncSession, *, course_id: int) -> str:
+    """Resolve the subject the relevance guard classifies against.
+
+    Ladder: ``Course.subject_name`` → ``Course.name`` → global
+    ``get_subject_name()`` (env TEXTBOOK_SUBJECT → "course/textbook").
+    Best-effort like the keyword hints — a lookup failure degrades to the
+    global fallback instead of killing the aside, because the subject is an
+    advisory classifier input, not part of the answer path.
+    """
+    from config.settings import get_subject_name
+
+    try:
+        from sqlalchemy import select
+
+        from database.models import Course
+
+        row = (
+            await db.execute(select(Course.subject_name, Course.name).where(Course.id == course_id))
+        ).first()
+    except Exception:  # noqa: BLE001 - advisory input, never fatal
+        row = None
+    if row is not None:
+        subject = (row[0] or "").strip() or (row[1] or "").strip()
+        if subject:
+            return subject
+    return get_subject_name()
+
+
+# The problem statement can be long; the hint only needs enough text to anchor
+# the classifier to the module's topic, not the full statement.
+_TOPIC_HINT_TEXT_BUDGET = 240
+
+
+def _topic_hint(problem: Any) -> str | None:
+    """Compose "what the student is studying right now" from the problem.
+
+    ``concept_id`` is the concept slug (e.g. "ethics") and ``problem_text`` the
+    statement being taught — together they anchor the relevance guard to
+    module-level content a bare course title can't convey. Returns None when
+    either field is missing/non-string so malformed problems degrade to the
+    subject-only guard instead of raising.
+    """
+    slug = getattr(problem, "concept_id", None)
+    text = getattr(problem, "problem_text", None)
+    if not isinstance(slug, str) or not slug.strip():
+        return None
+    if not isinstance(text, str) or not text.strip():
+        return None
+    topic = slug.strip().replace("-", " ").replace("_", " ")
+    excerpt = " ".join(text.split())[:_TOPIC_HINT_TEXT_BUDGET]
+    return f"{topic} — current problem: {excerpt}"
 
 
 def _document_id_of(snippet: BundleSnippet) -> int | None:
@@ -261,7 +314,14 @@ async def answer_reference_question(
     from retrieval.pipeline import retrieve_for_question
 
     # Scope enforcement — the semantic filter / relevance guard never bypassed.
-    relevance = check_question_relevance(question)
+    # The guard classifies against the course's real subject plus what the
+    # student is studying right now; with neither it judges the bare question
+    # against the "course/textbook" placeholder and rejects in-scope questions
+    # on phrasing alone (2026-07-30 surveillance-tools aside bug).
+    subject = await _course_subject(db, course_id=course_id)
+    relevance = check_question_relevance(
+        question, subject=subject, current_topic=_topic_hint(problem)
+    )
     if relevance["relevance"] == "none":
         return ReferenceAsideResult(in_scope=False, text=_OUT_OF_SCOPE_TEXT, citations=[])
 
@@ -269,7 +329,7 @@ async def answer_reference_question(
     if relevance["relevance"] == "partial" and relevance.get("on_topic_portion"):
         keyword_query = relevance["on_topic_portion"]
     try:
-        _ctx_summary, filtered_terms = extract_and_filter_keywords(keyword_query)
+        _ctx_summary, filtered_terms = extract_and_filter_keywords(keyword_query, subject=subject)
     except Exception:  # noqa: BLE001 - keyword hints are optional, never fatal
         filtered_terms = []
     keywords: list[str] = []
