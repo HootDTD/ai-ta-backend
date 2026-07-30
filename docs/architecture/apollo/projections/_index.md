@@ -3,7 +3,7 @@ doc: apollo/projections/_index
 description: Router for the read-side projections over the canonical grading artifact (Campaign-plan Phase B).
 owns: []
 related: []
-last_verified: 2026-07-25
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -21,6 +21,7 @@ artifact row is durable.
 | [scorecard](scorecard.md) | `render_scorecard` — pure student-scorecard template over the artifact dict | `apollo/projections/scorecard.py` |
 | [mastery](mastery.md) | `update_mastery_from_artifact` — flat-EWMA mastery ledger write (+ namespace init) | `apollo/projections/mastery.py`, `apollo/projections/__init__.py` |
 | [classroom](classroom.md) | `mastery_heatmap` / `struggle_signals` — teacher-facing SQL aggregations | `apollo/projections/classroom.py` |
+| [performance](performance.md) | `class_performance` — teacher class-performance payload over served grade snapshots | `apollo/projections/performance.py` |
 
 ## Cross-cutting invariants
 
