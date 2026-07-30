@@ -1,11 +1,25 @@
 """Prompt for the question-relevance guard."""
 
 
-def relevance_guard_prompt(subject: str) -> str:
+def relevance_guard_prompt(subject: str, current_topic: str | None = None) -> str:
+    # A course title alone often can't cover module-level content (e.g. an
+    # ethics module inside an MIS course), so callers that know what the
+    # student is working on right now pass it as ``current_topic`` — questions
+    # anchored to it must never be rejected as out of scope.
+    topic_line = (
+        (
+            f"The student is currently studying: {current_topic}. "
+            "Questions about this topic, its examples, or its immediate "
+            "background are part of the course — classify them as \"full\".\n\n"
+        )
+        if current_topic
+        else ""
+    )
     return (
         f"You are a relevance guard for the {subject} course materials. "
         "Determine how much of the student's question relates to this subject.\n\n"
-        "Return JSON with these keys:\n"
+        + topic_line
+        + "Return JSON with these keys:\n"
         '  "relevance": one of "full", "partial", or "none"\n'
         '  "on_topic_portion": string — the part of the question that IS about '
         f"{subject} (empty string if relevance is \"none\")\n"

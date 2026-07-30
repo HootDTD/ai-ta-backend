@@ -8,7 +8,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/handlers/done
   - apollo/conversation/session-init
-last_verified: 2026-07-28
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -19,7 +19,8 @@ side-question ("wait, what IS a network effect?") through Hoot's own
 scoped, citation-backed QA lane, without leaving the Apollo teaching turn.
 Gated end-to-end by `INTERACTION4` (default OFF) plus the optional
 `INTERACTION_CONCEPTS` concept-slug allowlist (brief:
-`styx/plans/hoot-apollo-04-ask-hoot-hint-lane.md`).
+`styx/plans/hoot-apollo-04-ask-hoot-hint-lane.md`). Live on prod Railway since
+2026-07-30 (`INTERACTION4=true`, `INTERACTION_CONCEPTS=ethics`).
 
 ## Interface
 
@@ -50,12 +51,21 @@ Gated end-to-end by `INTERACTION4` (default OFF) plus the optional
 chat-turn persistence of its own (Apollo's `TutoringMessage` rows are the
 only persistence, written by the caller):
 
-1. `ai.main_ai.check_question_relevance` — the same relevance guard Hoot's
-   `/ask` uses. `relevance == "none"` short-circuits to an out-of-scope
+1. `ai.main_ai.check_question_relevance(question, subject=…, current_topic=…)`
+   — the graduated relevance guard (`rag-pipeline/prompts-parse-relevance`).
+   `subject` comes from `_course_subject` (ladder: `Course.subject_name` →
+   `Course.name` → global `get_subject_name()`; best-effort — a lookup failure
+   degrades to the global fallback, never kills the aside) and `current_topic`
+   from `_topic_hint` (concept slug + ≤240-char problem-text excerpt; `None` on
+   malformed problems). Both are REQUIRED context: with neither, the guard
+   classifies the bare question against the "course/textbook" placeholder and
+   rejects in-scope questions on phrasing alone (2026-07-30 surveillance-tools
+   bug). `relevance == "none"` short-circuits to an out-of-scope
    `ReferenceAsideResult` before any retrieval call — scope enforcement is
    never bypassed.
-2. `ai.main_ai.extract_and_filter_keywords` (best-effort; empty list on
-   failure) feeds `retrieval.pipeline.retrieve_for_question` — the same
+2. `ai.main_ai.extract_and_filter_keywords(query, subject=…)` (same resolved
+   subject; best-effort; empty list on failure) feeds
+   `retrieval.pipeline.retrieve_for_question` — the same
    hybrid-search + rerank + store-bias + pack_context lane `/ask` uses.
 3. Leakage filter (`_excluded_document_ids` + `_filter_leaked_snippets`):
    drops any snippet whose `document_id` is a course-wide paired solution

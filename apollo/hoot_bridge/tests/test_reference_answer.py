@@ -122,7 +122,8 @@ async def test_out_of_scope_question_returns_in_scope_refusal_aside():
         text="That's outside what's covered in this course's materials.",
         citations=[],
     )
-    relevance.assert_called_once_with("Where should I go this weekend?")
+    relevance.assert_called_once()
+    assert relevance.call_args.args[0] == "Where should I go this weekend?"
     retrieval.assert_not_awaited()
 
 
@@ -270,7 +271,8 @@ async def test_partial_relevance_uses_on_topic_portion_and_normalizes_keywords()
         )
 
     assert result.text == "Not found in the approved materials."
-    extraction.assert_called_once_with("How do network effects work?")
+    extraction.assert_called_once()
+    assert extraction.call_args.args[0] == "How do network effects work?"
     assert retrieval.await_args.kwargs["keywords"] == ["network effect", "adoption", "value"]
 
 
@@ -472,6 +474,156 @@ def test_strip_trailing_citations_block_only_touches_the_trailing_block():
     text = "See Citations: below for details.\n\nThe answer is X [A, p. 1]."
 
     assert _strip_trailing_citations_block(text) == text
+
+
+# ---------------------------------------------------------------------------
+# Course-subject + topic-hint wiring into the relevance guard
+# ---------------------------------------------------------------------------
+
+
+def _ethics_problem() -> SimpleNamespace:
+    return SimpleNamespace(
+        concept_id="ethics",
+        problem_text=(
+            "A city deploys license plate readers across downtown. "
+            "Evaluate the passive-observation concerns this raises."
+        ),
+        database_id=None,
+    )
+
+
+class _FirstRow:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+async def test_guard_receives_course_subject_and_current_topic():
+    """The guard must classify against the course's subject and the problem's
+    topic hint — never the bare question alone (the 2026-07-30 out-of-scope bug)."""
+    relevance = MagicMock(
+        return_value={
+            "relevance": "none",
+            "on_topic_portion": "",
+            "off_topic_portion": "surveillance tools",
+            "reason": "outside the course",
+        }
+    )
+
+    with (
+        patch("ai.main_ai.check_question_relevance", new=relevance),
+        patch("retrieval.pipeline.retrieve_for_question", new=AsyncMock()),
+        patch(
+            "apollo.hoot_bridge.reference_answer._course_subject",
+            new=AsyncMock(return_value="Management Information Systems"),
+        ),
+    ):
+        await answer_reference_question(
+            db=MagicMock(),
+            course_id=9,
+            question="What are some examples of surveillance tools?",
+            problem=_ethics_problem(),
+        )
+
+    kwargs = relevance.call_args.kwargs
+    assert relevance.call_args.args[0] == "What are some examples of surveillance tools?"
+    assert kwargs["subject"] == "Management Information Systems"
+    assert kwargs["current_topic"].startswith("ethics")
+    assert "license plate readers" in kwargs["current_topic"]
+
+
+async def test_keyword_extraction_receives_course_subject():
+    """extract_and_filter_keywords must filter against the same course subject."""
+    extraction = MagicMock(return_value=("", []))
+
+    with (
+        patch(
+            "ai.main_ai.check_question_relevance",
+            return_value={"relevance": "full", "on_topic_portion": ""},
+        ),
+        patch("ai.main_ai.extract_and_filter_keywords", new=extraction),
+        patch("retrieval.pipeline.retrieve_for_question", new=AsyncMock(return_value=([], {}))),
+        patch(
+            "apollo.hoot_bridge.reference_answer._excluded_document_ids",
+            new=AsyncMock(return_value=set()),
+        ),
+        patch(
+            "apollo.hoot_bridge.reference_answer._course_subject",
+            new=AsyncMock(return_value="Management Information Systems"),
+        ),
+    ):
+        await answer_reference_question(
+            db=MagicMock(),
+            course_id=9,
+            question="What are some examples of surveillance tools?",
+            problem=_ethics_problem(),
+        )
+
+    assert extraction.call_args.kwargs["subject"] == "Management Information Systems"
+
+
+async def test_course_subject_prefers_subject_name_then_name():
+    from apollo.hoot_bridge.reference_answer import _course_subject
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=_FirstRow(("Management Information Systems", "MGMT 38200")))
+    assert await _course_subject(db, course_id=1) == "Management Information Systems"
+
+    db.execute = AsyncMock(return_value=_FirstRow(("  ", "MGMT 38200: Intro to MIS")))
+    assert await _course_subject(db, course_id=1) == "MGMT 38200: Intro to MIS"
+
+
+async def test_course_subject_falls_back_to_global_when_course_missing():
+    from apollo.hoot_bridge.reference_answer import _course_subject
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=_FirstRow(None))
+
+    with patch("config.settings.get_subject_name", return_value="course/textbook"):
+        assert await _course_subject(db, course_id=404) == "course/textbook"
+
+
+async def test_course_subject_swallows_db_errors_into_global_fallback():
+    """Subject is an advisory input like keywords — a lookup failure must not
+    kill the aside; it degrades to the global subject."""
+    from apollo.hoot_bridge.reference_answer import _course_subject
+
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=RuntimeError("db unavailable"))
+
+    with patch("config.settings.get_subject_name", return_value="course/textbook"):
+        assert await _course_subject(db, course_id=1) == "course/textbook"
+
+
+def test_topic_hint_composes_slug_and_problem_text():
+    from apollo.hoot_bridge.reference_answer import _topic_hint
+
+    hint = _topic_hint(
+        SimpleNamespace(
+            concept_id="network-effects",
+            problem_text="Why do platforms get more valuable as more people join?",
+        )
+    )
+    assert hint is not None
+    assert hint.startswith("network effects")
+    assert "more valuable as more people join" in hint
+
+
+def test_topic_hint_truncates_long_problem_text():
+    from apollo.hoot_bridge.reference_answer import _topic_hint
+
+    hint = _topic_hint(SimpleNamespace(concept_id="ethics", problem_text="x" * 2000))
+    assert hint is not None
+    assert len(hint) < 400
+
+
+def test_topic_hint_is_none_for_malformed_problem():
+    from apollo.hoot_bridge.reference_answer import _topic_hint
+
+    assert _topic_hint(MagicMock()) is None
+    assert _topic_hint(SimpleNamespace(concept_id="", problem_text="")) is None
 
 
 async def test_aside_answer_strips_trailing_citations_block_end_to_end():

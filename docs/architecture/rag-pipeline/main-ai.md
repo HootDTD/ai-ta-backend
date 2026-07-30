@@ -15,7 +15,7 @@ related:
   - rag-pipeline/orchestrator
   - platform/config-model-pins
   - platform/config-contracts
-last_verified: 2026-07-28
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -28,7 +28,9 @@ facade). Documented by pipeline stage since it cannot be split at doc-write time
 ## Interface
 
 **(1) Query understanding** — `parse_question(user_query, subject=None) -> ParsedTask`;
-`check_question_relevance(question, subject) -> {relevance: full|partial|none, ...}`;
+`check_question_relevance(question, subject, current_topic=None) -> {relevance:
+full|partial|none, ...}` (`current_topic` anchors the guard to the student's
+current concept/problem; it lands in both the system prompt and the JSON payload);
 `is_question_subject_relevant`.
 **(2) Keyword expansion** — `extract_keywords`, `filter_keywords_by_subject`,
 `filter_general_terms`, `propose_synonyms`, and the live entry
