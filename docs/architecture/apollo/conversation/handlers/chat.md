@@ -15,7 +15,7 @@ related:
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
   - apollo/persistence/neo4j-client
-last_verified: 2026-07-27
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -82,8 +82,11 @@ Ordered turn:
    failure by design).
 4. On success: persists the student question (untagged — the adjudicator
    keeps it), the aside text tagged `intent=ASIDE_MESSAGE_INTENT_TAG`
-   (`handlers/done._full_transcript` excludes this row from grading), and the
-   persona resume line (untagged), then increments the session's aside
+   (`handlers/done._full_transcript` excludes this row from grading) with the
+   structured payload stored in the row's `message_metadata` as
+   `{"aside": {citations, in_scope}}` (text is the row content) so
+   `handlers/lifecycle`'s snapshot can replay citations after a reload, and
+   the persona resume line (untagged), then increments the session's aside
    counter. Returns `message_kind: "reference_aside"` plus an `aside: {text,
    citations, in_scope}` payload — the serializer shape the student-UI PR
    types against (see `hoot-bridge-reference-answer`).

@@ -7,6 +7,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.hoot_bridge.reference_answer import (
+    ASIDE_MESSAGE_INTENT_TAG,
+    MESSAGE_KIND_REFERENCE_ASIDE,
+)
 from apollo.hoot_bridge.reference_answer import is_enabled as _interaction4_enabled
 from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.problem_selector import list_problems_for_concept
@@ -178,8 +182,30 @@ async def handle_get_session(
         "problem": problem,
         "kg": kg,
         "ask_hoot_available": ask_hoot_available,
-        "messages": [
-            {"role": m.role, "content": m.content, "turn_index": m.turn_index}
-            for m in msgs
-        ],
+        "messages": [_snapshot_message(m) for m in msgs],
     }
+
+
+def _snapshot_message(m: TutoringMessage) -> dict[str, Any]:
+    """Serialize one transcript row for the session snapshot.
+
+    INTERACTION4 aside rows (stored intent ``ASIDE_MESSAGE_INTENT_TAG``) are
+    translated to the wire tag ``"reference_aside"`` — the same value the chat
+    response uses for ``message_kind`` and the only intent the student UI keys
+    on — plus a reconstructed ``aside`` payload from the row's metadata so a
+    reloaded transcript keeps its citation chips. Rows persisted before the
+    metadata was stored carry the intent but no ``aside`` (the UI renders the
+    card without chips, its pre-existing degraded mode). Internal intent tags
+    on other rows are deliberately not exposed.
+    """
+    out: dict[str, Any] = {"role": m.role, "content": m.content, "turn_index": m.turn_index}
+    if m.intent == ASIDE_MESSAGE_INTENT_TAG:
+        out["intent"] = MESSAGE_KIND_REFERENCE_ASIDE
+        aside = (m.message_metadata or {}).get("aside")
+        if isinstance(aside, dict):
+            out["aside"] = {
+                "text": m.content,
+                "citations": aside.get("citations") or [],
+                "in_scope": bool(aside.get("in_scope", True)),
+            }
+    return out

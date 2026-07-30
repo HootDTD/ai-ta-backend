@@ -94,6 +94,41 @@ class SupabaseStorageClient:
         resp.raise_for_status()
         return resp.content
 
+    def create_signed_url(
+        self,
+        *,
+        bucket: str,
+        object_key: str,
+        expires_in: int = 300,
+        timeout: int = 30,
+    ) -> str:
+        """Mint a short-lived browser-usable URL for a private object.
+
+        The sign endpoint returns a path fragment ("/object/sign/…?token=…");
+        the usable URL is that fragment rooted at /storage/v1. Expiry is
+        enforced server-side by Supabase, so handing the URL to a browser tab
+        (where no Authorization header can ride along) stays safe.
+        """
+        bucket_norm = (bucket or "").strip()
+        if not bucket_norm:
+            raise ValueError("bucket is required")
+        key_norm = (object_key or "").lstrip("/")
+        if not key_norm:
+            raise ValueError("object_key is required")
+        resp = requests.post(
+            f"{self._base_url}/storage/v1/object/sign/{bucket_norm}/{quote(key_norm, safe='/')}",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json={"expiresIn": int(expires_in)},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        signed_path = str((resp.json() or {}).get("signedURL") or "")
+        if not signed_path:
+            raise RuntimeError("Supabase Storage sign response carried no signedURL")
+        if not signed_path.startswith("/"):
+            signed_path = "/" + signed_path
+        return f"{self._base_url}/storage/v1{signed_path}"
+
     def _headers(self) -> dict[str, str]:
         return {
             "apikey": self._api_key,

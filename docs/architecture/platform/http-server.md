@@ -16,7 +16,7 @@ related:
   - reports/ai-use-routes
   - chats/routes
   - knowledge/teacher-weekly
-last_verified: 2026-07-25
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -37,6 +37,7 @@ doc must own the whole file today (bijection); a route-group code-split into
 | Route | Tier | Notes |
 |---|---|---|
 | `GET /healthz` | P | liveness |
+| `GET /materials/file-url` | M | `?upload_id=` (citations' `teacher_upload_id`) or `?doc_id=` (review pointers) → 5-min signed URL for the private-bucket source PDF; 404 when the material has no `storage_key`, 502 on sign failure |
 | `POST /ask`, `POST /ask/stream` | M | **sync `def` by design**; auto-enrolls student |
 | `GET /classes` | P | catalog list |
 | `POST /classes`, `GET /my-classes` | A | |

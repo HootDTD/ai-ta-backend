@@ -13,11 +13,13 @@ import pytest
 
 from apollo.conftest import TEST_USER_ID
 from apollo.handlers.lifecycle import handle_get_session
+from apollo.hoot_bridge.reference_answer import ASIDE_MESSAGE_INTENT_TAG
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
     TutoringSession,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
@@ -119,6 +121,83 @@ async def test_get_session_ask_hoot_available_gates_on_flag_and_concept(
         out = await handle_get_session(db=db_session, neo=MagicMock(), session_id=sess.id)
 
     assert out["ask_hoot_available"] is expected
+
+
+async def test_get_session_replays_aside_intent_and_citations(db_session):
+    """Aside rows come back with the WIRE intent tag ("reference_aside", the
+    value the student UI keys on — not the stored "reference_question_aside")
+    plus the aside payload reconstructed from row metadata; pre-metadata rows
+    keep the intent but omit the payload; internal intents on other rows are
+    not exposed."""
+    sid, cid, codes = await seed_course(
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
+    )
+    current_problem_id = await problem_database_id(
+        db_session, concept_id=cid, problem_code=codes[0]
+    )
+    sess = TutoringSession(
+        user_id=TEST_USER_ID,
+        search_space_id=sid,
+        concept_id=cid,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
+        current_problem_id=current_problem_id,
+    )
+    db_session.add(sess)
+    await db_session.flush()
+    attempt = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=current_problem_id,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
+    db_session.add(attempt)
+    await db_session.flush()
+
+    citations = [{"label": "[Week 2, p. 4]", "page": 4}]
+    rows = [
+        ("student", "What is Bernoulli's principle?", 0, None, None),
+        ("apollo", "Bernoulli's principle relates pressure and speed.", 1,
+         ASIDE_MESSAGE_INTENT_TAG, {"aside": {"citations": citations, "in_scope": True}}),
+        ("apollo", "Okay, back to your teaching.", 2, None, None),
+        # A row persisted before the metadata existed: intent but no payload.
+        ("apollo", "An older aside answer.", 3, ASIDE_MESSAGE_INTENT_TAG, None),
+    ]
+    for role, content, idx, intent, meta in rows:
+        db_session.add(
+            TutoringMessage(
+                session_id=sess.id,
+                course_id=sess.course_id,
+                attempt_id=attempt.id,
+                role=role,
+                content=content,
+                turn_index=idx,
+                intent=intent,
+                message_metadata=meta or {},
+            )
+        )
+    await db_session.flush()
+
+    store = MagicMock()
+    store.read_graph = AsyncMock(return_value=KGGraph())
+    with patch("apollo.handlers.lifecycle.KGStore", return_value=store):
+        out = await handle_get_session(db=db_session, neo=MagicMock(), session_id=sess.id)
+
+    messages = out["messages"]
+    assert [m["turn_index"] for m in messages] == [0, 1, 2, 3]
+    assert "intent" not in messages[0] and "intent" not in messages[2]
+    assert messages[1]["intent"] == "reference_aside"
+    assert messages[1]["aside"] == {
+        "text": "Bernoulli's principle relates pressure and speed.",
+        "citations": citations,
+        "in_scope": True,
+    }
+    assert messages[3]["intent"] == "reference_aside"
+    assert "aside" not in messages[3]
 
 
 async def test_get_session_ask_hoot_unavailable_without_problem(db_session, monkeypatch):
