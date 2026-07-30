@@ -5,7 +5,7 @@ owns:
   - vendors/supabase_storage.py
 related:
   - knowledge/teacher-weekly
-last_verified: 2026-07-25
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -21,6 +21,12 @@ stub: false
   (private by default).
 - `upload_bytes(*, bucket, object_key, data, content_type, upsert=False)` and
   `download_bytes(*, bucket, object_key)`.
+- `create_signed_url(*, bucket, object_key, expires_in=300, timeout=30)` —
+  `POST /storage/v1/object/sign/{bucket}/{key}`; roots the returned fragment at
+  `/storage/v1` so the result is directly browser-usable (new-tab opens carry
+  no Authorization header — expiry is Supabase-enforced). Raises on a
+  fragment-less response. Serves `GET /materials/file-url` (citation-chip
+  links).
 - Internal `_headers()`, `_object_url(...)`.
 
 ## Data flow

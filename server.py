@@ -1189,6 +1189,63 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
     return InviteRedeemOut(**data)
 
 
+@app.get("/materials/file-url")
+def get_material_file_url(
+    request: Request,
+    upload_id: Optional[int] = None,
+    doc_id: Optional[int] = None,
+):
+    """Short-lived signed URL for a cited course material's source PDF.
+
+    Resolution: ``upload_id`` (the ``teacher_upload_id`` every structured
+    citation carries) or ``doc_id`` (the document id review pointers carry)
+    → ``app.uploads`` row → private-bucket ``storage_key`` → 5-minute signed
+    URL. The signed URL is what makes new-tab opens work: a plain browser
+    GET can't carry the Bearer header, so membership is checked HERE and
+    expiry is enforced by Supabase on the minted link. Materials without a
+    stored source file (pre-storage ingestion paths) 404.
+    """
+    from sqlalchemy import select as sa_select
+
+    from database.models import Upload
+    from knowledge.teacher_weekly import DEFAULT_UPLOAD_BUCKET
+    from vendors.supabase_storage import SupabaseStorageClient
+
+    if upload_id is None and doc_id is None:
+        raise HTTPException(status_code=400, detail="Provide upload_id or doc_id")
+
+    async def _load():
+        async with get_async_session() as db_session:
+            stmt = sa_select(Upload)
+            if upload_id is not None:
+                stmt = stmt.where(Upload.id == upload_id)
+            else:
+                # Several upload rows can point at one document across
+                # re-uploads; newest wins.
+                stmt = stmt.where(Upload.document_id == doc_id).order_by(Upload.id.desc())
+            return (await db_session.execute(stmt)).scalars().first()
+
+    upload = run_async(_load())
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    _require_course_membership(request, search_space_id=int(upload.course_id))
+
+    storage_key = (upload.storage_key or "").strip()
+    if not storage_key:
+        raise HTTPException(status_code=404, detail="No source file stored for this material")
+
+    bucket = (os.getenv("TEACHER_UPLOAD_BUCKET") or DEFAULT_UPLOAD_BUCKET).strip() or DEFAULT_UPLOAD_BUCKET
+    try:
+        url = SupabaseStorageClient().create_signed_url(
+            bucket=bucket, object_key=storage_key, expires_in=300
+        )
+    except Exception as exc:
+        log.error("Signed URL mint failed for upload=%s: %s", upload.id, exc)
+        raise HTTPException(status_code=502, detail="Could not create a file link")
+    return {"url": url, "expires_in": 300}
+
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}

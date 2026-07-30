@@ -118,13 +118,39 @@ def test_mapping_and_pointer_edge_cases():
     }
 
     assert _as_mapping(raw) is raw
-    assert _pointer(raw) == {"doc_id": "slides-chunk", "label": "[Slides]", "page": None}
+    assert _pointer(raw) == {
+        "doc_id": "slides-chunk",
+        "label": "[Slides]",
+        "page": None,
+        "upload_id": None,
+    }
     assert _is_solution_bearing({"id": "odd", "metadata": "not-a-mapping"}) is False
 
     with pytest.raises(TypeError, match="BundleSnippet values or dictionaries"):
         _as_mapping(object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="no document identifier"):
         _pointer({"id": "", "page": 1, "metadata": {}})
+
+
+def test_pointer_carries_upload_id_from_chunk_metadata():
+    """`teacher_upload_id` (stringified app.uploads.id in chunk metadata)
+    surfaces as an int `upload_id` so the UI can link the chip to the stored
+    source PDF; junk values degrade to None instead of raising."""
+    raw = {
+        "id": "chunk-1",
+        "page": 4,
+        "citation_marker": "[Notes, p. 4]",
+        "metadata": {"document_id": 91, "teacher_upload_id": "17"},
+    }
+    assert _pointer(raw) == {
+        "doc_id": 91,
+        "label": "[Notes, p. 4]",
+        "page": 4,
+        "upload_id": 17,
+    }
+
+    raw["metadata"]["teacher_upload_id"] = "not-a-number"
+    assert _pointer(raw)["upload_id"] is None
 
 
 def test_pointer_kind_fallback_deduplicates_and_caps_results(monkeypatch):
@@ -138,9 +164,9 @@ def test_pointer_kind_fallback_deduplicates_and_caps_results(monkeypatch):
     ]
 
     assert _citation_pointers(snippets) == [
-        {"doc_id": "one", "label": "[Course Pack, p. 2]", "page": 2},
-        {"doc_id": "two", "label": "[Notes, p. 3]", "page": 3},
-        {"doc_id": "three", "label": "[Notes, p. 4]", "page": 4},
+        {"doc_id": "one", "label": "[Course Pack, p. 2]", "page": 2, "upload_id": None},
+        {"doc_id": "two", "label": "[Notes, p. 3]", "page": 3, "upload_id": None},
+        {"doc_id": "three", "label": "[Notes, p. 4]", "page": 4, "upload_id": None},
     ]
 
 
@@ -233,9 +259,14 @@ async def test_bundle_reuse_adds_citation_only_pointers_without_fresh_retrieval(
     assert decorated is not None
     assert "review" not in decorated["topic_feedback"][0]
     assert decorated["topic_feedback"][1]["review"] == [
-        {"doc_id": 91, "label": "[Textbook, p. 12]", "page": 12}
+        {"doc_id": 91, "label": "[Textbook, p. 12]", "page": 12, "upload_id": None}
     ]
-    assert set(decorated["topic_feedback"][1]["review"][0]) == {"doc_id", "label", "page"}
+    assert set(decorated["topic_feedback"][1]["review"][0]) == {
+        "doc_id",
+        "label",
+        "page",
+        "upload_id",
+    }
     assert "review" not in feedback["topic_feedback"][1]
     retrieve.assert_not_awaited()
 
@@ -362,7 +393,7 @@ async def test_solution_documents_never_surface_in_review():
 
     assert decorated is not None
     assert decorated["topic_feedback"][0]["review"] == [
-        {"doc_id": "safe", "label": "[Textbook, p. 12]", "page": 12}
+        {"doc_id": "safe", "label": "[Textbook, p. 12]", "page": 12, "upload_id": None}
     ]
 
 
@@ -397,5 +428,7 @@ async def test_remediation_preserves_the_hoot_assisted_flag(monkeypatch):
     assert decorated is not None
     item = decorated["topic_feedback"][0]
     assert item["hoot_assisted"] is True
-    assert item["review"] == [{"doc_id": 91, "label": "[Textbook, p. 12]", "page": 12}]
+    assert item["review"] == [
+        {"doc_id": 91, "label": "[Textbook, p. 12]", "page": 12, "upload_id": None}
+    ]
     retrieve.assert_not_awaited()
