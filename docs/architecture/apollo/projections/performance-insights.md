@@ -41,7 +41,9 @@ no database. Composed by [performance](performance.md)'s assembler.
 Apollo side is `role = 'apollo'`), course-scoped, joined to
 `app.learning_activities` for the owning student's `user_id` (messages carry no
 user_id). `load_problem_aggregates` reads graded `app.problem_attempts` ordered
-by `pa.id`. Both hand raw rows to the pure folders above.
+by `pa.id`, plus a second pass surfacing the latest attempt id per (student,
+problem) over **all** attempts (any result) that drives `best_is_last`. Both
+hand raw rows to the pure folders above.
 
 ## Invariants & gotchas
 
@@ -49,9 +51,15 @@ by `pa.id`. Both hand raw rows to the pure folders above.
   `MIN_CORRELATION_N` (8) students-with-a-grade; `retry_payoff` is null when no
   (student, problem) has >= 2 graded attempts. `pearson` returns 0.0 on zero
   variance (undefined correlation reported as no signal).
+- **Effort quartiles tie-break on `user_id`, NEVER grade:** equal-`teaching_turns`
+  students are ordered by `user_id` (neutral, deterministic). Ordering ties by
+  grade would smear equal-effort students across quartile boundaries and
+  fabricate the monotonic effort->grade gradient the chart exists to test.
 - **Flags are module constants:** `not_started` (0 attempts), `low_effort`
   (`>= LOW_EFFORT_MIN_TURNS` turns and `median_words < LOW_EFFORT_MAX_MEDIAN_WORDS`),
-  `gave_up` (a problem best `< GAVE_UP_MAX_BEST` with no attempt after the best),
+  `gave_up` (a problem best `< GAVE_UP_MAX_BEST` with no later attempt of ANY
+  result — graded, ungraded, or in-progress — after the best-producing one, so a
+  student mid-retry is never flagged),
   `grinding` (`>= GRINDING_MIN_ATTEMPTS` graded attempts, `best - first <=
   GRINDING_MAX_GAIN`).
 - **Same served-grade semantics as v1 everywhere** — best-wins here is the same

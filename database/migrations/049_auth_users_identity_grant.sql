@@ -2,7 +2,7 @@
 -- class-performance projection (apollo/projections/performance.py::_identities)
 -- can resolve student email / display name. Unblocks the prod
 -- InsufficientPrivilegeError for app_runtime confirmed in Railway prod logs.
--- Twin of legacy database/migrations/049_auth_users_identity_grant.sql; both
+-- Twin of supabase/migrations/20260730120000_auth_users_identity_grant.sql; both
 -- chains must carry it.
 --
 -- Column-level grant ONLY — encrypted_password and every other auth.users

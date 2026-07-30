@@ -434,6 +434,61 @@ async def test_insights_populated_with_enough_students(db_session):
     assert problem_row["students_graded"] == 8
 
 
+async def test_gave_up_flag_respects_still_ungraded_retry(db_session):
+    """``gave_up`` must not fire while a student is mid-retry. The scoring path is
+    graded-only, but ``best_is_last`` is decided over ALL attempts, so a later
+    still-ungraded attempt after a sub-60 best clears the flag — whereas a
+    student who never attempted again is flagged."""
+    sid, concept_a, _cb, problem_a, _pb = await _seed_course_with_problems(db_session)
+    quitter, retrier = str(uuid.uuid4()), str(uuid.uuid4())
+    day = datetime(2026, 7, 29, 9, 0, tzinfo=UTC)
+
+    # quitter: best graded 45 (< 60) on problem_a and nothing after -> gave_up.
+    sq = await _seed_session(db_session, user_id=quitter, search_space_id=sid, concept_id=concept_a)
+    await _seed_attempt(
+        db_session,
+        session_id=sq,
+        user_id=quitter,
+        search_space_id=sid,
+        problem_id=problem_a,
+        result="graded",
+        report=_report(served=(45, "F")),
+        created_at=day,
+    )
+
+    # retrier: same sub-60 best, THEN a still-ungraded attempt (result NULL,
+    # higher id) -> best is no longer last -> NOT gave_up.
+    sr = await _seed_session(db_session, user_id=retrier, search_space_id=sid, concept_id=concept_a)
+    await _seed_attempt(
+        db_session,
+        session_id=sr,
+        user_id=retrier,
+        search_space_id=sid,
+        problem_id=problem_a,
+        result="graded",
+        report=_report(served=(45, "F")),
+        created_at=day,
+    )
+    await _seed_attempt(
+        db_session,
+        session_id=sr,
+        user_id=retrier,
+        search_space_id=sid,
+        problem_id=problem_a,
+        result=None,
+        created_at=day,
+    )
+
+    for uid in (quitter, retrier):
+        db_session.add(CourseMembership(user_id=uid, course_id=sid, role="student"))
+    await db_session.flush()
+
+    payload = await class_performance(db_session, search_space_id=sid)
+    students = {s["user_id"]: s for s in payload["students"]}
+    assert "gave_up" in students[quitter]["flags"]
+    assert "gave_up" not in students[retrier]["flags"]
+
+
 async def test_empty_course_returns_zeroed_payload(db_session):
     sid = await seed_search_space(db_session)
 

@@ -525,9 +525,15 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
     problem_ids = sorted({row["problem_id"] for row in best_rows})
     problems = _problems_block(best_rows, await _problem_meta(db, problem_ids=problem_ids))
     # Correlation / quartiles run only over students who have a served grade;
-    # the point carries the same avg_best the row shows and the email label.
+    # the point carries the same avg_best the row shows, the email label, and
+    # user_id (the quartile tie-break key — grade must never order equal effort).
     graded_points = [
-        {"turns": s["engagement"]["teaching_turns"], "avg_best": s["avg_best"], "email": s["email"]}
+        {
+            "turns": s["engagement"]["teaching_turns"],
+            "avg_best": s["avg_best"],
+            "email": s["email"],
+            "user_id": s["user_id"],
+        }
         for s in students
         if s["avg_best"] is not None
     ]

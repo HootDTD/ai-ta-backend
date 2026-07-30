@@ -54,7 +54,7 @@ class ProblemAgg(NamedTuple):
     graded_count: int
     first_score: float  # score of the lowest-id graded attempt
     best_score: float  # best-wins score (max, latest id breaks ties)
-    best_is_last: bool  # no graded attempt came after the best-producing one
+    best_is_last: bool  # no attempt of ANY result came after the best-producing one
 
 
 def _round1(value: float) -> float:
@@ -145,9 +145,17 @@ def engagement_by_student(
 
 def problem_aggregates(
     attempt_rows: list[tuple[str, int, int, float]],
+    latest_attempt_ids: dict[tuple[str, int], int] | None = None,
 ) -> dict[str, list[ProblemAgg]]:
     """Fold ``(user_id, problem_id, attempt_id, score)`` graded-attempt rows
-    into per-student ``ProblemAgg`` lists (one per (student, problem))."""
+    into per-student ``ProblemAgg`` lists (one per (student, problem)).
+
+    ``latest_attempt_ids`` maps each ``(user_id, problem_id)`` to the id of its
+    latest attempt of **any result** (graded, ungraded, or in-progress). When
+    supplied it drives ``best_is_last``, so a student who has since STARTED a
+    new (still-ungraded) attempt after their best is not counted as having
+    stopped — ``gave_up`` must not fire mid-retry. When omitted, ``best_is_last``
+    falls back to the latest attempt among the graded rows given here."""
     grouped: dict[tuple[str, int], list[tuple[int, float]]] = {}
     for user_id, problem_id, attempt_id, score in attempt_rows:
         grouped.setdefault((user_id, problem_id), []).append((attempt_id, float(score)))
@@ -156,7 +164,14 @@ def problem_aggregates(
         first_score = min(attempts, key=lambda a: a[0])[1]
         # best-wins: max score, latest id breaks ties (matches _SCORE_EXPR order).
         best_id, best_score = max(attempts, key=lambda a: (a[1], a[0]))
-        last_id = max(a[0] for a in attempts)
+        graded_last_id = max(a[0] for a in attempts)
+        # "Came after the best" counts a later attempt of ANY result, so a
+        # still-ungraded retry (absent from these graded rows) clears the flag.
+        last_id = (
+            latest_attempt_ids.get((user_id, problem_id), graded_last_id)
+            if latest_attempt_ids is not None
+            else graded_last_id
+        )
         by_student.setdefault(user_id, []).append(
             ProblemAgg(
                 problem_id=problem_id,
@@ -257,11 +272,18 @@ _QUARTILE_LABELS = {
 
 def build_effort_quartiles(students: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
     """Split graded students into teaching-turn quartiles (Q1 = fewest turns),
-    each carrying its mean grade. None below the minimum population."""
+    each carrying its mean grade. None below the minimum population.
+
+    Ties (equal ``teaching_turns``) break on ``user_id`` — a neutral,
+    deterministic key that must NEVER be the grade. Sorting equal-effort
+    students by grade would smear them across quartile boundaries and fabricate
+    exactly the monotonic effort->grade gradient this chart exists to test for
+    (constant-effort data would then show a rising staircase while Pearson r
+    correctly reads 0)."""
     n = len(students)
     if n < MIN_CORRELATION_N:
         return None
-    ordered = sorted(students, key=lambda s: (s["turns"], s["avg_best"]))
+    ordered = sorted(students, key=lambda s: (s["turns"], s["user_id"]))
     buckets: dict[int, list[dict[str, Any]]] = {1: [], 2: [], 3: [], 4: []}
     for i, student in enumerate(ordered):
         quartile = min(4, i * 4 // n + 1)
@@ -345,7 +367,11 @@ async def load_problem_aggregates(
 ) -> dict[str, list[ProblemAgg]]:
     """Per-student (student, problem) graded-attempt aggregates. ``score_expr``
     is `performance.py`'s served-grade SQL fragment (a module constant, not user
-    input) — passed in so the expression lives in exactly one place."""
+    input) — passed in so the expression lives in exactly one place.
+
+    Scoring rows are graded-only, but ``best_is_last`` (the ``gave_up`` signal)
+    must recognise retries of ANY result, so a second pass surfaces the latest
+    attempt id per (student, problem) over ALL attempts (graded or not)."""
     rows = (
         (
             await db.execute(
@@ -366,9 +392,31 @@ async def load_problem_aggregates(
         .mappings()
         .all()
     )
+    latest_rows = (
+        (
+            await db.execute(
+                text(
+                    """
+                SELECT pa.user_id AS user_id, pa.problem_id AS problem_id,
+                       max(pa.id) AS latest_id
+                FROM app.problem_attempts pa
+                WHERE pa.course_id = :search_space_id
+                GROUP BY pa.user_id, pa.problem_id
+                """
+                ),
+                {"search_space_id": search_space_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    latest_attempt_ids = {
+        (str(r["user_id"]), int(r["problem_id"])): int(r["latest_id"]) for r in latest_rows
+    }
     return problem_aggregates(
         [
             (str(r["user_id"]), int(r["problem_id"]), int(r["attempt_id"]), float(r["score"]))
             for r in rows
-        ]
+        ],
+        latest_attempt_ids,
     )

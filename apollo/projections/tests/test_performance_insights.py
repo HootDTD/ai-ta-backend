@@ -135,6 +135,35 @@ def test_problem_aggregates_tie_score_latest_id_wins_and_best_is_last():
     assert (a2.best_score, a2.best_is_last) == (50.0, False)
 
 
+def test_problem_aggregates_gave_up_ignores_later_ungraded_attempt():
+    """Fix: a still-ungraded retry AFTER the best (surfaced via
+    ``latest_attempt_ids`` over ALL attempts) means the student has not stopped,
+    so ``best_is_last`` is False and ``gave_up`` must NOT fire even when the best
+    graded score is below the floor. The graded rows here end at id 2, but a
+    later attempt (id 9) — absent from those graded rows — came after."""
+    aggs = pi.problem_aggregates(
+        [("u1", 10, 1, 30.0), ("u1", 10, 2, 45.0)],
+        latest_attempt_ids={("u1", 10): 9},
+    )
+    a = aggs["u1"][0]
+    assert (a.best_score, a.best_is_last) == (45.0, False)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[a]) == []
+
+
+def test_problem_aggregates_gave_up_when_best_is_last_overall():
+    """Fix (control): best 45 (< 60) and the best-producing attempt is also the
+    latest attempt of any result -> ``gave_up`` (the existing behavior holds)."""
+    aggs = pi.problem_aggregates(
+        [("u1", 10, 1, 30.0), ("u1", 10, 2, 45.0)],
+        latest_attempt_ids={("u1", 10): 2},
+    )
+    a = aggs["u1"][0]
+    assert (a.best_score, a.best_is_last) == (45.0, True)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[a]) == [
+        "gave_up"
+    ]
+
+
 def test_retry_fields():
     aggs = [ProblemAgg(10, 3, 40.0, 85.0, False), ProblemAgg(20, 1, 55.0, 55.0, True)]
     # only the >=2-attempt problem counts: gain 85-40 = 45
@@ -264,7 +293,12 @@ def test_student_extras_populated():
 
 
 def _points(turns_and_grades):
-    return [{"turns": t, "avg_best": g, "email": None} for t, g in turns_and_grades]
+    # Distinct user_id per point so the quartile tie-break is deterministic; the
+    # correlation/quartile values these anchor never depend on the id itself.
+    return [
+        {"turns": t, "avg_best": g, "email": None, "user_id": f"u{i}"}
+        for i, (t, g) in enumerate(turns_and_grades)
+    ]
 
 
 def test_build_correlation_suppressed_below_min_n():
@@ -304,6 +338,35 @@ def test_build_effort_quartiles_hand_computed():
     assert [q["avg_grade"] for q in quartiles] == [55.0, 75.0, 95.0, 35.0]
     assert quartiles[0]["label"] == "Least effort"
     assert quartiles[3]["label"] == "Most effort"
+
+
+def test_build_effort_quartiles_tie_break_by_user_id_never_grade():
+    """Regression: equal-effort students must bucket by user_id, NEVER by grade.
+    All 8 have turns=5 (constant effort); grades are distinct. In user_id order
+    (u0..u7) the grades are [10,80,20,70,30,60,40,50] — each quartile pairs a
+    low+high summing to 90, so every quartile mean is 45.0 (flat). Were the
+    tie-break the grade, the buckets would be the fabricated staircase
+    [15,35,55,75]; meanwhile Pearson over the constant turns correctly reads 0.0
+    (no effort->grade gradient exists)."""
+    students = [
+        {"turns": 5, "avg_best": g, "email": None, "user_id": uid}
+        for uid, g in [
+            ("u0", 10.0),
+            ("u1", 80.0),
+            ("u2", 20.0),
+            ("u3", 70.0),
+            ("u4", 30.0),
+            ("u5", 60.0),
+            ("u6", 40.0),
+            ("u7", 50.0),
+        ]
+    ]
+    quartiles = pi.build_effort_quartiles(students)
+    assert [q["students"] for q in quartiles] == [2, 2, 2, 2]
+    # Bucketing follows id order -> flat means, not the grade-sorted staircase.
+    assert [q["avg_grade"] for q in quartiles] == [45.0, 45.0, 45.0, 45.0]
+    assert [q["avg_grade"] for q in quartiles] != [15.0, 35.0, 55.0, 75.0]
+    assert pi.pearson([s["turns"] for s in students], [s["avg_best"] for s in students]) == 0.0
 
 
 def test_build_retry_payoff_none_when_no_retries():
