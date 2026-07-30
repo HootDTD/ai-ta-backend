@@ -149,3 +149,91 @@ def test_signing_failure_is_a_502_not_a_500(client_with_server, monkeypatch):
     monkeypatch.setattr("vendors.supabase_storage.SupabaseStorageClient", _Broken)
     resp = client.get("/materials/file-url", params={"upload_id": 17})
     assert resp.status_code == 502
+
+
+# --------------------------------------------------------------------------- #
+# Real-PG coverage of the resolver the endpoint's run_async wraps
+# --------------------------------------------------------------------------- #
+async def test_resolve_material_upload_branches_on_real_pg(db_session):
+    """upload_id wins; doc_id falls back to Upload.document_id with
+    newest-row-wins across re-uploads; misses return None."""
+    from database.models import Course, Document, Upload
+    from server import _resolve_material_upload
+
+    course = Course(name="MGMT 101", slug="mgmt-101-file-url", subject_name="Management")
+    db_session.add(course)
+    await db_session.flush()
+
+    doc = Document(
+        title="Week 1 Notes",
+        content="notes",
+        content_hash="file-url-test-hash-1",
+        course_id=course.id,
+    )
+    db_session.add(doc)
+    await db_session.flush()
+
+    older = Upload(
+        course_id=course.id,
+        week=1,
+        kind="notes",
+        title="Week 1 Notes (v1)",
+        document_id=doc.id,
+        storage_key="c/w1-v1.pdf",
+    )
+    db_session.add(older)
+    await db_session.flush()
+    newer = Upload(
+        course_id=course.id,
+        week=1,
+        kind="notes",
+        title="Week 1 Notes (v2)",
+        document_id=doc.id,
+        storage_key="c/w1-v2.pdf",
+    )
+    db_session.add(newer)
+    await db_session.flush()
+
+    by_upload = await _resolve_material_upload(db_session, upload_id=older.id, doc_id=None)
+    assert by_upload is not None and by_upload.id == older.id
+
+    # upload_id wins even when a doc_id is also supplied.
+    both = await _resolve_material_upload(db_session, upload_id=older.id, doc_id=doc.id)
+    assert both is not None and both.id == older.id
+
+    by_doc = await _resolve_material_upload(db_session, upload_id=None, doc_id=doc.id)
+    assert by_doc is not None and by_doc.id == newer.id
+    assert by_doc.storage_key == "c/w1-v2.pdf"
+
+    assert await _resolve_material_upload(db_session, upload_id=None, doc_id=doc.id + 999) is None
+
+
+def test_load_wrapper_runs_through_real_run_async(client_with_server, monkeypatch):
+    """No run_async stub here: the endpoint's _load coroutine executes for
+    real against a faked session factory, pinning the run_async + session
+    plumbing the other endpoint tests bypass."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    client, server = client_with_server
+
+    row = _upload_row()
+
+    class _Result:
+        def scalars(self):
+            return SimpleNamespace(first=lambda: row)
+
+    fake_session = SimpleNamespace(execute=AsyncMock(return_value=_Result()))
+
+    @asynccontextmanager
+    async def _fake_factory():
+        yield fake_session
+
+    monkeypatch.setattr(server, "get_async_session", _fake_factory)
+    _allow_membership(monkeypatch, server, [])
+    monkeypatch.setattr("vendors.supabase_storage.SupabaseStorageClient", _FakeStorage)
+
+    resp = client.get("/materials/file-url", params={"upload_id": 17})
+
+    assert resp.status_code == 200
+    fake_session.execute.assert_awaited_once()

@@ -1189,6 +1189,25 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
     return InviteRedeemOut(**data)
 
 
+async def _resolve_material_upload(db_session, *, upload_id: Optional[int], doc_id: Optional[int]):
+    """Resolve a citation's source material to its ``app.uploads`` row.
+
+    ``upload_id`` wins when present; otherwise ``doc_id`` matches
+    ``Upload.document_id`` — several upload rows can point at one document
+    across re-uploads, so newest wins.
+    """
+    from sqlalchemy import select as sa_select
+
+    from database.models import Upload
+
+    stmt = sa_select(Upload)
+    if upload_id is not None:
+        stmt = stmt.where(Upload.id == upload_id)
+    else:
+        stmt = stmt.where(Upload.document_id == doc_id).order_by(Upload.id.desc())
+    return (await db_session.execute(stmt)).scalars().first()
+
+
 @app.get("/materials/file-url")
 def get_material_file_url(
     request: Request,
@@ -1205,9 +1224,6 @@ def get_material_file_url(
     expiry is enforced by Supabase on the minted link. Materials without a
     stored source file (pre-storage ingestion paths) 404.
     """
-    from sqlalchemy import select as sa_select
-
-    from database.models import Upload
     from knowledge.teacher_weekly import DEFAULT_UPLOAD_BUCKET
     from vendors.supabase_storage import SupabaseStorageClient
 
@@ -1216,14 +1232,9 @@ def get_material_file_url(
 
     async def _load():
         async with get_async_session() as db_session:
-            stmt = sa_select(Upload)
-            if upload_id is not None:
-                stmt = stmt.where(Upload.id == upload_id)
-            else:
-                # Several upload rows can point at one document across
-                # re-uploads; newest wins.
-                stmt = stmt.where(Upload.document_id == doc_id).order_by(Upload.id.desc())
-            return (await db_session.execute(stmt)).scalars().first()
+            return await _resolve_material_upload(
+                db_session, upload_id=upload_id, doc_id=doc_id
+            )
 
     upload = run_async(_load())
     if upload is None:
