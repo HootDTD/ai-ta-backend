@@ -10,6 +10,7 @@ owns:
   - supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql
   - supabase/migrations/20260728120000_apollo_grounding_bundle.sql
   - supabase/migrations/20260730120000_auth_users_identity_grant.sql
+  - supabase/migrations/20260731120000_db08d_rls_inline_membership_policies.sql
   - supabase/config.toml
   - supabase/seed.sql
   - supabase/.gitignore
@@ -19,7 +20,7 @@ related:
   - database/session
   - platform/ops-db-sql
   - platform/ops-db-tooling
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -29,7 +30,7 @@ The timestamped `supabase/migrations/` chain is the **CURRENT forward schema**
 (pinned Supabase CLI 2.109.0 per `config.toml`, applied in ascending 14-digit
 order). `database/models.py` ORM MUST track it.
 
-## Interface — the eight migrations, in order
+## Interface — the nine migrations, in order
 
 1. **`…_legacy_public_snapshot`** — the loud, non-authoritative DB-03 draft
    reconstruction of legacy `public`. MUST be replaced by a reviewed human
@@ -65,6 +66,12 @@ order). `database/models.py` ORM MUST track it.
    (`encrypted_password` etc. stay unreadable). Guarded to no-op with a NOTICE
    where the auth schema/table or the role is absent (local Docker). Twin of
    legacy `database/migrations/049`; both chains must carry it.
+9. **`…_db08d_rls_inline_membership_policies`** (pilot-perf PR-3) — rewrites 38
+   of the 45 `app` policies IN PLACE so the membership test is an
+   **uncorrelated** subquery over `app.course_memberships` instead of a
+   `(SELECT internal.has_course_role(<col>, …))` call. POLICY objects only —
+   no GRANT, no DDL, no helper change; count stays 45 (same names, commands,
+   `TO authenticated`). See "RLS policy shape" below.
 
 ## Data flow
 
@@ -73,6 +80,28 @@ order). `database/models.py` ORM MUST track it.
 seed to **LOCAL Docker only** — never linked/remote. `config.toml` sets
 `project_id = "e2e-harness"`, major version 17, seed `./seed.sql`; analytics is
 disabled (a Windows/Docker-Desktop `vector` log-forwarder limitation).
+
+## RLS policy shape (post-DB-08d)
+
+Every membership check reads `<course col> IN (SELECT cm.course_id FROM
+app.course_memberships AS cm WHERE cm.user_id = (SELECT auth.uid()) AND
+cm.role = <'teacher' | ANY (ARRAY['student','teacher'])>)`. Full derivation in
+the DB-08d file header; the rules that must survive edits:
+
+- `(SELECT auth.uid())` is the ONLY caller expression (the `request.jwt.claims`
+  → `sub` value [database/session](session.md) binds), and the subquery must
+  stay **uncorrelated** — correlate it and the per-row SubPlan is back.
+- Equivalence rests on every `course_id` being `NOT NULL` (so `IN` is
+  two-valued) and on `app.course_memberships`' own SELECT policy admitting, by
+  construction, every row the subquery selects.
+- `course_memberships__self_or_teacher_select` still calls the helper and MUST:
+  inlining a policy ON `app.course_memberships` recurses on its own table.
+- `app.learning_activities` deliberately keeps TWO permissive SELECT policies
+  (the Supabase `multiple_permissive_policies` WARN) — merging means demoting a
+  `FOR ALL` policy into three per-action ones for no remaining perf gain.
+- Coverage: `test_db08b_rls_enforcement.py` (the unchanged 45-policy matrix,
+  re-run against the new policies) +
+  `test_db08d_rls_inline_membership_policies.py`.
 
 ## Invariants & gotchas
 
