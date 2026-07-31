@@ -53,6 +53,7 @@ ASIDE_COUNT_SESSION_METADATA_KEY = "reference_question_aside_count"
 
 _OUT_OF_SCOPE_TEXT = "That's outside what's covered in this course's materials."
 _NOT_FOUND_TEXT = "Not found in the approved materials."
+_UNSCORED_FALLBACK_LIMIT = 5
 
 # ``ai.main_ai.format_answer`` appends a trailing "\n\nCitations: [..], [..]"
 # enumeration to every non-empty answer (main_ai.py, end of ``format_answer``).
@@ -73,6 +74,21 @@ def _strip_trailing_citations_block(text: str) -> str:
     only matches the single-line block ``format_answer`` produces).
     """
     return _TRAILING_CITATIONS_BLOCK.sub("", text.rstrip()).rstrip()
+
+
+def _fallback_answer_from_snippets(snippets: list[Any]) -> tuple[str, list[str]]:
+    """Render retrieval-ranked source text when model formatting is blank."""
+    excerpts: list[str] = []
+    markers: list[str] = []
+    for snippet in snippets[:_UNSCORED_FALLBACK_LIMIT]:
+        snippet_text = str(getattr(snippet, "text", "") or "").strip()
+        if not snippet_text:
+            continue
+        marker = str(getattr(snippet, "citation_marker", "") or "").strip()
+        excerpts.append(f"{snippet_text} {marker}".rstrip())
+        if marker and marker not in markers:
+            markers.append(marker)
+    return ("\n\n".join(excerpts) or _NOT_FOUND_TEXT, markers)
 
 
 def is_enabled() -> bool:
@@ -309,7 +325,7 @@ async def answer_reference_question(
         solve_with_bundle,
     )
     from ai.prompts.apollo_aside import apollo_aside_prompt
-    from config.contracts import ResearchBundle, ResearchMetadata
+    from config.contracts import ParsedTask, ResearchBundle, ResearchMetadata
     from retrieval.context_packer import _summarize_snippets
     from retrieval.pipeline import retrieve_for_question
 
@@ -380,14 +396,25 @@ async def answer_reference_question(
         attempted_terms=[question],
     )
 
-    parsed_task = parse_question(question)
-    solution = solve_with_bundle(parsed_task, bundle, system_prompt_override=apollo_aside_prompt())
+    try:
+        parsed_task = parse_question(question)
+    except ValueError:
+        parsed_task = ParsedTask(problem_type="conceptual", asked_outputs=[question])
+    solution = solve_with_bundle(
+        parsed_task,
+        bundle,
+        system_prompt_override=apollo_aside_prompt(),
+        unscored_fallback_limit=_UNSCORED_FALLBACK_LIMIT,
+    )
     final = format_answer(solution, bundle, include_background=False)
 
     # The aside card renders `citations` as chips, so drop format_answer's
     # redundant in-text "Citations: [..]" enumeration for this lane only.
-    text = _strip_trailing_citations_block(final.text)
-    citations = _structured_citations(bundle, final.citations)
+    text = _strip_trailing_citations_block(final.text or "")
+    used_markers = final.citations
+    if not text.strip():
+        text, used_markers = _fallback_answer_from_snippets(snippets)
+    citations = _structured_citations(bundle, used_markers)
     return ReferenceAsideResult(in_scope=True, text=text, citations=citations)
 
 
