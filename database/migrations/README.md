@@ -1,10 +1,11 @@
 # Frozen legacy migrations
 
 This numbered migration chain is a read-only historical record through migration
-`048`. Migration `048_apollo_session_grounding_bundle.sql` is the explicitly
-approved Interaction-1 sequential exception and targets the current
-`app.learning_activities` table. Do not add, edit, renumber, delete, or apply
-further files in this directory. The normalized checksums in
+`049`. Migrations `048_apollo_session_grounding_bundle.sql` (Interaction-1) and
+`049_auth_users_identity_grant.sql` (Class-Performance-v2 `auth.users` identity
+grant) are the two explicitly approved sequential exceptions, each the numbered
+twin of a timestamped active-chain migration. Do not add, edit, renumber,
+delete, or apply further files in this directory. The normalized checksums in
 `legacy-manifest.sha256` are enforced by CI.
 
 All forward schema work must use timestamped SQL files created with the pinned
@@ -21,7 +22,7 @@ old Python/manual numbered-file runner to apply the new schema.
 The duplicate legacy `023` files are preserved as history. Production's
 `046_apollo_solution_source_llm_paired.sql` is the authoritative legacy `046`.
 Any unmerged numbered migration must be reconciled into the timestamped active
-chain rather than colliding with the now-occupied `048`.
+chain rather than colliding with the now-occupied `048`/`049`.
 
 Remote history reconciliation and remote migration application are human-only
 operations. The repository harness runs only against the local Docker stack.

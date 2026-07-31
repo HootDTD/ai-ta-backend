@@ -24,6 +24,7 @@ from apollo.persistence.models import (
     SessionPhase,
     SessionStatus,
     StudentProgress,
+    TutoringMessage,
     TutoringSession,
 )
 from apollo.projections.performance import class_performance
@@ -123,6 +124,23 @@ async def _seed_attempt(
     return int(attempt.id)
 
 
+async def _seed_messages(
+    db, *, session_id: int, search_space_id: int, turns: list[tuple[str, str]]
+) -> None:
+    """Seed ``turns`` = ``[(role, content), ...]`` onto one session."""
+    for turn_index, (role, content) in enumerate(turns):
+        db.add(
+            TutoringMessage(
+                session_id=session_id,
+                course_id=search_space_id,
+                role=role,
+                content=content,
+                turn_index=turn_index,
+            )
+        )
+    await db.flush()
+
+
 async def _seed_full_scenario(db):
     """Two attempting students + one signed-in-only student + roster rows."""
     sid, concept_a, concept_b, problem_a, problem_b = await _seed_course_with_problems(db)
@@ -187,6 +205,19 @@ async def _seed_full_scenario(db):
         created_at=day1,
     )
 
+    # user_a teaching turns: two student messages (5 + 2 words -> median 3.5)
+    # plus an apollo message that MUST be excluded from the student-turn count.
+    await _seed_messages(
+        db,
+        session_id=sess_a,
+        search_space_id=sid,
+        turns=[
+            ("student", "one two three four five"),
+            ("apollo", "Can you say more about why?"),
+            ("student", "hello world"),
+        ],
+    )
+
     db.add(StudentProgress(user_id=user_a, course_id=sid, xp_total=387, level=2))
     # user_c: signed in (progress row exists) but never attempted.
     db.add(StudentProgress(user_id=user_c, course_id=sid, xp_total=0, level=1))
@@ -233,10 +264,11 @@ async def test_full_payload_aggregates(db_session):
     assert days["2026-07-27"] == {"day": "2026-07-27", "graded": 2, "in_progress": 1}
 
     # Rubric loss signal averages ALL graded attempts: (40+100+100)/3 etc.
+    # v2 drops the misconception_corrected axis entirely.
+    assert set(payload["rubric_averages"]) == {"procedure", "justification", "simplification"}
     assert payload["rubric_averages"]["procedure"] == 80.0
     assert payload["rubric_averages"]["justification"] == pytest.approx(53.3, abs=0.05)
     assert payload["rubric_averages"]["simplification"] == pytest.approx(33.3, abs=0.05)
-    assert payload["rubric_averages"]["misconception_corrected"] == 0.0
 
     concepts = {row["concept_id"]: row for row in payload["concepts"]}
     assert concepts[concept_a]["attempts"] == 3  # user_a graded x2 + user_b in-progress
@@ -257,19 +289,56 @@ async def test_full_payload_aggregates(db_session):
         (problem_a, 85.0, "A-"),
         (problem_b, 100.0, "A+"),
     }
-    assert (a["xp"], a["level"]) == (387, 2)
     assert a["last_active"] is not None
+    assert "xp" not in a and "level" not in a  # v2 removed the XP stat
+    # user_a taught two student turns (5 + 2 words -> median 3.5); the apollo
+    # message is excluded. problem_a was retried (40 -> 85), gain 45.
+    assert a["engagement"] == {
+        "teaching_turns": 2,
+        "median_words": 3.5,
+        "problems_retried": 1,
+        "avg_gain": 45.0,
+    }
+    assert a["flags"] == []  # 2 turns < low_effort floor; best grades clear 60
 
     b = students[user_b]
     assert (b["attempts"], b["graded"], b["avg_best"], b["letter"]) == (1, 0, None, None)
-    assert (b["xp"], b["level"]) == (0, 1)  # no progress row -> defaults
+    assert b["engagement"] == {
+        "teaching_turns": 0,
+        "median_words": None,
+        "problems_retried": 0,
+        "avg_gain": None,
+    }
+    assert b["flags"] == []  # active (1 attempt), no messages, no graded problems
 
     c = students[user_c]
     assert (c["attempts"], c["problems_tried"], c["avg_best"]) == (0, 0, None)
-    assert (c["xp"], c["level"]) == (0, 1)
+    assert c["flags"] == ["not_started"]  # signed in, never attempted
 
     # Graded-first, best-score-first ordering.
     assert payload["students"][0]["user_id"] == user_a
+
+    # Per-problem best-wins rollup, grouped/ordered by concept_name then code.
+    problems = payload["problems"]
+    assert [(p["problem_id"], p["concept_name"], p["problem_code"]) for p in problems] == [
+        (problem_a, "Ca", "pa"),
+        (problem_b, "Cb", "pb"),
+    ]
+    pa_block = problems[0]
+    assert (pa_block["students_graded"], pa_block["avg_best"]) == (1, 85.0)
+    pa_dist = {row["letter"]: row["count"] for row in pa_block["distribution"]}
+    assert pa_dist["A-"] == 1 and pa_dist["F"] == 0
+
+    # Insights: only user_a is graded (n=1) -> correlation & quartiles suppressed;
+    # but user_a retried problem_a, so retry_payoff is populated.
+    assert payload["insights"]["correlation"] is None
+    assert payload["insights"]["effort_quartiles"] is None
+    assert payload["insights"]["retry_payoff"] == {
+        "students_retried": 1,
+        "avg_first": 40.0,
+        "avg_best": 85.0,
+        "avg_gain": 45.0,
+    }
 
     # auth.users does not exist in this schema -> identity degrades to None.
     assert a["email"] is None and a["full_name"] is None
@@ -298,6 +367,128 @@ async def test_identity_lookup_joins_auth_users_when_present(db_session):
     assert students[user_a]["full_name"] == "Ada Student"
 
 
+async def test_insights_populated_with_enough_students(db_session):
+    """>= MIN_CORRELATION_N graded students -> correlation + effort_quartiles
+    materialize end-to-end (loaders + assembler), and a retry populates
+    retry_payoff. The exact statistics are anchored by the pure unit tests; here
+    we prove the real-DB chain wires them together."""
+    sid, concept_a, _concept_b, problem_a, _problem_b = await _seed_course_with_problems(db_session)
+    day = datetime(2026, 7, 28, 9, 0, tzinfo=UTC)
+
+    users = [str(uuid.uuid4()) for _ in range(8)]
+    for i, uid in enumerate(users):
+        sess = await _seed_session(
+            db_session, user_id=uid, search_space_id=sid, concept_id=concept_a
+        )
+        await _seed_attempt(
+            db_session,
+            session_id=sess,
+            user_id=uid,
+            search_space_id=sid,
+            problem_id=problem_a,
+            result="graded",
+            report=_report(served=(30 + i * 8, "C")),
+            created_at=day,
+        )
+        # teaching effort rises with the student index (i+1 student turns).
+        await _seed_messages(
+            db_session,
+            session_id=sess,
+            search_space_id=sid,
+            turns=[("student", "a b c") for _ in range(i + 1)],
+        )
+        db_session.add(CourseMembership(user_id=uid, course_id=sid, role="student"))
+
+    # user 0 retries problem_a (30 -> 66) so retry_payoff is populated.
+    sess0 = await _seed_session(
+        db_session, user_id=users[0], search_space_id=sid, concept_id=concept_a
+    )
+    await _seed_attempt(
+        db_session,
+        session_id=sess0,
+        user_id=users[0],
+        search_space_id=sid,
+        problem_id=problem_a,
+        result="graded",
+        report=_report(served=(66, "C+")),
+        created_at=day,
+    )
+    await db_session.flush()
+
+    payload = await class_performance(db_session, search_space_id=sid)
+
+    corr = payload["insights"]["correlation"]
+    assert corr is not None
+    assert corr["n"] == 8
+    assert -1.0 <= corr["pearson_r"] <= 1.0
+    assert len(corr["points"]) == 8
+
+    quartiles = payload["insights"]["effort_quartiles"]
+    assert quartiles is not None
+    assert [q["quartile"] for q in quartiles] == [1, 2, 3, 4]
+    assert sum(q["students"] for q in quartiles) == 8
+
+    assert payload["insights"]["retry_payoff"]["students_retried"] == 1
+
+    problem_row = next(p for p in payload["problems"] if p["problem_id"] == problem_a)
+    assert problem_row["students_graded"] == 8
+
+
+async def test_gave_up_flag_respects_still_ungraded_retry(db_session):
+    """``gave_up`` must not fire while a student is mid-retry. The scoring path is
+    graded-only, but ``best_is_last`` is decided over ALL attempts, so a later
+    still-ungraded attempt after a sub-60 best clears the flag — whereas a
+    student who never attempted again is flagged."""
+    sid, concept_a, _cb, problem_a, _pb = await _seed_course_with_problems(db_session)
+    quitter, retrier = str(uuid.uuid4()), str(uuid.uuid4())
+    day = datetime(2026, 7, 29, 9, 0, tzinfo=UTC)
+
+    # quitter: best graded 45 (< 60) on problem_a and nothing after -> gave_up.
+    sq = await _seed_session(db_session, user_id=quitter, search_space_id=sid, concept_id=concept_a)
+    await _seed_attempt(
+        db_session,
+        session_id=sq,
+        user_id=quitter,
+        search_space_id=sid,
+        problem_id=problem_a,
+        result="graded",
+        report=_report(served=(45, "F")),
+        created_at=day,
+    )
+
+    # retrier: same sub-60 best, THEN a still-ungraded attempt (result NULL,
+    # higher id) -> best is no longer last -> NOT gave_up.
+    sr = await _seed_session(db_session, user_id=retrier, search_space_id=sid, concept_id=concept_a)
+    await _seed_attempt(
+        db_session,
+        session_id=sr,
+        user_id=retrier,
+        search_space_id=sid,
+        problem_id=problem_a,
+        result="graded",
+        report=_report(served=(45, "F")),
+        created_at=day,
+    )
+    await _seed_attempt(
+        db_session,
+        session_id=sr,
+        user_id=retrier,
+        search_space_id=sid,
+        problem_id=problem_a,
+        result=None,
+        created_at=day,
+    )
+
+    for uid in (quitter, retrier):
+        db_session.add(CourseMembership(user_id=uid, course_id=sid, role="student"))
+    await db_session.flush()
+
+    payload = await class_performance(db_session, search_space_id=sid)
+    students = {s["user_id"]: s for s in payload["students"]}
+    assert "gave_up" in students[quitter]["flags"]
+    assert "gave_up" not in students[retrier]["flags"]
+
+
 async def test_empty_course_returns_zeroed_payload(db_session):
     sid = await seed_search_space(db_session)
 
@@ -317,7 +508,12 @@ async def test_empty_course_returns_zeroed_payload(db_session):
         "procedure": None,
         "justification": None,
         "simplification": None,
-        "misconception_corrected": None,
     }
     assert payload["concepts"] == []
+    assert payload["problems"] == []
     assert payload["students"] == []
+    assert payload["insights"] == {
+        "correlation": None,
+        "effort_quartiles": None,
+        "retry_payoff": None,
+    }

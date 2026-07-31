@@ -71,9 +71,17 @@ async def test_performance_route_returns_payload(db_session, monkeypatch):
         "activity_by_day",
         "rubric_averages",
         "concepts",
+        "problems",
         "students",
+        "insights",
     }
     assert payload["students"] == []
+    assert payload["problems"] == []
+    assert payload["insights"] == {
+        "correlation": None,
+        "effort_quartiles": None,
+        "retry_payoff": None,
+    }
 
 
 async def test_performance_route_scopes_to_course(db_session, monkeypatch):
