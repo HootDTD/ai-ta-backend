@@ -120,6 +120,7 @@
     "apollo/projections/mastery.py": "apollo/projections/mastery",
     "apollo/projections/performance.py": "apollo/projections/performance",
     "apollo/projections/performance_insights.py": "apollo/projections/performance-insights",
+    "apollo/projections/performance_problems.py": "apollo/projections/performance-problems",
     "apollo/projections/scorecard.py": "apollo/projections/scorecard",
     "apollo/provisioning/__init__.py": "apollo/provisioning/_index",
     "apollo/provisioning/authored_problem.py": "apollo/provisioning/authored-problem",
@@ -920,6 +921,14 @@
       "description": "performance_insights \u2014 algorithmic (LLM/Neo4j-free) engagement, retry, correlation, quartile, and flag helpers behind the class-performance payload's engagement + insights blocks.",
       "owns": [
         "apollo/projections/performance_insights.py"
+      ]
+    },
+    "apollo/projections/performance-problems": {
+      "path": "docs/architecture/apollo/projections/performance-problems.md",
+      "kind": "leaf",
+      "description": "performance_problems \u2014 the class-performance payload's per-problem problems[] block (best-wins letter distribution, full text, per-problem student list, and the per-reference-node right/wrong breakdown that reuses the served topic score's own credit helper).",
+      "owns": [
+        "apollo/projections/performance_problems.py"
       ]
     },
     "apollo/projections/scorecard": {
@@ -2101,6 +2110,7 @@
         "apollo/projections/mastery",
         "apollo/projections/performance",
         "apollo/projections/performance-insights",
+        "apollo/projections/performance-problems",
         "apollo/projections/scorecard"
       ]
     },

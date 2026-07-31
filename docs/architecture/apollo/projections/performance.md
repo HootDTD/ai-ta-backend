@@ -5,6 +5,7 @@ owns:
   - apollo/projections/performance.py
 related:
   - apollo/projections/performance-insights
+  - apollo/projections/performance-problems
   - apollo/projections/classroom
   - apollo/overseer/topic-score
   - apollo/conversation/routing/router
@@ -32,6 +33,14 @@ endpoints). No new grading, inference, LLM, or Neo4j.
   `insights` (correlation / effort quartiles / retry payoff). The `engagement`,
   `flags`, and `insights` composition lives in
   [performance-insights](performance-insights.md).
+- **v2.1 payload deltas** (design spec 2026-07-31 addendum, additive only): each
+  `problems[]` row gained `problem_text` (full statement), `students`
+  (per-problem best-wins `{user_id, email, score, letter}`, score desc) and
+  `nodes` (per graded reference node: understood/partial/missed/graded counts
+  over each student's BEST graded attempt). The whole `problems` block — plus the
+  shared `letter_distribution` behind `grade_distribution` — now lives in
+  [performance-problems](performance-problems.md); this leaf's assembler threads
+  the best-wins rows + identities into it.
 
 ## Data flow
 
@@ -65,11 +74,13 @@ byte-identical to best-wins.
 - **`rubric_averages` deliberately averages ALL graded attempts** (retries
   included): it is the "where does the class lose points" signal, not the
   served grade.
-- **`problems` is best-wins per (student, problem)** — one row per problem with
-  >=1 graded attempt, its letter distribution over every `LETTER_BANDS` band
-  (zeros included), `students_graded` = distinct best rows, ordered
-  `concept_name` then `problem_code`. Built in-process from the same `best_rows`
-  as `grade_distribution`, so the two never disagree.
+- **`problems` is best-wins per (student, problem)**, built by
+  [performance-problems](performance-problems.md) from the same `best_rows` (and
+  the shared `letter_distribution`) as `grade_distribution`, so the two never
+  disagree; its `nodes` drill-down reuses the served topic score's own
+  `_credit_for_node`, so it can't disagree with the grade either. `_best_graded_rows`
+  carries each best attempt's `diagnostic_report -> 'coverage'` (coverage only) to
+  feed it.
 - **`auth.users` lookup is failure-isolated**: outside `Base.metadata`
   (absent from the Testcontainers schema), queried under a `begin_nested()`
   SAVEPOINT so a missing table / revoked grant degrades to null identities
