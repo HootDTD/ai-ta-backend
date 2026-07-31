@@ -9,6 +9,7 @@ owns:
   - supabase/migrations/20260722120000_db08b_rls_enforcement_grants.sql
   - supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql
   - supabase/migrations/20260728120000_apollo_grounding_bundle.sql
+  - supabase/migrations/20260730120000_auth_users_identity_grant.sql
   - supabase/config.toml
   - supabase/seed.sql
   - supabase/.gitignore
@@ -18,7 +19,7 @@ related:
   - database/session
   - platform/ops-db-sql
   - platform/ops-db-tooling
-last_verified: 2026-07-28
+last_verified: 2026-07-30
 stub: false
 ---
 
@@ -28,7 +29,7 @@ The timestamped `supabase/migrations/` chain is the **CURRENT forward schema**
 (pinned Supabase CLI 2.109.0 per `config.toml`, applied in ascending 14-digit
 order). `database/models.py` ORM MUST track it.
 
-## Interface — the seven migrations, in order
+## Interface — the eight migrations, in order
 
 1. **`…_legacy_public_snapshot`** — the loud, non-authoritative DB-03 draft
    reconstruction of legacy `public`. MUST be replaced by a reviewed human
@@ -57,6 +58,13 @@ order). `database/models.py` ORM MUST track it.
    `app.learning_activities.grounding_bundle` JSONB, the per-session
    grounding-bundle cache. Twin of legacy `database/migrations/048`; both
    chains must carry it.
+8. **`…_auth_users_identity_grant`** (Class-Performance-v2) — GRANTs
+   `app_runtime` USAGE on schema `auth` + column-level SELECT on
+   `auth.users (id, email, raw_user_meta_data)` so the teacher
+   class-performance projection resolves student email / display name
+   (`encrypted_password` etc. stay unreadable). Guarded to no-op with a NOTICE
+   where the auth schema/table or the role is absent (local Docker). Twin of
+   legacy `database/migrations/049`; both chains must carry it.
 
 ## Data flow
 

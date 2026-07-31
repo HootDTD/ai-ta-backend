@@ -2,7 +2,7 @@
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
   "generated_at": "2026-07-30",
-  "repo": "class-perf",
+  "repo": "perf-v2",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -119,6 +119,7 @@
     "apollo/projections/classroom.py": "apollo/projections/classroom",
     "apollo/projections/mastery.py": "apollo/projections/mastery",
     "apollo/projections/performance.py": "apollo/projections/performance",
+    "apollo/projections/performance_insights.py": "apollo/projections/performance-insights",
     "apollo/projections/scorecard.py": "apollo/projections/scorecard",
     "apollo/provisioning/__init__.py": "apollo/provisioning/_index",
     "apollo/provisioning/authored_problem.py": "apollo/provisioning/authored-problem",
@@ -274,6 +275,7 @@
     "database/migrations/046_apollo_solution_source_llm_paired.sql": "database/legacy-migrations",
     "database/migrations/047_apollo_question_tally.sql": "database/legacy-migrations",
     "database/migrations/048_apollo_session_grounding_bundle.sql": "database/legacy-migrations",
+    "database/migrations/049_auth_users_identity_grant.sql": "database/legacy-migrations",
     "database/migrations/README.md": "database/legacy-migrations",
     "database/migrations/__init__.py": "database/legacy-migrations",
     "database/migrations/legacy-manifest.sha256": "database/legacy-migrations",
@@ -348,6 +350,7 @@
     "supabase/migrations/20260722120000_db08b_rls_enforcement_grants.sql": "database/supabase-migrations",
     "supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql": "database/supabase-migrations",
     "supabase/migrations/20260728120000_apollo_grounding_bundle.sql": "database/supabase-migrations",
+    "supabase/migrations/20260730120000_auth_users_identity_grant.sql": "database/supabase-migrations",
     "supabase/seed.sql": "database/supabase-migrations",
     "teacher_upload_worker.py": "platform/worker-and-procfile",
     "vendors/__init__.py": "platform/vendor-openai-client",
@@ -906,9 +909,17 @@
     "apollo/projections/performance": {
       "path": "docs/architecture/apollo/projections/performance.md",
       "kind": "leaf",
-      "description": "class_performance \u2014 the teacher classroom-performance payload (roster, best-wins grades, distribution, activity, rubric-loss signal, concept rollup) aggregated from served grade snapshots.",
+      "description": "class_performance \u2014 the teacher classroom-performance payload (roster, best-wins grades, distribution, activity, rubric-loss signal, concept + per-problem rollups, per-student engagement + flags) aggregated from served grade snapshots.",
       "owns": [
         "apollo/projections/performance.py"
+      ]
+    },
+    "apollo/projections/performance-insights": {
+      "path": "docs/architecture/apollo/projections/performance-insights.md",
+      "kind": "leaf",
+      "description": "performance_insights \u2014 algorithmic (LLM/Neo4j-free) engagement, retry, correlation, quartile, and flag helpers behind the class-performance payload's engagement + insights blocks.",
+      "owns": [
+        "apollo/projections/performance_insights.py"
       ]
     },
     "apollo/projections/scorecard": {
@@ -1452,7 +1463,7 @@
     "database/legacy-migrations": {
       "path": "docs/architecture/database/legacy-migrations.md",
       "kind": "leaf",
-      "description": "The FROZEN numbered migration archive (001\u2013048), including the explicit Interaction-1 exception.",
+      "description": "The FROZEN numbered migration archive (001\u2013049), including the two explicit sequential exceptions (048 Interaction-1, 049 Class-Performance-v2).",
       "owns": [
         "database/migrations/__init__.py",
         "database/migrations/001_create_schema.py",
@@ -1492,6 +1503,7 @@
         "supabase/migrations/20260722120000_db08b_rls_enforcement_grants.sql",
         "supabase/migrations/20260723060000_db08c_rls_write_policy_gaps.sql",
         "supabase/migrations/20260728120000_apollo_grounding_bundle.sql",
+        "supabase/migrations/20260730120000_auth_users_identity_grant.sql",
         "supabase/config.toml",
         "supabase/seed.sql",
         "supabase/.gitignore"
@@ -2088,6 +2100,7 @@
         "apollo/projections/classroom",
         "apollo/projections/mastery",
         "apollo/projections/performance",
+        "apollo/projections/performance-insights",
         "apollo/projections/scorecard"
       ]
     },
