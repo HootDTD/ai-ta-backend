@@ -15,7 +15,7 @@ related:
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
   - apollo/persistence/neo4j-client
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -72,24 +72,31 @@ Ordered turn:
    executor. An unset/empty `INTERACTION_CONCEPTS` preserves flag-only
    behavior; either rejected rollout gate returns `None`, so the utterance
    continues through the ordinary teaching turn.
-2. Per-session cap: `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]` (default
+2. Empty/whitespace question → instant aside-shaped reply ("Type your
+   question above first, then click Ask."), logged at INFO as
+   `apollo_reference_question_empty`, persisted through the shared
+   `_persist_reference_aside_turn` envelope. No LLM, no retrieval, no
+   exception, and the aside counter is NOT incremented — refusing a
+   non-question is correct behavior and must cost nothing.
+3. Per-session cap: `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]` (default
    0) at or above `MAX_ASIDES_PER_SESSION` (3) → a persona redirect turn, no
    bridge call.
-3. Otherwise calls `hoot_bridge.reference_answer.answer_reference_question`.
+4. Otherwise calls `hoot_bridge.reference_answer.answer_reference_question`.
    Any exception → logged, persona apology turn persisted, **never a 5xx** —
    the brief's "failure ⇒ persona apology + fall through as a teaching turn"
    contract lives here, not in the bridge (the bridge raises on genuine
    failure by design).
-4. On success: persists the student question (untagged — the adjudicator
-   keeps it), the aside text tagged `intent=ASIDE_MESSAGE_INTENT_TAG`
-   (`handlers/done._full_transcript` excludes this row from grading) with the
-   structured payload stored in the row's `message_metadata` as
-   `{"aside": {citations, in_scope}}` (text is the row content) so
-   `handlers/lifecycle`'s snapshot can replay citations after a reload, and
-   the persona resume line (untagged), then increments the session's aside
-   counter. Returns `message_kind: "reference_aside"` plus an `aside: {text,
-   citations, in_scope}` payload — the serializer shape the student-UI PR
-   types against (see `hoot-bridge-reference-answer`).
+5. On success: increments the session's aside counter, then persists via the
+   shared `_persist_reference_aside_turn` helper — the student question
+   (untagged — the adjudicator keeps it), the aside text tagged
+   `intent=ASIDE_MESSAGE_INTENT_TAG` (`handlers/done._full_transcript`
+   excludes this row from grading) with the structured payload stored in the
+   row's `message_metadata` as `{"aside": {citations, in_scope}}` (text is
+   the row content) so `handlers/lifecycle`'s snapshot can replay citations
+   after a reload, and the persona resume line (untagged). Returns
+   `message_kind: "reference_aside"` plus an `aside: {text, citations,
+   in_scope}` payload — the serializer shape the student-UI PR types against
+   (see `hoot-bridge-reference-answer`).
 
 ## Invariants & gotchas
 
