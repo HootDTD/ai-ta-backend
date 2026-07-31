@@ -30,8 +30,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.overseer.rubric import LETTER_BANDS, score_to_letter
-from apollo.projections import performance_insights
+from apollo.overseer.rubric import score_to_letter
+from apollo.projections import performance_insights, performance_problems
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,9 @@ def _round1(value: Any) -> float:
 async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[dict[str, Any]]:
     """One row per (user_id, problem_id): the highest-scoring graded attempt,
     carrying that attempt's own served letter (never re-derived, so a teacher
-    cell always matches what the student was shown)."""
+    cell always matches what the student was shown) and that attempt's stored
+    ``coverage`` (only the coverage sub-object of ``diagnostic_report``, not the
+    whole report — it powers the per-problem node drill-down and nothing else)."""
     rows = (
         (
             await db.execute(
@@ -76,7 +78,8 @@ async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[d
                     pa.user_id AS user_id,
                     pa.problem_id AS problem_id,
                     {_SCORE_EXPR} AS score,
-                    {_LETTER_EXPR} AS letter
+                    {_LETTER_EXPR} AS letter,
+                    pa.diagnostic_report #> '{{coverage}}' AS coverage
                 FROM app.problem_attempts pa
                 WHERE pa.course_id = :search_space_id
                   AND pa.result = 'graded'
@@ -96,6 +99,7 @@ async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[d
             "problem_id": int(row["problem_id"]),
             "score": _round1(row["score"]),
             "letter": row["letter"] or score_to_letter(round(float(row["score"]))),
+            "coverage": row["coverage"],
         }
         for row in rows
     ]
@@ -345,79 +349,6 @@ async def _identities(db: AsyncSession, user_ids: list[str]) -> dict[str, dict[s
     }
 
 
-def _distribution(best_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    counts: dict[str, int] = {}
-    for row in best_rows:
-        counts[row["letter"]] = counts.get(row["letter"], 0) + 1
-    # Present every band the grader can emit (LETTER_BANDS is the grader's own
-    # table) so the class shape is visible even where a bucket is (still) zero.
-    letters = [letter for _threshold, letter in LETTER_BANDS]
-    return [{"letter": letter, "count": counts.get(letter, 0)} for letter in letters]
-
-
-async def _problem_meta(db: AsyncSession, *, problem_ids: list[int]) -> dict[int, dict[str, Any]]:
-    """``problem_id -> {problem_code, concept_id, concept_name}`` for the given
-    problems (those with >=1 graded best row), joined through their concept."""
-    if not problem_ids:
-        return {}
-    rows = (
-        (
-            await db.execute(
-                text(
-                    """
-                SELECT p.id AS problem_id, p.problem_code AS problem_code,
-                       c.id AS concept_id, c.display_name AS concept_name
-                FROM app.problems p
-                JOIN app.concepts c ON c.id = p.concept_id
-                WHERE p.id = ANY(:problem_ids)
-                """
-                ),
-                {"problem_ids": problem_ids},
-            )
-        )
-        .mappings()
-        .all()
-    )
-    return {
-        int(row["problem_id"]): {
-            "problem_code": row["problem_code"],
-            "concept_id": int(row["concept_id"]),
-            "concept_name": row["concept_name"],
-        }
-        for row in rows
-    }
-
-
-def _problems_block(
-    best_rows: list[dict[str, Any]], meta_by_problem: dict[int, dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """One row per problem with >=1 graded best attempt: best-wins letter
-    distribution (all bands incl. zeros), mean best score, and distinct graded
-    students. Ordered by concept_name, then problem_code."""
-    by_problem: dict[int, list[dict[str, Any]]] = {}
-    for row in best_rows:
-        by_problem.setdefault(row["problem_id"], []).append(row)
-    problems: list[dict[str, Any]] = []
-    for problem_id, rows in by_problem.items():
-        meta = meta_by_problem.get(problem_id)
-        if meta is None:  # pragma: no cover - best_rows FK-guaranteed to a problem
-            continue
-        scores = [r["score"] for r in rows]
-        problems.append(
-            {
-                "problem_id": problem_id,
-                "problem_code": meta["problem_code"],
-                "concept_id": meta["concept_id"],
-                "concept_name": meta["concept_name"],
-                "students_graded": len(rows),  # one best row per distinct student
-                "avg_best": _round1(sum(scores) / len(scores)),
-                "distribution": _distribution(rows),
-            }
-        )
-    problems.sort(key=lambda p: (p["concept_name"], p["problem_code"]))
-    return problems
-
-
 def _student_row(
     user_id: str,
     *,
@@ -523,7 +454,12 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
     )
 
     problem_ids = sorted({row["problem_id"] for row in best_rows})
-    problems = _problems_block(best_rows, await _problem_meta(db, problem_ids=problem_ids))
+    problems = performance_problems.build_problems(
+        best_rows,
+        await performance_problems.load_problem_meta(db, problem_ids=problem_ids),
+        identities,
+        await performance_problems.load_graded_reference_nodes(db, problem_ids=problem_ids),
+    )
     # Correlation / quartiles run only over students who have a served grade;
     # the point carries the same avg_best the row shows, the email label, and
     # user_id (the quartile tie-break key — grade must never order equal effort).
@@ -552,7 +488,7 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
             "letter": score_to_letter(round(class_avg)) if class_avg is not None else None,
             "students_graded": len(graded_student_avgs),
         },
-        "grade_distribution": _distribution(best_rows),
+        "grade_distribution": performance_problems.letter_distribution(best_rows),
         "activity_by_day": await _activity_by_day(db, search_space_id=search_space_id),
         "rubric_averages": await _rubric_averages(db, search_space_id=search_space_id),
         "concepts": await _concept_rollup(db, search_space_id=search_space_id),
