@@ -15,6 +15,7 @@ init_session_direct additionally raises ProblemNotFoundError (404).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -43,6 +44,7 @@ from config.settings import (
     interaction1_enabled,
     interaction_allowed_for_concept,
 )
+from database.session import _get_session_factory
 from retrieval import retrieve_for_question
 
 _ALLOWED_DIFFICULTIES = {"intro", "standard", "hard"}
@@ -59,6 +61,7 @@ _SOLUTION_DOC_KINDS = frozenset(
     }
 )
 _LOG = logging.getLogger(__name__)
+_GROUNDING_TASKS: set[asyncio.Task[None]] = set()
 
 
 def _concept_grounding_terms(
@@ -142,6 +145,61 @@ async def _build_grounding_bundle(
             _LOG.exception("Failed to roll back Apollo grounding transaction")
 
 
+async def _build_grounding_bundle_in_background(
+    *,
+    session_id: int,
+    search_space_id: int,
+    concept_title: str,
+    concept_aliases: list[str],
+    problem: Problem,
+) -> None:
+    """Build grounding with a session that outlives the request dependency."""
+    try:
+        session_factory = _get_session_factory()
+        async with session_factory() as db:
+            session = await db.get(TutoringSession, session_id)
+            if session is None:
+                _LOG.error(
+                    "Apollo grounding session %s disappeared before background retrieval",
+                    session_id,
+                )
+                return
+            await _build_grounding_bundle(
+                db,
+                session=session,
+                search_space_id=search_space_id,
+                concept_title=concept_title,
+                concept_aliases=concept_aliases,
+                problem=problem,
+            )
+    except Exception:
+        _LOG.exception(
+            "Apollo grounding background task failed for session %s; continuing without bundle",
+            session_id,
+        )
+
+
+def _schedule_grounding_bundle(
+    *,
+    session_id: int,
+    search_space_id: int,
+    concept_title: str,
+    concept_aliases: list[str],
+    problem: Problem,
+) -> None:
+    task = asyncio.create_task(
+        _build_grounding_bundle_in_background(
+            session_id=session_id,
+            search_space_id=search_space_id,
+            concept_title=concept_title,
+            concept_aliases=concept_aliases,
+            problem=problem,
+        )
+    )
+    _GROUNDING_TASKS.add(task)
+    task.add_done_callback(_GROUNDING_TASKS.discard)
+
+
 async def _create_session_with_problem(
     db: AsyncSession,
     *,
@@ -191,9 +249,8 @@ async def _create_session_with_problem(
     await db.commit()
 
     if interaction1_enabled() and interaction_allowed_for_concept(problem.concept_id):
-        await _build_grounding_bundle(
-            db,
-            session=session,
+        _schedule_grounding_bundle(
+            session_id=session.id,
             search_space_id=search_space_id,
             concept_title=concept_title,
             concept_aliases=concept_aliases,

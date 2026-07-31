@@ -10,7 +10,7 @@ related:
   - platform/http-server
   - indexing/chunking-embedding
   - database/models
-last_verified: 2026-07-25
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -31,8 +31,9 @@ disambiguation in `_index`.) The densest, most load-bearing file in the domain.
 
 ## Data flow
 
-1. `embed_text(query_text)` (`indexing/chunking-embedding`) — same model/dims as
-   indexing; must not drift.
+1. `embed_text(query_text)` (`indexing/chunking-embedding`) runs through
+   `asyncio.to_thread` so the synchronous OpenAI client cannot block the event
+   loop — same model/dims as indexing; must not drift.
 2. Resolve visible `document_id`s ONCE via `active_document_conditions`
    (`document-visibility`); return `[]` early if none visible.
 3. Two module CTEs `_build_semantic_cte` / `_build_keyword_cte` — each wraps
@@ -56,6 +57,8 @@ disambiguation in `_index`.) The densest, most load-bearing file in the domain.
 - `SET LOCAL` is transaction-scoped (autobegun session) — resets at
   commit/rollback, nothing leaks through the asyncpg pool.
 - The keyword arm still joins `app.documents` (GIN FTS, not the cold bottleneck).
+- Only the async retrieval call site offloads `embed_text`; the synchronous
+  embedder itself remains unchanged for synchronous callers.
 - Recall bounded by `scripts/eval_iterative_scan_recall.py` (top-20 overlap 1.000
   vs brute-force baseline).
 

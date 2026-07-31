@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,8 +14,9 @@ from apollo.hoot_bridge.reference_answer import (
 )
 from apollo.hoot_bridge.reference_answer import is_enabled as _interaction4_enabled
 from apollo.knowledge_graph.store import KGStore
-from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import (
+    Concept,
+    Problem,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -22,6 +24,7 @@ from apollo.persistence.models import (
     TutoringSession,
 )
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
+from apollo.schemas.problem import Problem as ProblemSchema
 from config.settings import interaction_allowed_for_concept
 
 _LOG = logging.getLogger(__name__)
@@ -147,10 +150,30 @@ async def handle_get_session(
     problem = None
     problem_concept_slug: str | None = None
     if sess.current_problem_id and sess.concept_id is not None:
-        for p in await list_problems_for_concept(
-            db, concept_id=sess.concept_id, search_space_id=sess.course_id
-        ):
-            if p.database_id == sess.current_problem_id:
+        problem_row = (await db.execute(
+            select(Problem, Concept.slug)
+            .join(Concept, Concept.id == Problem.concept_id)
+            .where(
+                Problem.id == sess.current_problem_id,
+                Problem.course_id == sess.course_id,
+                Concept.course_id == sess.course_id,
+                Problem.concept_id == sess.concept_id,
+                Problem.tier == 2,
+                Problem.quarantined_at.is_(None),
+            )
+        )).one_or_none()
+        if problem_row is not None:
+            row, concept_slug = problem_row
+            try:
+                p = ProblemSchema.model_validate(
+                    {**row.to_pydantic_payload(concept_slug=concept_slug), "database_id": row.id}
+                )
+            except ValidationError:
+                _LOG.warning(
+                    "Apollo session %s current problem %s has an invalid payload",
+                    session_id, sess.current_problem_id,
+                )
+            else:
                 problem_concept_slug = p.concept_id
                 problem = {
                     "id": p.id,
@@ -160,7 +183,6 @@ async def handle_get_session(
                     "given_values": p.given_values,
                     "target_unknown": p.target_unknown,
                 }
-                break
 
     # Mirrors the chat-handler aside gate (INTERACTION4 + concept allowlist)
     # so the UI only renders the Ask Hoot button where the lane can run;

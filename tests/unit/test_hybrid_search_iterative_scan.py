@@ -13,6 +13,8 @@ Compile/fake-session only — no database required.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from retrieval.hybrid_search import (
@@ -152,3 +154,21 @@ async def test_kill_switch_emits_no_set_locals(monkeypatch, fake_embed):
     assert not any(s.startswith("SET LOCAL") for s in session.executed)
     # Just the doc-id resolution + the fused query.
     assert len(session.executed) == 2
+
+
+async def test_embedding_is_offloaded_and_async_search_result_is_preserved(monkeypatch):
+    from database.models import EMBEDDING_DIM
+
+    event_loop_thread = threading.get_ident()
+    embedding_threads: list[int] = []
+
+    def _embed(_query):
+        embedding_threads.append(threading.get_ident())
+        return [0.1] * EMBEDDING_DIM
+
+    monkeypatch.setattr("retrieval.hybrid_search.embed_text", _embed)
+    monkeypatch.setenv("HNSW_ITERATIVE_SCAN", "off")
+    retriever = AITAHybridSearchRetriever(_FakeSession(), search_space_id=1)
+
+    assert await retriever.hybrid_search("what is a normal shock") == []
+    assert embedding_threads and embedding_threads[0] != event_loop_thread

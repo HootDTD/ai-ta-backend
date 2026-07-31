@@ -568,6 +568,64 @@ def test_create_session_with_explicit_problem(client_factory, monkeypatch):
     asyncio.run(_check())
 
 
+def test_create_session_response_does_not_wait_for_grounding(client_factory, monkeypatch):
+    from threading import Event, Thread
+
+    import apollo.hoot_bridge.session_init as session_init
+
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, codes = asyncio.run(_seed_curriculum(Session))
+    monkeypatch.setenv("INTERACTION1", "true")
+    monkeypatch.setattr(session_init, "_get_session_factory", lambda: Session)
+
+    retrieval_started = Event()
+    release_retrieval = Event()
+    retrieval_finished = Event()
+
+    async def _blocked_retrieval(**_kwargs):
+        retrieval_started.set()
+        try:
+            await asyncio.to_thread(release_retrieval.wait)
+            return [], {}
+        finally:
+            retrieval_finished.set()
+
+    monkeypatch.setattr(session_init, "retrieve_for_question", _blocked_retrieval)
+    response_done = Event()
+    outcome = {}
+
+    with TestClient(app) as client:
+        def _post():
+            try:
+                outcome["response"] = client.post(
+                    "/apollo/sessions",
+                    json={
+                        "search_space_id": TEST_SPACE_ID,
+                        "concept_id": concept_id,
+                        "difficulty": "intro",
+                        "problem_id": codes[0],
+                    },
+                    headers={"Authorization": "Bearer tok"},
+                )
+            except BaseException as exc:
+                outcome["error"] = exc
+            finally:
+                response_done.set()
+
+        request_thread = Thread(target=_post)
+        request_thread.start()
+        assert retrieval_started.wait(timeout=2)
+        returned_before_retrieval = response_done.wait(timeout=0.5)
+        release_retrieval.set()
+        request_thread.join(timeout=2)
+        assert retrieval_finished.wait(timeout=2)
+
+    assert returned_before_retrieval
+    assert "error" not in outcome
+    assert outcome["response"].status_code == 200
+
+
 def test_create_session_unknown_problem_404s(client_factory, monkeypatch):
     app, Session = client_factory
     _auth_as(monkeypatch, TEST_USER_ID)

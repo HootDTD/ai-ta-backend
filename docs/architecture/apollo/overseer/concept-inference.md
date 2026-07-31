@@ -7,7 +7,7 @@ related:
   - apollo/overseer/problem-selector
   - apollo/conversation/curriculum/db
   - apollo/conversation/session-init
-last_verified: 2026-07-25
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -28,12 +28,15 @@ The handler threads in the course-scoped candidate list (`{concept_id,
 display_name}` from `app.concepts`, WU-3D §8A — no longer a hard-coded constant).
 One `MAIN_MODEL` `json_object` call (temperature 0) returns a single
 `concept_id`; the value is validated against the allowed id set before return.
+The provider request has a 30-second timeout.
 
 ## Invariants & gotchas
 
 - **Fail-closed to `NoMatchingConceptError`** on null / unknown id / invalid JSON,
   including the empty-candidates "course has no curriculum" path (the LLM can
   only return null there).
+- Provider timeouts use that same `NoMatchingConceptError` fallback instead of
+  leaving the Hoot session-start request unbounded.
 - **Bool is rejected explicitly** — Python's `True == 1` would otherwise pass an
   `in {1, ...}` membership check.
 - Pure LLM call: no DB access here; candidate resolution happens upstream.

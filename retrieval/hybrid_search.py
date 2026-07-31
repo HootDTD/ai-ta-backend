@@ -9,6 +9,7 @@ Ported from SurfSense's ChucksHybridSearchRetriever with AI-TA adaptations:
 - Carries material_kind, page_number, section_path through results for citation building.
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -209,7 +210,7 @@ class AITAHybridSearchRetriever:
             figure_id, document_id, doc_title, material_kind
         """
         _t_embed = time.perf_counter()
-        query_embedding = embed_text(query_text)
+        query_embedding = await asyncio.to_thread(embed_text, query_text)
         log.info("[timing] embed=%.3fs", time.perf_counter() - _t_embed)
 
         # How many candidate results to pull from each search before RRF fusion
