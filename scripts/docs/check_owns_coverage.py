@@ -49,7 +49,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date
+from datetime import UTC, date, datetime
 
 # ---------------------------------------------------------------------------
 # Frontmatter parsing (PyYAML if available; tiny deterministic fallback else).
@@ -620,7 +620,18 @@ def check_last_verified(repo_root, base, docs, owners, report, required=False):
                 # a literal bump. The reconciliation the gate exists to force
                 # still happened (the leaf IS changed in this diff) — accept
                 # when its last_verified equals the head commit's author date.
-                if str(doc.fm.get("last_verified", "")).strip() == _head_commit_date(repo_root):
+                lv = str(doc.fm.get("last_verified", "")).strip()
+                if lv == _head_commit_date(repo_root):
+                    continue
+                # UTC-today tolerance: on pull_request events CI checks out
+                # GitHub's synthetic merge ref, whose author date carries the
+                # PR author's local offset and can sit a day BEHIND the UTC
+                # runner (observed on refs/pull/216/merge: author 2026-07-30
+                # for a 2026-07-31Z run). The leaf DID change in this diff and
+                # its last_verified equals today — the reconciliation the gate
+                # exists to force happened; only the date-granular bump line
+                # is unexpressible. Same semantics as the teacher-ui gate.
+                if lv == datetime.now(UTC).date().isoformat():
                     continue
                 _emit_lv(
                     report,
