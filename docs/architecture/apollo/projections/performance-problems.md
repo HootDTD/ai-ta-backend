@@ -1,0 +1,69 @@
+---
+doc: apollo/projections/performance-problems
+description: performance_problems — the class-performance payload's per-problem problems[] block (best-wins letter distribution, full text, per-problem student list, and the per-reference-node right/wrong breakdown that reuses the served topic score's own credit helper).
+owns:
+  - apollo/projections/performance_problems.py
+related:
+  - apollo/projections/performance
+  - apollo/overseer/topic-score
+last_verified: 2026-07-31
+stub: false
+---
+
+# Projections performance-problems — per-problem drill-down block
+
+Owns the whole `problems[]` block of the teacher class-performance payload
+(design spec 2026-07-31 v2.1 addendum). Everything but two thin DB loaders is a
+**pure function on plain rows / prebuilt nodes**, so the projection tests
+exercise it with hand-computed fixtures and no database. Composed by
+[performance](performance.md)'s assembler.
+
+## Interface
+
+- **Pure builders:** `letter_distribution(best_rows)` (best-wins letter counts
+  over every `LETTER_BANDS` band, zeros included — also reused by
+  [performance](performance.md) for the class-level `grade_distribution`);
+  `students_for(rows, identities)` (per-problem best-wins
+  `{user_id, email, score, letter}`, score desc, id tie-break);
+  `aggregate_nodes(graded_nodes, coverages)` (per graded node,
+  understood/partial/missed/`graded` counts); `build_problems(best_rows,
+  meta_by_problem, identities, graded_nodes_by_problem)` (assembles the ordered
+  rows: `problem_text`, distribution, `students`, `nodes`).
+- **DB loaders:** `load_problem_meta(db, *, problem_ids)` →
+  `{problem_id: {problem_code, problem_text, concept_id, concept_name}}`;
+  `load_graded_reference_nodes(db, *, problem_ids)` →
+  `{problem_id: [graded Node, ...]}`.
+
+## Data flow
+
+`load_problem_meta` joins `app.problems` → `app.concepts` for code/full text/
+concept. `load_graded_reference_nodes` reassembles each problem's reference graph
+the way `done.py` / [topic-score](../overseer/topic-score.md) do
+(`Problem.to_kg_graph`) and keeps only the graded node types the scorer grades.
+`build_problems` groups the assembler's best-wins rows by problem; each row's
+`nodes` are tallied over that problem's best attempts' stored
+`diagnostic_report -> 'coverage'` (threaded in by
+[performance](performance.md)'s `_best_graded_rows`).
+
+## Invariants & gotchas
+
+- **Node credit is the served grade's, not a copy.** `aggregate_nodes` derives
+  each node's covered/partial/missing status by REUSING
+  `topic_score._credit_for_node` over `coverage.per_step` +
+  `coverage.procedure_scores`, plus the same `_GRADED_NODE_TYPES` set and
+  `_display_name_for` the scorer uses (imported directly, mirroring
+  `transcript_coverage.py`) — so the drill-down can never disagree with the
+  grade the student was shown. Status maps covered→understood, partial→partial,
+  missing→missed.
+- **Attempts with no usable coverage are excluded.** A coverage lacking a
+  non-empty `per_step`/`procedure_scores` (e.g. a pre-topic-score snapshot) is
+  dropped so a node is never counted `missed` for want of data; `graded` counts
+  only included attempts. A problem with graded best rows but zero usable
+  coverages still lists its reference nodes with all-zero counts.
+- **Reference-graph load is failure-isolated per problem** — a malformed
+  reference solution degrades to an empty node list for that problem, never
+  voiding the payload. The `to_kg_graph` `attempt_id` stamp is irrelevant to
+  node identity, so a placeholder is passed.
+- **Roster-bounded.** A course is tens of students / a handful of problems, so
+  full `problem_text` and per-problem student lists are not a cross-course
+  export.

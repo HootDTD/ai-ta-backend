@@ -517,3 +517,132 @@ async def test_empty_course_returns_zeroed_payload(db_session):
         "effort_quartiles": None,
         "retry_payoff": None,
     }
+
+
+# --- v2.1 per-problem drill-down (problem_text / students / node breakdown) ---
+
+# _credit_for_node verdicts (the SAME helper the served topic score uses):
+#   covered → per_step[node]=="covered" AND node in procedure_scores
+#   partial → node in procedure_scores, NOT covered, in per_step, credit>0
+#   missing → node NOT in procedure_scores (and not covered)
+_COV_COVERED = {
+    "per_step": {"eq1": "covered", "c1": "covered"},
+    "procedure_scores": {"eq1": 1.0, "c1": 1.0},
+}
+_COV_PARTIAL = {
+    "per_step": {"eq1": "missing", "c1": "covered"},
+    "procedure_scores": {"eq1": 0.5, "c1": 1.0},
+}
+_COV_MISSED = {"per_step": {"c1": "covered"}, "procedure_scores": {"c1": 1.0}}
+
+_GRADED_PROBLEM_TEXT = "Full statement: derive the outlet pressure using Bernoulli."
+
+
+def _graded_problem_payload(code: str = "pg") -> dict:
+    """A problem whose reference solution carries GRADED node types (equation +
+    condition) so ``to_kg_graph`` yields a non-empty graded-node set — unlike the
+    definition-only ``minimal_problem_payload``."""
+    return {
+        "id": code,
+        "concept_id": "test_concept",
+        "difficulty": "intro",
+        "problem_text": _GRADED_PROBLEM_TEXT,
+        "reference_solution": [
+            {
+                "step": 1,
+                "entry_type": "equation",
+                "id": "eq1",
+                "content": {"symbolic": "P + rho*v = c", "label": "Bernoulli"},
+            },
+            {
+                "step": 2,
+                "entry_type": "condition",
+                "id": "c1",
+                "content": {"applies_when": "steady, incompressible", "label": "Steady"},
+            },
+        ],
+    }
+
+
+async def test_problem_drilldown_text_students_and_node_breakdown(db_session):
+    """The v2.1 ``problems[]`` enrichment over real PG: full ``problem_text``, the
+    per-problem best-wins ``students`` list, and the per-reference-node
+    understood/partial/missed counts derived by REUSING the served topic score's
+    own ``_credit_for_node`` over the stored ``diagnostic_report -> 'coverage'``.
+    Also proves the ``#> '{coverage}'`` JSONB read decodes to a dict end-to-end."""
+    sid = await seed_search_space(db_session)
+    concept = await seed_concept(
+        db_session,
+        search_space_id=sid,
+        subject_slug=f"subj-{uuid.uuid4().hex[:8]}",
+        concept_slug="cg",
+    )
+    await seed_problems(
+        db_session, concept_id=concept, payloads=[_graded_problem_payload(code="pg")]
+    )
+    problem = await problem_database_id(db_session, concept_id=concept, problem_code="pg")
+    day = datetime(2026, 7, 30, 9, 0, tzinfo=UTC)
+
+    # Four graded students, one best attempt each. u4's coverage is EMPTY (a
+    # pre-topic-score snapshot shape) → excluded from node tallies but still a
+    # graded student in the roster + distribution.
+    plan = [
+        ("u1", (100, "A+"), _COV_COVERED),
+        ("u2", (60, "C"), _COV_PARTIAL),
+        ("u3", (40, "F"), _COV_MISSED),
+        ("u4", (30, "F"), {}),
+    ]
+    users = {}
+    for label, served, coverage in plan:
+        uid = str(uuid.uuid4())
+        users[label] = uid
+        sess = await _seed_session(db_session, user_id=uid, search_space_id=sid, concept_id=concept)
+        report = _report(served=served, overall=served)
+        report["coverage"] = coverage
+        await _seed_attempt(
+            db_session,
+            session_id=sess,
+            user_id=uid,
+            search_space_id=sid,
+            problem_id=problem,
+            result="graded",
+            report=report,
+            created_at=day,
+        )
+        db_session.add(CourseMembership(user_id=uid, course_id=sid, role="student"))
+    await db_session.flush()
+
+    payload = await class_performance(db_session, search_space_id=sid)
+    block = next(p for p in payload["problems"] if p["problem_id"] == problem)
+
+    # Full problem text is carried verbatim.
+    assert block["problem_text"] == _GRADED_PROBLEM_TEXT
+    assert block["students_graded"] == 4
+
+    # Per-problem best-wins student list, ordered by score desc; email degrades to
+    # None (auth.users absent from this test schema).
+    assert [(s["score"], s["letter"]) for s in block["students"]] == [
+        (100.0, "A+"),
+        (60.0, "C"),
+        (40.0, "F"),
+        (30.0, "F"),
+    ]
+    assert {s["user_id"] for s in block["students"]} == set(users.values())
+    assert all(s["email"] is None for s in block["students"])
+
+    # Node breakdown: u4's empty coverage is excluded, so graded=3; eq1 spreads
+    # across covered/partial/missing, c1 covered for all three.
+    nodes = {n["node_id"]: n for n in block["nodes"]}
+    assert set(nodes) == {"eq1", "c1"}
+    assert nodes["eq1"] == {
+        "node_id": "eq1",
+        "display_name": "Bernoulli",
+        "node_type": "equation",
+        "understood": 1,
+        "partial": 1,
+        "missed": 1,
+        "graded": 3,
+    }
+    assert (nodes["c1"]["display_name"], nodes["c1"]["node_type"]) == ("Steady", "condition")
+    assert (nodes["c1"]["understood"], nodes["c1"]["partial"], nodes["c1"]["missed"]) == (3, 0, 0)
+    assert nodes["c1"]["graded"] == 3
