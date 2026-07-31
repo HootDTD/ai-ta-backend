@@ -8,8 +8,12 @@ Proves the three behaviors the design spec calls out:
     other column (e.g. ``encrypted_password``) stays unreadable — and is
     idempotent on re-run.
 
-Each scenario is built and torn down inside a rolled-back transaction, so the
-cluster-global ``app_runtime`` role never leaks between tests.
+Each scenario is built and torn down inside a rolled-back transaction. The
+``app_runtime`` role is CLUSTER-global and may already exist (committed by the
+db08b grants migration applied elsewhere in the shared container), so role
+creation is idempotent and the role-absent guard is exercised against a
+scratch role name that provably does not exist — never by dropping the real
+role, whose cross-database dependencies make DROP ROLE unreliable here.
 """
 
 from __future__ import annotations
@@ -72,7 +76,14 @@ _SQL = MIGRATION.read_text(encoding="utf-8")
 
 
 async def _create_app_runtime(conn) -> None:
-    await conn.execute("CREATE ROLE app_runtime NOLOGIN NOBYPASSRLS")
+    # Roles are cluster-global: another test (or the db08b grants migration)
+    # may have committed app_runtime into the shared container already.
+    await conn.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_runtime') THEN "
+        "CREATE ROLE app_runtime NOLOGIN NOBYPASSRLS; "
+        "END IF; END $$"
+    )
 
 
 async def _create_auth_users(conn) -> None:
@@ -85,9 +96,18 @@ async def _create_auth_users(conn) -> None:
 
 
 async def test_noop_when_role_absent(identity_grant_conn):
-    # No app_runtime role and no auth schema: the guard must skip cleanly (twice).
-    await identity_grant_conn.execute(_SQL)
-    await identity_grant_conn.execute(_SQL)
+    # The guard's role-absent branch, exercised deterministically: rewrite the
+    # migration to target a scratch role name that provably does not exist
+    # (the real app_runtime may already exist cluster-wide, which would route
+    # the guard down its other branch instead).
+    scratch = "app_runtime_absent_scratch"
+    assert (
+        await identity_grant_conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = $1", scratch)
+        is None
+    )
+    sql = _SQL.replace("app_runtime", scratch)
+    await identity_grant_conn.execute(sql)
+    await identity_grant_conn.execute(sql)
     # Nothing to assert beyond "did not raise" — there is no role to grant to.
     assert await identity_grant_conn.fetchval("SELECT to_regclass('auth.users')") is None
 
