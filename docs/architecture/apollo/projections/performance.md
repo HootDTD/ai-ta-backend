@@ -8,7 +8,7 @@ related:
   - apollo/projections/classroom
   - apollo/overseer/topic-score
   - apollo/conversation/routing/router
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 stub: false
 ---
 
