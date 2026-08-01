@@ -1,8 +1,8 @@
 """Real-PG cutover test for handle_get_session (WU-3D Task 5).
 
-`handle_get_session` now returns ``concept_id`` (not the dropped
-``concept_cluster_id``) and resolves the current problem dict from the DB via
-``list_problems_for_concept(db, concept_id=...)``. Neo4j is mocked.
+`handle_get_session` returns ``concept_id`` (not the dropped
+``concept_cluster_id``) and resolves only the current problem row directly by
+database id. Neo4j is mocked.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ _INTRO = [p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "in
 
 async def test_get_session_returns_concept_id_and_db_problem(db_session):
     """T5.6 — the response carries concept_id (not concept_cluster_id) and the
-    problem dict comes from list_problems_for_concept."""
+    directly fetched problem keeps the established wire payload."""
     sid, cid, codes = await seed_course(
         db_session,
         subject_slug="fluid_mechanics",
@@ -74,8 +74,15 @@ async def test_get_session_returns_concept_id_and_db_problem(db_session):
 
     assert "concept_cluster_id" not in out
     assert out["concept_id"] == cid
-    assert out["problem"] is not None
-    assert out["problem"]["id"] == current_code
+    expected = next(problem for problem in _INTRO if problem["id"] == current_code)
+    assert out["problem"] == {
+        "id": expected["id"],
+        "concept_id": "bernoulli_principle",
+        "difficulty": expected["difficulty"],
+        "problem_text": expected["problem_text"],
+        "given_values": expected["given_values"],
+        "target_unknown": expected["target_unknown"],
+    }
 
 
 @pytest.mark.parametrize(

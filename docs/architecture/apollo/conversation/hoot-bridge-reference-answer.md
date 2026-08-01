@@ -8,7 +8,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/handlers/done
   - apollo/conversation/session-init
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -76,8 +76,19 @@ only persistence, written by the caller):
    both index as `"other"` — so `ProvisioningRun` is the only durable
    problem/solution pairing signal.
 4. `ai.main_ai.parse_question` → `solve_with_bundle(...,
-   system_prompt_override=apollo_aside_prompt())` → `format_answer` →
-   `_strip_trailing_citations_block`. The override swaps Hoot's standalone-chat
+   system_prompt_override=apollo_aside_prompt(),
+   unscored_fallback_limit=_UNSCORED_FALLBACK_LIMIT)` → `format_answer` →
+   `_strip_trailing_citations_block`. Qualitative questions that
+   `parse_question` rejects (its `ParsedTask.validate()` demands solver
+   inputs; a conceptual question can yield none → ValueError) fall back to
+   `ParsedTask(problem_type="conceptual", asked_outputs=[question])` instead
+   of aborting — the already-built bundle always reaches the solver.
+   `unscored_fallback_limit=5` opts this lane into `_prepare_solve_prompt`'s
+   retrieval-ranked excerpt fallback when citation scoring rejects every
+   snippet, and if the formatted text still comes back blank,
+   `_fallback_answer_from_snippets` renders the top student-safe snippets
+   verbatim (or `_NOT_FOUND_TEXT`) so a "successful" aside can never be an
+   empty card. The override swaps Hoot's standalone-chat
    `tutor_prompt` for the compact aside refresher (`ai/prompts/apollo_aside.py`,
    `rag-pipeline/prompts-answer`): a mid-teaching-session lookup voice, no
    `## Answer`/Key-Takeaway/Check-Your-Understanding structure, one flowing

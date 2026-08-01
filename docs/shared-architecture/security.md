@@ -6,7 +6,7 @@ related:
   - ai-ta-backend/_overview
   - ai-ta-backend/domain-data
   - shared/supabase
-last_verified: 2026-07-23
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -133,8 +133,25 @@ step. Recommended staging sequence:
 
 - **`app` schema (18 tables)**: RLS ENABLEd + FORCEd on every table, with 45
   `auth.uid()`-scoped policies (`TO authenticated`) covering member/owner SELECT,
-  owner INSERT/UPDATE, and teacher-of-course access patterns via
-  `internal.has_course_role()`. `authenticated` holds DML grants; **`anon` and `PUBLIC`
+  owner INSERT/UPDATE, and teacher-of-course access patterns. Since DB-08d
+  (`20260731120000_db08d_rls_inline_membership_policies`) 38 of those 45 express
+  the membership test as an **inline, uncorrelated** subquery —
+  `<course col> IN (SELECT cm.course_id FROM app.course_memberships cm WHERE
+  cm.user_id = (SELECT auth.uid()) AND cm.role = …)` — instead of calling
+  `internal.has_course_role()`. Same rows, same roles, same `(SELECT auth.uid())`
+  identity; the change is purely how the planner evaluates it (a once-per-query
+  hashed subplan rather than a per-row SECURITY DEFINER call on every scan of
+  every forced-RLS table). **Exactly one policy still calls the helper**:
+  `course_memberships__self_or_teacher_select`, the policy ON
+  `app.course_memberships` itself, where an inline subquery would recurse on its
+  own table and the helper's SECURITY DEFINER RLS bypass is what terminates it.
+  Consequence to know: a policy expression that reads another `app` table is
+  subject to THAT table's RLS, so the inline form now depends on
+  `authenticated`/`app_runtime` holding SELECT on `app.course_memberships` (DB-04's
+  blanket schema grant already does; DB-08d asserts it as a precondition) and on
+  `course_memberships__self_or_teacher_select` admitting the caller's own rows —
+  which it does unconditionally via its `user_id = (SELECT auth.uid())` arm.
+  `authenticated` holds DML grants; **`anon` and `PUBLIC`
   are fully revoked** on the schema. Of those 45, 32 are the original DB-04 baseline
   and 13 are DB-08c's (`20260723060000_db08c_rls_write_policy_gaps`) write-policy
   additions (`student_progress`, `course_memberships`, `mastery_events`,
@@ -153,7 +170,8 @@ step. Recommended staging sequence:
 - **`internal` schema (10 tables)**: service-only. All privileges revoked from `PUBLIC`,
   `anon`, and `authenticated` (including default privileges for future objects);
   `authenticated`/`app_runtime` get schema USAGE and EXECUTE on
-  `internal.has_course_role()` only (policies call it).
+  `internal.has_course_role()` only (one policy still calls it — see above; the
+  EXECUTE grant is deliberately left in place for that caller).
 - **`app_runtime`** is created `NOLOGIN NOBYPASSRLS` with DML grants mirroring
   `authenticated` — it is the enforcement role DB-08b switches request transactions to.
   `db08b_rls_enforcement_grants` additionally does `GRANT authenticated TO

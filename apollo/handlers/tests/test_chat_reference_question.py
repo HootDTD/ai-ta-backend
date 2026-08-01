@@ -47,12 +47,12 @@ def _chat_context(*, aside_count: int = 0):
     return db, sess, store, concept, problem
 
 
-async def _run_ask_hoot(*, db, sess, store, problem):
+async def _run_ask_hoot(*, db, sess, store, problem, message: str = _QUESTION):
     return await _maybe_execute_reference_aside(
         db=db,
         sess=sess,
         attempt_id=99,
-        message=_QUESTION,
+        message=message,
         store=store,
         problem=problem,
         ask_hoot=True,
@@ -131,6 +131,60 @@ async def test_reference_question_allowed_returns_aside_and_persona_resume(monke
     }
     assert persisted[0].message_metadata == {}
     assert persisted[2].message_metadata == {}
+
+
+async def test_empty_reference_question_returns_aside_without_retrieval_or_counting(
+    monkeypatch, caplog
+):
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    db, sess, store, _, problem = _chat_context(aside_count=2)
+    bridge = AsyncMock()
+    retrieval = AsyncMock()
+
+    with (
+        patch("apollo.handlers.chat.answer_reference_question", new=bridge),
+        patch("retrieval.pipeline.retrieve_for_question", new=retrieval),
+        patch("apollo.handlers.chat._next_turn_index", new=AsyncMock(return_value=20)),
+        caplog.at_level("INFO", logger="apollo.handlers.chat"),
+    ):
+        response = await _run_ask_hoot(
+            db=db,
+            sess=sess,
+            store=store,
+            problem=problem,
+            message=" \t ",
+        )
+
+    assert response == {
+        "apollo_reply": "Okay, so how does that fit into what you were teaching me?",
+        "kg_entries_added": 0,
+        "kg": {"nodes": [], "edges": []},
+        "message_kind": MESSAGE_KIND_REFERENCE_ASIDE,
+        "aside": {
+            "text": "Type your question above first, then click Ask.",
+            "citations": [],
+            "in_scope": True,
+        },
+        "intent_executed": {"intent": "reference_question", "aside_count": 2},
+    }
+    bridge.assert_not_awaited()
+    retrieval.assert_not_awaited()
+    assert sess.metadata_["reference_question_aside_count"] == 2
+    assert "apollo_reference_question_empty session_id=11 attempt_id=99" in caplog.text
+
+    persisted = [call.args[0] for call in db.add.call_args_list]
+    assert [(row.role, row.content, row.turn_index) for row in persisted] == [
+        ("student", " \t ", 20),
+        ("apollo", "Type your question above first, then click Ask.", 21),
+        (
+            "apollo",
+            "Okay, so how does that fit into what you were teaching me?",
+            22,
+        ),
+    ]
+    assert persisted[1].intent == ASIDE_MESSAGE_INTENT_TAG
+    assert persisted[1].message_metadata == {"aside": {"citations": [], "in_scope": True}}
 
 
 async def test_reference_question_nonmatching_concept_never_executes_aside(monkeypatch):

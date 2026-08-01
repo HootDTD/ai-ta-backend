@@ -17,13 +17,14 @@ from apollo.hoot_bridge.reference_answer import (
     ReferenceAsideResult,
     _document_id_of,
     _excluded_document_ids,
+    _fallback_answer_from_snippets,
     _filter_leaked_snippets,
     _strip_trailing_citations_block,
     _structured_citations,
     answer_reference_question,
     is_enabled,
 )
-from config.contracts import BundleSnippet, FinalAnswer
+from config.contracts import BundleSnippet, FinalAnswer, ParsedTask
 
 pytestmark = pytest.mark.unit
 
@@ -420,6 +421,174 @@ async def test_aside_answer_uses_the_compact_refresher_system_prompt():
         )
 
     assert solve.call_args.kwargs["system_prompt_override"] == apollo_aside_prompt()
+
+
+async def test_qualitative_parse_validation_failure_falls_back_to_conceptual_task():
+    question = "How does a network effect help a platform?"
+    snippet = _snippet(snippet_id="safe", document_id=10, marker="[Safe p. 1]")
+    solve = MagicMock(return_value=MagicMock())
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("ai.main_ai.check_question_relevance", return_value={"relevance": "full"})
+        )
+        stack.enter_context(patch("ai.main_ai.extract_and_filter_keywords", return_value=("", [])))
+        stack.enter_context(
+            patch(
+                "ai.main_ai.parse_question",
+                side_effect=ValueError(
+                    "ParsedTask must specify asked_outputs, knowns, or constraints"
+                ),
+            )
+        )
+        stack.enter_context(patch("ai.main_ai.solve_with_bundle", new=solve))
+        stack.enter_context(
+            patch(
+                "ai.main_ai.format_answer",
+                return_value=FinalAnswer(
+                    text="More users can make the platform more useful [Safe p. 1].",
+                    citations=["[Safe p. 1]"],
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "retrieval.pipeline.retrieve_for_question",
+                new=AsyncMock(return_value=([snippet], {"combined_query": question})),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "retrieval.context_packer._summarize_snippets",
+                return_value=([], [], [], {}),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "apollo.hoot_bridge.reference_answer._excluded_document_ids",
+                new=AsyncMock(return_value=set()),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "apollo.hoot_bridge.reference_answer._structured_citations",
+                return_value=[{"label": "Safe p. 1"}],
+            )
+        )
+
+        result = await answer_reference_question(
+            db=MagicMock(),
+            course_id=9,
+            question=question,
+            problem=MagicMock(),
+        )
+
+    parsed_task = solve.call_args.args[0]
+    assert parsed_task == ParsedTask(problem_type="conceptual", asked_outputs=[question])
+    assert solve.call_args.args[1].snippets == [snippet]
+    assert result.text.strip()
+    assert result.citations == [{"label": "Safe p. 1"}]
+
+
+def test_numeric_parsed_task_still_requires_solver_inputs():
+    from ai.main_ai import parse_question
+
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=(
+                        '{"problem_type": "quantitative", "asked_outputs": [], '
+                        '"knowns": {}, "constraints": []}'
+                    )
+                )
+            )
+        ]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=MagicMock(return_value=response)))
+    )
+
+    with (
+        patch("ai.main_ai._client", return_value=client),
+        pytest.raises(
+            ValueError,
+            match="ParsedTask must specify asked_outputs, knowns, or constraints",
+        ),
+    ):
+        parse_question("Calculate the result.")
+
+
+async def test_empty_formatted_answer_falls_back_to_ranked_snippet_text_and_citations():
+    question = "What is a network effect?"
+    snippet = _snippet(snippet_id="safe", document_id=10, marker="[Safe p. 1]")
+    structured = MagicMock(return_value=[{"label": "Safe p. 1"}])
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("ai.main_ai.check_question_relevance", return_value={"relevance": "full"})
+        )
+        stack.enter_context(patch("ai.main_ai.extract_and_filter_keywords", return_value=("", [])))
+        stack.enter_context(
+            patch(
+                "ai.main_ai.parse_question",
+                return_value=ParsedTask(problem_type="conceptual", asked_outputs=[question]),
+            )
+        )
+        stack.enter_context(patch("ai.main_ai.solve_with_bundle", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "ai.main_ai.format_answer",
+                return_value=FinalAnswer(text=" \n\t ", citations=[]),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "retrieval.pipeline.retrieve_for_question",
+                new=AsyncMock(return_value=([snippet], {"combined_query": question})),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "retrieval.context_packer._summarize_snippets",
+                return_value=([], [], [], {}),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "apollo.hoot_bridge.reference_answer._excluded_document_ids",
+                new=AsyncMock(return_value=set()),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "apollo.hoot_bridge.reference_answer._structured_citations",
+                new=structured,
+            )
+        )
+
+        result = await answer_reference_question(
+            db=MagicMock(),
+            course_id=9,
+            question=question,
+            problem=MagicMock(),
+        )
+
+    assert result.text == "content from document 10 [Safe p. 1]"
+    assert result.citations == [{"label": "Safe p. 1"}]
+    structured.assert_called_once()
+    assert structured.call_args.args[1] == ["[Safe p. 1]"]
+
+
+def test_fallback_answer_skips_snippets_with_blank_text():
+    blank = _snippet(snippet_id="blank", document_id=1, marker="[Blank p. 1]")
+    blank.text = "   "
+    kept = _snippet(snippet_id="kept", document_id=2, marker="[Kept p. 1]")
+
+    text, markers = _fallback_answer_from_snippets([blank, kept])
+
+    assert text == "content from document 2 [Kept p. 1]"
+    assert markers == ["[Kept p. 1]"]
 
 
 # ---------------------------------------------------------------------------

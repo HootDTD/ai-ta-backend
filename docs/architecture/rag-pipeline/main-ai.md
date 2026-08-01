@@ -15,7 +15,7 @@ related:
   - rag-pipeline/orchestrator
   - platform/config-model-pins
   - platform/config-contracts
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -40,8 +40,14 @@ current concept/problem; it lands in both the system prompt and the JSON payload
 `0.6*relevance + 0.4*directness*importance`, dropped below `CITATION_SCORE_FLOOR`.
 **(4) Answer generation** — `_prepare_solve_prompt`,
 `solve_with_bundle(parsed_task, bundle, hint, subject, *,
-system_prompt_override=None) -> ProposedSolution` and the streaming twin
+system_prompt_override=None, unscored_fallback_limit=0) -> ProposedSolution`
+and the streaming twin
 `solve_with_bundle_stream`; `_build_solution_from_data`, `_is_reasoning_model`.
+The keyword-only `unscored_fallback_limit` (default 0 = off, threaded through
+`_prepare_solve_prompt`) is the Ask-Hoot aside's opt-in: when every citation
+score misses `CITATION_SCORE_FLOOR`, the solver still receives the first N
+retrieval-ranked snippets (markers synthesized via `_fallback_citation_marker`
+when missing) instead of an empty excerpt list; normal solves are unchanged.
 The keyword-only `system_prompt_override` (threaded through `_prepare_solve_prompt`)
 swaps the tutor system prompt for a caller-supplied one — the Apollo "Ask Hoot"
 aside passes `apollo_aside_prompt()` (`prompts-answer`); `None` keeps

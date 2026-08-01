@@ -12,7 +12,7 @@ related:
   - apollo/overseer/problem-selector
   - apollo/persistence/models
   - apollo/schemas/problem
-last_verified: 2026-07-26
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -48,11 +48,14 @@ The tail flips any active session to `ended`, `flush`es, adds the new
 `TutoringSession` (`phase=TEACHING`, `current_problem_id=problem.database_id`) and
 the first `ProblemAttempt`, `flush`es, captures `attempt.id`, and `commit`s before
 building the FE payload. With `INTERACTION1` enabled and the problem concept
-allowed by `INTERACTION_CONCEPTS`, the durable session then makes one
-`retrieve_for_question` call anchored by concept display name + student-visible
-problem text (`top_k=8`, `token_budget=2500`). A separate best-effort commit
-stores packed snippet dicts + diagnostics in `grounding_bundle`. The Hoot path's
-only transcript use is concept inference.
+allowed by `INTERACTION_CONCEPTS`, the durable session schedules (but does not
+await) one background `retrieve_for_question` call anchored by concept display
+name + student-visible problem text (`top_k=8`, `token_budget=2500`). The task is
+held in a module-level strong-reference set, opens its own loop-local session
+from the database session factory after the creation commit, re-fetches the
+`TutoringSession`, and uses a separate best-effort commit to store packed snippet
+dicts + diagnostics in `grounding_bundle`. The POST response never includes or
+waits for this bundle. The Hoot path's only transcript use is concept inference.
 
 ## Invariants & gotchas
 
@@ -66,11 +69,14 @@ only transcript use is concept inference.
   (`ProblemNotFoundError`, 404); the Hoot path can raise
   `NoMatchingConceptError`/`PoolExhaustedError` from inference + selection.
 - `_create_session_with_problem` owns the creation `commit`; callers must not wrap
-  it in an outer transaction. Grounding never widens that transaction: its
-  optional persistence commit starts only after the session is durable.
+  it in an outer transaction. Grounding never widens that transaction or reuses
+  the request-owned `AsyncSession`: its optional persistence commit starts in a
+  fresh session only after the tutoring session is durable.
 - Grounding is student-safe: authored solution-role / solution-kind snippets are
   dropped before persistence. Retrieval, filtering, or persistence failure is
   logged, rolled back, and leaves `grounding_bundle` NULL without failing creation.
+- Chat intentionally tolerates a still-NULL bundle while the background task is
+  running; there is no synchronization on the first turn.
 
 ## Env flags
 

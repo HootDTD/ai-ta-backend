@@ -17,6 +17,14 @@ import json
 
 from openai import OpenAI
 
+try:
+    from openai import APITimeoutError
+except ImportError:  # pragma: no cover - only the shared test harness stubs OpenAI
+
+    class APITimeoutError(Exception):
+        pass
+
+
 from apollo.errors import NoMatchingConceptError
 from apollo.subjects.curriculum_db import ConceptRow
 from config.models import MAIN_MODEL
@@ -55,15 +63,19 @@ def infer_concept_id(
             ],
         }
     )
-    resp = client.chat.completions.create(
-        model=model,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.0,
-    )
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.0,
+            timeout=30.0,
+        )
+    except APITimeoutError as exc:
+        raise NoMatchingConceptError(transcript_summary=transcript[:200]) from exc
     raw = resp.choices[0].message.content or "{}"
 
     try:
