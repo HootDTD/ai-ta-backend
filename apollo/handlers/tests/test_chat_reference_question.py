@@ -35,6 +35,7 @@ def _chat_context(*, aside_count: int = 0):
     db = MagicMock()
     db.add = MagicMock()
     db.commit = AsyncMock()
+    db.rollback = AsyncMock()
     sess = SimpleNamespace(
         id=11,
         course_id=7,
@@ -270,6 +271,51 @@ async def test_reference_question_bridge_failure_apologizes_as_teaching_turn(mon
         ("apollo", 5),
     ]
     assert all(row.intent is None for row in persisted)
+    # The failed bridge call may have aborted the transaction — the apology
+    # must persist on a clean one, so rollback precedes the first add.
+    db.rollback.assert_awaited_once()
+
+
+async def test_reference_question_bridge_failure_rolls_back_before_persisting(monkeypatch):
+    """Rollback must come first: persisting on the aborted transaction is what
+    escaped as a 500 in the 2026-08-01 halfvec schema-drift incident."""
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    db, sess, store, _, problem = _chat_context()
+    order: list[str] = []
+    db.rollback = AsyncMock(side_effect=lambda: order.append("rollback"))
+    db.add = MagicMock(side_effect=lambda row: order.append("add"))
+    bridge = AsyncMock(side_effect=RuntimeError("retrieval unavailable"))
+
+    with (
+        patch("apollo.handlers.chat.answer_reference_question", new=bridge),
+        patch("apollo.handlers.chat._next_turn_index", new=AsyncMock(return_value=4)),
+    ):
+        response = await _run_ask_hoot(db=db, sess=sess, store=store, problem=problem)
+
+    assert order[0] == "rollback"
+    assert "add" in order
+    assert "couldn't look that up" in response["apollo_reply"]
+
+
+async def test_reference_question_apology_survives_dead_database(monkeypatch):
+    """Even when rollback/persist themselves fail (connection gone), the
+    handler must return the apology reply — never raise into a 5xx."""
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    db, sess, store, _, problem = _chat_context()
+    db.rollback = AsyncMock(side_effect=ConnectionError("connection is closed"))
+    bridge = AsyncMock(side_effect=RuntimeError("retrieval unavailable"))
+
+    with (
+        patch("apollo.handlers.chat.answer_reference_question", new=bridge),
+        patch("apollo.handlers.chat._next_turn_index", new=AsyncMock(return_value=4)),
+    ):
+        response = await _run_ask_hoot(db=db, sess=sess, store=store, problem=problem)
+
+    assert "couldn't look that up" in response["apollo_reply"]
+    db.add.assert_not_called()
+    assert sess.metadata_["reference_question_aside_count"] == 0
 
 
 async def test_ask_hoot_flag_off_returns_normal_teaching_turn(monkeypatch):
