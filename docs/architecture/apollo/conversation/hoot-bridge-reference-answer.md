@@ -8,7 +8,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/handlers/done
   - apollo/conversation/session-init
-last_verified: 2026-07-31
+last_verified: 2026-08-01
 stub: false
 ---
 
