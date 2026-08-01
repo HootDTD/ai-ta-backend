@@ -59,6 +59,12 @@ _LOG = logging.getLogger(__name__)
 # knowledge (brief: the aside is "visually and structurally outside the
 # persona").
 _REFERENCE_QUESTION_RESUME_LINE = "Okay, so how does that fit into what you were teaching me?"
+# When the relevance guard rejects the aside (in_scope=False, the "That's
+# outside what's covered…" refusal), asking how it "fits into" the lesson
+# makes no sense — redirect back to the teaching thread instead.
+_REFERENCE_QUESTION_OUT_OF_SCOPE_RESUME_LINE = (
+    "Okay, let's get back on topic then. What's the next thing you wanted to teach me?"
+)
 _REFERENCE_QUESTION_CAP_REDIRECT = (
     "I think I've looked enough things up for this session — let's keep teaching so I can "
     "really learn it. What were you saying?"
@@ -381,6 +387,11 @@ async def _persist_reference_aside_turn(
 ) -> dict[str, Any]:
     """Persist and return the shared response envelope for an aside turn."""
 
+    resume_line = (
+        _REFERENCE_QUESTION_RESUME_LINE
+        if result.in_scope
+        else _REFERENCE_QUESTION_OUT_OF_SCOPE_RESUME_LINE
+    )
     next_idx = await _next_turn_index(db, sess.id)
     db.add(
         TutoringMessage(
@@ -418,7 +429,7 @@ async def _persist_reference_aside_turn(
             course_id=sess.course_id,
             attempt_id=attempt_id,
             role="apollo",
-            content=_REFERENCE_QUESTION_RESUME_LINE,
+            content=resume_line,
             turn_index=next_idx + 2,
         )
     )
@@ -426,7 +437,7 @@ async def _persist_reference_aside_turn(
 
     graph = await _read_graph_or_empty(store, attempt_id=attempt_id, stage=graph_stage)
     return {
-        "apollo_reply": _REFERENCE_QUESTION_RESUME_LINE,
+        "apollo_reply": resume_line,
         "kg_entries_added": 0,
         "kg": graph.model_dump(mode="json"),
         "message_kind": MESSAGE_KIND_REFERENCE_ASIDE,
