@@ -15,7 +15,7 @@ related:
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
   - apollo/persistence/neo4j-client
-last_verified: 2026-07-31
+last_verified: 2026-08-01
 stub: false
 ---
 
@@ -82,10 +82,13 @@ Ordered turn:
    0) at or above `MAX_ASIDES_PER_SESSION` (3) → a persona redirect turn, no
    bridge call.
 4. Otherwise calls `hoot_bridge.reference_answer.answer_reference_question`.
-   Any exception → logged, persona apology turn persisted, **never a 5xx** —
-   the brief's "failure ⇒ persona apology + fall through as a teaching turn"
-   contract lives here, not in the bridge (the bridge raises on genuine
-   failure by design).
+   Any exception → logged, `db.rollback()` FIRST (the failure may have
+   aborted the transaction — persisting on it escaped as a 500 in the
+   2026-08-01 halfvec schema-drift incident), then the persona apology turn
+   persisted best-effort (its own failure is logged, never raised) —
+   **never a 5xx**. The brief's "failure ⇒ persona apology + fall through
+   as a teaching turn" contract lives here, not in the bridge (the bridge
+   raises on genuine failure by design).
 5. On success: increments the session's aside counter, then persists via the
    shared `_persist_reference_aside_turn` helper — the student question
    (untagged — the adjudicator keeps it), the aside text tagged

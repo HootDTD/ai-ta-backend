@@ -322,14 +322,28 @@ async def _execute_reference_question(
             attempt_id,
             exc_info=True,
         )
-        await _persist_turn(
-            db,
-            session_id=sess.id,
-            course_id=sess.course_id,
-            attempt_id=attempt_id,
-            student_msg=message,
-            apollo_msg=_REFERENCE_QUESTION_APOLOGY,
-        )
+        # The bridge failure may have aborted the session's transaction (e.g.
+        # a retrieval SQL error): roll back so the apology persists on a clean
+        # transaction, and keep the persist itself best-effort — a dead
+        # connection must still produce the apology reply, not a 5xx
+        # (2026-08-01 halfvec schema-drift incident escaped here as a 500).
+        try:
+            await db.rollback()
+            await _persist_turn(
+                db,
+                session_id=sess.id,
+                course_id=sess.course_id,
+                attempt_id=attempt_id,
+                student_msg=message,
+                apollo_msg=_REFERENCE_QUESTION_APOLOGY,
+            )
+        except Exception:  # noqa: BLE001 - apology persistence is best-effort
+            _LOG.warning(
+                "apollo_reference_question_apology_persist_failed session_id=%s attempt_id=%s",
+                sess.id,
+                attempt_id,
+                exc_info=True,
+            )
         graph = await _read_graph_or_empty(
             store, attempt_id=attempt_id, stage="reference_question_failed"
         )
