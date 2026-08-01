@@ -780,12 +780,15 @@ def test_topic_hint_composes_slug_and_problem_text():
     assert "more valuable as more people join" in hint
 
 
-def test_topic_hint_truncates_long_problem_text():
+def test_topic_hint_keeps_full_problem_text():
+    """The full statement is the guard's best scope evidence — never truncate it
+    (the old 240-char budget clipped 10 of the 30 authored ethics problems)."""
     from apollo.hoot_bridge.reference_answer import _topic_hint
 
-    hint = _topic_hint(SimpleNamespace(concept_id="ethics", problem_text="x" * 2000))
+    tail = "the guard must still see this final clause"
+    hint = _topic_hint(SimpleNamespace(concept_id="ethics", problem_text="x" * 500 + " " + tail))
     assert hint is not None
-    assert len(hint) < 400
+    assert hint.endswith(tail)
 
 
 def test_topic_hint_is_none_for_malformed_problem():

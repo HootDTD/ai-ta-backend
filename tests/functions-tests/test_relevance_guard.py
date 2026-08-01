@@ -1,4 +1,5 @@
 """Tests for graduated relevance classification in main_ai."""
+
 from __future__ import annotations
 
 import json
@@ -16,9 +17,7 @@ def _make_fake_client(response_json: dict | str | None = None):
     class _Completions:
         def create(self, *args, **kwargs):
             return types.SimpleNamespace(
-                choices=[types.SimpleNamespace(
-                    message=types.SimpleNamespace(content=content)
-                )]
+                choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=content))]
             )
 
     return types.SimpleNamespace(chat=types.SimpleNamespace(completions=_Completions()))
@@ -27,6 +26,7 @@ def _make_fake_client(response_json: dict | str | None = None):
 # ---------------------------------------------------------------------------
 # check_question_relevance — graduated format
 # ---------------------------------------------------------------------------
+
 
 def test_full_relevance(monkeypatch):
     """Fully on-topic question should return relevance='full'."""
@@ -88,6 +88,7 @@ def test_none_relevance(monkeypatch):
 # Backward compatibility — old binary format
 # ---------------------------------------------------------------------------
 
+
 def test_legacy_bool_true(monkeypatch):
     """Old-format {relevant: true} should map to relevance='full'."""
     fake = {"relevant": True, "reason": "About the course"}
@@ -125,6 +126,7 @@ def test_legacy_string_yes(monkeypatch):
 # Fail-open behavior
 # ---------------------------------------------------------------------------
 
+
 def test_fail_open_on_exception(monkeypatch):
     """On API failure, should fail open with relevance='full'."""
 
@@ -151,6 +153,7 @@ def test_empty_question():
 # ---------------------------------------------------------------------------
 # is_question_subject_relevant — backward-compatible wrapper
 # ---------------------------------------------------------------------------
+
 
 def test_wrapper_true_for_full(monkeypatch):
     """Wrapper should return True for 'full' relevance."""
@@ -191,6 +194,7 @@ def test_wrapper_false_for_none(monkeypatch):
 # Topic-anchored guard — current_topic threads into prompt and payload
 # ---------------------------------------------------------------------------
 
+
 def _make_capturing_client(response_json: dict):
     """Fake OpenAI client that records the kwargs of the last create() call."""
     content = json.dumps(response_json)
@@ -202,9 +206,7 @@ def _make_capturing_client(response_json: dict):
         def create(self, *args, **kwargs):
             self.kwargs = kwargs
             return types.SimpleNamespace(
-                choices=[types.SimpleNamespace(
-                    message=types.SimpleNamespace(content=content)
-                )]
+                choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=content))]
             )
 
     completions = _Completions()
@@ -230,6 +232,36 @@ def test_prompt_with_topic_anchors_the_current_topic():
     )
     assert "ethics: passive observation and surveillance" in prompt
     assert "currently studying" in prompt
+
+
+def test_prompt_with_topic_anchors_rules_on_course_scope():
+    """With a current_topic the classification RULES themselves must judge
+    against the combined course scope, not the subject title alone — a
+    subject-anchored "none" rule overrides the topic line whenever the module
+    sounds like a different discipline (2026-07-31 ethics-in-MIS aside bug)."""
+    from ai.prompts.relevance_guard import relevance_guard_prompt
+
+    subject = "Management Information Systems"
+    prompt = relevance_guard_prompt(
+        subject, current_topic="ethics — current problem: objective vs subjective claims"
+    )
+
+    scope = "the course scope (its subject or the current module)"
+    assert f'"full": The entire question is within {scope}.' in prompt
+    assert f"different discipline than {subject}" in prompt
+    assert "AND unrelated to the current module" in prompt
+    # No rule may anchor on the bare subject title anymore.
+    assert f"is about {subject}" not in prompt
+    assert f"nothing to do with {subject}" not in prompt
+
+
+def test_prompt_without_topic_keeps_subject_scope():
+    """Without a current_topic the rules anchor on the subject's course scope."""
+    from ai.prompts.relevance_guard import relevance_guard_prompt
+
+    prompt = relevance_guard_prompt("Aerodynamics")
+    assert "the Aerodynamics course scope" in prompt
+    assert "AND unrelated to the current module" not in prompt
 
 
 def test_current_topic_reaches_system_prompt_and_payload(monkeypatch):
@@ -272,6 +304,7 @@ def test_payload_omits_current_topic_when_absent(monkeypatch):
 # Orchestrator guard — per-request course subject reaches the classifier
 # ---------------------------------------------------------------------------
 
+
 def test_orchestrator_guard_passes_cfg_subject(monkeypatch):
     """Hoot chat's guard must classify against cfg.subject_name, not the global."""
     import ai.orchestrator as orch_mod
@@ -282,8 +315,12 @@ def test_orchestrator_guard_passes_cfg_subject(monkeypatch):
 
     def _fake_guard(question, subject=None, current_topic=None):
         captured["subject"] = subject
-        return {"relevance": "full", "on_topic_portion": question,
-                "off_topic_portion": "", "reason": ""}
+        return {
+            "relevance": "full",
+            "on_topic_portion": question,
+            "off_topic_portion": "",
+            "reason": "",
+        }
 
     monkeypatch.setattr(orch_mod, "check_question_relevance", _fake_guard)
 
@@ -303,8 +340,12 @@ def test_orchestrator_guard_falls_back_to_global_subject(monkeypatch):
 
     def _fake_guard(question, subject=None, current_topic=None):
         captured["subject"] = subject
-        return {"relevance": "full", "on_topic_portion": question,
-                "off_topic_portion": "", "reason": ""}
+        return {
+            "relevance": "full",
+            "on_topic_portion": question,
+            "off_topic_portion": "",
+            "reason": "",
+        }
 
     monkeypatch.setattr(orch_mod, "check_question_relevance", _fake_guard)
     monkeypatch.setattr(orch_mod, "get_subject_name", lambda: "Fluid Mechanics")
