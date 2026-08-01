@@ -8,7 +8,7 @@ related:
   - rag-pipeline/main-ai
   - rag-pipeline/orchestrator
   - rag-pipeline/prompts-answer
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -24,7 +24,8 @@ Both are subject-parameterized functions consumed by `ai/main_ai.py`.
 - `relevance_guard_prompt(subject, current_topic=None) -> str` — drives
   `check_question_relevance` (`full`/`partial`/`none` with `on_topic_portion` /
   `off_topic_portion`). `current_topic` (optional) names what the student is
-  studying right now and adds a rule marking questions anchored to it `full`.
+  studying right now; when present the whole rule set anchors on "the course
+  scope (its subject or the current module)" rather than the subject title.
 
 ## Invariants & gotchas
 
@@ -39,6 +40,14 @@ Both are subject-parameterized functions consumed by `ai/main_ai.py`.
   course's real `subject_name`; module-level content a course title can't
   convey (e.g. an ethics module in an MIS course) additionally needs
   `current_topic`.
+- **The rules must anchor on the same scope as the topic line.** A prepended
+  "currently studying" line is NOT enough: with classification rules phrased
+  against the subject title alone, gpt-4o follows the rules and rejects
+  current-module questions whose topic sounds like another discipline
+  (2026-07-31 ethics-in-MIS aside bug — "objective vs subjective claim"
+  rejected as "philosophy, not MIS"). When `current_topic` is present every
+  rule judges "within the course scope (its subject or the current module)";
+  keep it that way.
 - The guard errs toward `partial` over `none` when in doubt (answer the student).
 
 ## Related
