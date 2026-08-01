@@ -142,19 +142,16 @@ async def _course_subject(db: AsyncSession, *, course_id: int) -> str:
     return get_subject_name()
 
 
-# The problem statement can be long; the hint only needs enough text to anchor
-# the classifier to the module's topic, not the full statement.
-_TOPIC_HINT_TEXT_BUDGET = 240
-
-
 def _topic_hint(problem: Any) -> str | None:
     """Compose "what the student is studying right now" from the problem.
 
     ``concept_id`` is the concept slug (e.g. "ethics") and ``problem_text`` the
     statement being taught — together they anchor the relevance guard to
-    module-level content a bare course title can't convey. Returns None when
-    either field is missing/non-string so malformed problems degrade to the
-    subject-only guard instead of raising.
+    module-level content a bare course title can't convey. The full statement
+    is sent: it is the guard's best evidence for what's in scope, and authored
+    statements are a few hundred characters — negligible for the guard call.
+    Returns None when either field is missing/non-string so malformed problems
+    degrade to the subject-only guard instead of raising.
     """
     slug = getattr(problem, "concept_id", None)
     text = getattr(problem, "problem_text", None)
@@ -163,8 +160,8 @@ def _topic_hint(problem: Any) -> str | None:
     if not isinstance(text, str) or not text.strip():
         return None
     topic = slug.strip().replace("-", " ").replace("_", " ")
-    excerpt = " ".join(text.split())[:_TOPIC_HINT_TEXT_BUDGET]
-    return f"{topic} — current problem: {excerpt}"
+    statement = " ".join(text.split())
+    return f"{topic} — current problem: {statement}"
 
 
 def _document_id_of(snippet: BundleSnippet) -> int | None:

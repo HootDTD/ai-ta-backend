@@ -56,7 +56,8 @@ only persistence, written by the caller):
    `subject` comes from `_course_subject` (ladder: `Course.subject_name` →
    `Course.name` → global `get_subject_name()`; best-effort — a lookup failure
    degrades to the global fallback, never kills the aside) and `current_topic`
-   from `_topic_hint` (concept slug + ≤240-char problem-text excerpt; `None` on
+   from `_topic_hint` (concept slug + the FULL whitespace-normalized problem
+   statement — the guard's best scope evidence, never truncated; `None` on
    malformed problems). Both are REQUIRED context: with neither, the guard
    classifies the bare question against the "course/textbook" placeholder and
    rejects in-scope questions on phrasing alone (2026-07-30 surveillance-tools
