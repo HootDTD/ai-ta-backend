@@ -11,6 +11,7 @@ owns:
   - supabase/migrations/20260728120000_apollo_grounding_bundle.sql
   - supabase/migrations/20260730120000_auth_users_identity_grant.sql
   - supabase/migrations/20260731120000_db08d_rls_inline_membership_policies.sql
+  - supabase/migrations/20260731130000_pr4_hybrid_search_stored_halfvec.sql
   - supabase/config.toml
   - supabase/seed.sql
   - supabase/.gitignore
@@ -20,6 +21,7 @@ related:
   - database/session
   - platform/ops-db-sql
   - platform/ops-db-tooling
+  - rag-pipeline/hybrid-search
 last_verified: 2026-07-31
 stub: false
 ---
@@ -30,7 +32,7 @@ The timestamped `supabase/migrations/` chain is the **CURRENT forward schema**
 (pinned Supabase CLI 2.109.0 per `config.toml`, applied in ascending 14-digit
 order). `database/models.py` ORM MUST track it.
 
-## Interface — the nine migrations, in order
+## Interface — the ten migrations, in order
 
 1. **`…_legacy_public_snapshot`** — the loud, non-authoritative DB-03 draft
    reconstruction of legacy `public`. MUST be replaced by a reviewed human
@@ -72,6 +74,17 @@ order). `database/models.py` ORM MUST track it.
    `(SELECT internal.has_course_role(<col>, …))` call. POLICY objects only —
    no GRANT, no DDL, no helper change; count stays 45 (same names, commands,
    `TO authenticated`). See "RLS policy shape" below.
+10. **`…_pr4_hybrid_search_stored_halfvec`** (pilot-perf PR-4) — adds
+    `internal.document_chunks.embedding_halfvec`, a STORED generated column
+    (`(embedding)::halfvec(3072)`, `database/models.py`'s
+    `DocumentChunk.embedding_halfvec`), plus its own HNSW index
+    (`document_chunks__embedding_halfvec_stored_hnsw__idx`) — computed once at
+    write time so [rag-pipeline/hybrid-search](../rag-pipeline/hybrid-search.md)'s
+    semantic arm never casts `embedding` per row at query time. DROPS the DB-04
+    expression index (`document_chunks__embedding_halfvec_hnsw__idx`), confirmed
+    unused in real traffic; the only other referrers
+    (`internal.hybrid_search()`/`fetch_items()`, migration 4 above) are dead
+    legacy RPCs, deliberately not repointed — see the migration's own header.
 
 ## Data flow
 
@@ -119,4 +132,6 @@ the DB-08d file header; the rules that must survive edits:
 
 - [apollo/persistence/models](../apollo/persistence/models.md) (add-a-column
   recipe), [database/models](models.md) (core ORM must track this),
-  [database/session](session.md).
+  [database/session](session.md),
+  [rag-pipeline/hybrid-search](../rag-pipeline/hybrid-search.md) (consumer of
+  migration 10's `embedding_halfvec` column/index).

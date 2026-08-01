@@ -18,11 +18,9 @@ from typing import Optional
 from sqlalchemy import Integer, cast, func, select, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import joinedload
-from pgvector.sqlalchemy import HALFVEC
+from sqlalchemy.orm import defer, joinedload
 
-from database.models import DocumentChunk, Document, EMBEDDING_DIM
+from database.models import DocumentChunk, Document, EMBEDDING_DIM, ExtensionsHalfVector
 from indexing.document_embedder import embed_text
 from .document_visibility import active_document_conditions, build_chunk_metadata
 
@@ -35,16 +33,6 @@ _RRF_K = 60
 # coming from the env is rejected — these strings are interpolated into SQL.
 _ITERATIVE_SCAN_MODES = {"relaxed_order", "strict_order"}
 _ITERATIVE_SCAN_OFF = {"", "off", "0", "false", "disabled", "none"}
-
-
-class _ExtensionsHalfVector(HALFVEC):
-    """Render pgvector's halfvec type from its non-public extension schema."""
-
-
-@compiles(_ExtensionsHalfVector, "postgresql")
-def _compile_extensions_halfvec(type_, compiler, **kw):
-    del compiler, kw
-    return f"extensions.halfvec({type_.dim})"
 
 
 def _env_int(name: str, default: int, lo: int, hi: int) -> int:
@@ -103,18 +91,26 @@ def _iterative_scan_statements() -> list[str]:
 
 
 def _halfvec_cosine_distance(query_embedding):
-    """Cosine distance computed in ``halfvec(EMBEDDING_DIM)``.
+    """Cosine distance computed in ``halfvec(EMBEDDING_DIM)``, no per-row cast.
 
-    The production vector index is ``document_chunks__embedding_halfvec_hnsw__idx`` on
-    ``(embedding::halfvec(3072)) halfvec_cosine_ops``. Casting BOTH operands to
-    halfvec makes the query expression match that index and, more importantly,
-    runs the distance math in 16-bit (6 KB/vector) instead of 32-bit
-    (12 KB/vector) — measured 3,529 ms -> 107 ms on the largest class, with
-    identical ranking order. RRF fuses on rank, not raw distance, so fusion is
-    unaffected.
+    ``document_chunks.embedding_halfvec`` (PR-4) is a STORED generated column
+    (``(embedding)::halfvec(3072)``), computed once at write time, indexed by
+    ``document_chunks__embedding_halfvec_stored_hnsw__idx``. The chunk side of
+    the distance expression reads that column directly — no cast at query
+    time. Only the query vector (a Python list, not a stored row) needs
+    casting to match the operator's halfvec/halfvec signature.
+
+    The prior form cast ``embedding::halfvec(3072)`` on every candidate row to
+    match an EXPRESSION index; despite matching the expression, the planner
+    still chose a per-row-cast Seq Scan under the DB-08d RLS filter shape (0
+    scans of that index in staging pg_stat_user_indexes; see
+    docs/architecture/rag-pipeline/hybrid-search.md). Indexing the
+    materialized column removes the cast from the query plan entirely, so
+    there is nothing left for the planner to avoid. RRF fuses on rank, not raw
+    distance, so fusion is unaffected by this rewrite.
     """
-    return DocumentChunk.embedding.cast(_ExtensionsHalfVector(EMBEDDING_DIM)).op("<=>")(
-        cast(query_embedding, _ExtensionsHalfVector(EMBEDDING_DIM))
+    return DocumentChunk.embedding_halfvec.op("<=>")(
+        cast(query_embedding, ExtensionsHalfVector(EMBEDDING_DIM))
     )
 
 
@@ -264,7 +260,16 @@ class AITAHybridSearchRetriever:
                 DocumentChunk,
                 DocumentChunk.id == func.coalesce(semantic_cte.c.id, keyword_cte.c.id),
             )
-            .options(joinedload(DocumentChunk.document))
+            .options(
+                # Neither embedding column is ever read from the returned rows
+                # (chunks_out below only pulls scalar/text fields) — deferring
+                # them drops both from the SELECT list, so this result page
+                # detoasts none of the ~12KB vector(3072)/6KB halfvec(3072)
+                # payloads per row. PR-4; verified via test_hybrid_search_halfvec.py.
+                defer(DocumentChunk.embedding),
+                defer(DocumentChunk.embedding_halfvec),
+                joinedload(DocumentChunk.document).defer(Document.embedding),
+            )
             .order_by(text("score DESC"))
             .limit(top_k)
         )

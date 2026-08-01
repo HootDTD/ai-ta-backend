@@ -11,7 +11,8 @@ related:
   - chats/service
   - knowledge/teacher-weekly
   - indexing/indexing-service
-last_verified: 2026-07-25
+  - rag-pipeline/hybrid-search
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -28,7 +29,11 @@ file here today.
 Base building blocks: `Base(DeclarativeBase)`, `BaseModel` (int `id`),
 `TimestampMixin`, `DocumentType(StrEnum)`, `DocumentStatus` (string-state helper
 with `ready()`/`pending()`→`"queued"`/`processing()`/`failed(reason)`,
-`is_state()`, `get_failure_reason()`), `EMBEDDING_DIM` (from env, 3072).
+`is_state()`, `get_failure_reason()`), `EMBEDDING_DIM` (from env, 3072),
+`ExtensionsHalfVector` (renders pgvector's `halfvec` type as
+`extensions.halfvec(dim)`; shared by `DocumentChunk.embedding_halfvec` below
+and by [rag-pipeline/hybrid-search](../rag-pipeline/hybrid-search.md)'s query
+cast — `cache_ok = True` so the fused query's statement cache key is stable).
 
 Per-model compact table (class → `schema.table` → notable columns):
 
@@ -36,7 +41,7 @@ Per-model compact table (class → `schema.table` → notable columns):
 |---|---|---|
 | `Course` | `app.courses` | `current_week` SmallInt CHECK 1..16, `retrieval_weights` JSONB, weight min/max bounds — legacy `TeacherCourse` FOLDED IN here |
 | `Document` | `app.documents` | `material_kind`, `content`, `source_markdown`, `content_hash` uniq, `unique_identifier_hash` uniq, `embedding` `Vector(EMBEDDING_DIM)`, `metadata` JSONB, `week`, `status` String(20), FK `course_id` |
-| `DocumentChunk` | `internal.document_chunks` | `content`, `embedding` Vector, `page_number`, `section_path`, `chunk_type`, `figure_id`, denormalized `course_id`, FK `document_id` |
+| `DocumentChunk` | `internal.document_chunks` | `content`, `embedding` Vector, `embedding_halfvec` STORED generated `Computed()` column (never set from Python — see below), `page_number`, `section_path`, `chunk_type`, `figure_id`, denormalized `course_id`, FK `document_id` |
 | `CourseMembership` | `app.course_memberships` | composite PK (`user_id`, `course_id`), `role` |
 | `CourseInvite` | `app.course_invites` | `code` uniq, `role`, `max_uses`/`use_count`, `expires_at` |
 | `Upload` | `app.uploads` | `week`, `kind`, `status`, `storage_key`, `document_id`, `artifact_manifest` JSONB, `ocr_details`, `is_latest` |
@@ -52,6 +57,14 @@ Per-model compact table (class → `schema.table` → notable columns):
 - **`status` is a String(20) state, not a JSON envelope** — compare via
   `DocumentStatus.is_state()`; `DocumentStatus.pending()` returns `"queued"`.
 - **Vector dim comes from `EMBEDDING_DIM` env (3072)** — not hard-coded.
+- **`DocumentChunk.embedding_halfvec` is server-computed (PR-4)** —
+  `Computed("(embedding)::extensions.halfvec(EMBEDDING_DIM)", persisted=True)`.
+  SQLAlchemy excludes `Computed()` columns from generated INSERT/UPDATE
+  statements, so never assign it in Python; the DDL authority is
+  `supabase/migrations/20260731130000_pr4_hybrid_search_stored_halfvec.sql`,
+  which also carries its HNSW index. Exists so the semantic arm of
+  [hybrid-search](../rag-pipeline/hybrid-search.md) can index/query a halfvec
+  value directly instead of casting `embedding` per row at query time.
 - **No `chat_sessions`/`chat_turns` tables** — chat rides `learning_activities`
   (polymorphic) + `app.chat_messages` (`ChatMessage`, NOT `ChatTurn`).
 - The ORM declares CHECK constraints on `Course` only; the active migration SQL
@@ -64,4 +77,6 @@ Per-model compact table (class → `schema.table` → notable columns):
   [supabase-migrations](supabase-migrations.md) (DDL authority).
 - Behavior narrated elsewhere: [chats/service](../chats/service.md),
   [knowledge/teacher-weekly](../knowledge/teacher-weekly.md),
-  [indexing/indexing-service](../indexing/indexing-service.md).
+  [indexing/indexing-service](../indexing/indexing-service.md),
+  [rag-pipeline/hybrid-search](../rag-pipeline/hybrid-search.md) (consumer of
+  `ExtensionsHalfVector`/`embedding_halfvec`).

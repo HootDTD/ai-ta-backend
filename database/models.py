@@ -6,7 +6,7 @@ import os
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import HALFVEC, Vector
 from sqlalchemy import (
     JSON,
     TIMESTAMP,
@@ -14,6 +14,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Computed,
     Float,
     ForeignKey,
     Index,
@@ -25,9 +26,31 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, declared_attr, relationship
 
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "3072"))
+
+
+class ExtensionsHalfVector(HALFVEC):
+    """Render pgvector's halfvec type from its non-public ``extensions`` schema.
+
+    Shared by the ``document_chunks.embedding_halfvec`` generated column below
+    and by retrieval/hybrid_search.py, which casts the query vector to this
+    same type so the ``<=>`` operator matches
+    ``document_chunks__embedding_halfvec_stored_hnsw__idx``.
+    """
+
+    # Immutable, hashable state (just `dim`, inherited from HALFVEC) -- safe
+    # to use as part of SQLAlchemy's statement cache key. Without this every
+    # hybrid_search() call recompiles the fused query from scratch.
+    cache_ok = True
+
+
+@compiles(ExtensionsHalfVector, "postgresql")
+def _compile_extensions_halfvec(type_, compiler, **kw):
+    del compiler, kw
+    return f"extensions.halfvec({type_.dim})"
 
 
 class Base(DeclarativeBase):
@@ -204,6 +227,14 @@ class DocumentChunk(BaseModel, TimestampMixin):
 
     content = Column(Text, nullable=False)
     embedding = Column(Vector(EMBEDDING_DIM))
+    # STORED generated column: computed once at write time so the semantic
+    # arm of hybrid search can index/query it directly instead of casting
+    # `embedding` to halfvec per row at query time (PR-4). Never set this
+    # from Python -- Computed() excludes it from INSERT/UPDATE statements.
+    embedding_halfvec = Column(
+        ExtensionsHalfVector(EMBEDDING_DIM),
+        Computed(f"(embedding)::extensions.halfvec({EMBEDDING_DIM})", persisted=True),
+    )
     page_number = Column(Integer, nullable=True, index=True)
     section_path = Column(Text, nullable=True)
     chunk_type = Column(String(20), nullable=False, default="body")

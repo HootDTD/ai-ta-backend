@@ -353,6 +353,7 @@
     "supabase/migrations/20260728120000_apollo_grounding_bundle.sql": "database/supabase-migrations",
     "supabase/migrations/20260730120000_auth_users_identity_grant.sql": "database/supabase-migrations",
     "supabase/migrations/20260731120000_db08d_rls_inline_membership_policies.sql": "database/supabase-migrations",
+    "supabase/migrations/20260731130000_pr4_hybrid_search_stored_halfvec.sql": "database/supabase-migrations",
     "supabase/seed.sql": "database/supabase-migrations",
     "teacher_upload_worker.py": "platform/worker-and-procfile",
     "vendors/__init__.py": "platform/vendor-openai-client",
@@ -1515,6 +1516,7 @@
         "supabase/migrations/20260728120000_apollo_grounding_bundle.sql",
         "supabase/migrations/20260730120000_auth_users_identity_grant.sql",
         "supabase/migrations/20260731120000_db08d_rls_inline_membership_policies.sql",
+        "supabase/migrations/20260731130000_pr4_hybrid_search_stored_halfvec.sql",
         "supabase/config.toml",
         "supabase/seed.sql",
         "supabase/.gitignore"
