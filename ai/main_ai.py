@@ -989,6 +989,7 @@ def _prepare_solve_prompt(
     subject: str | None = None,
     *,
     system_prompt_override: str | None = None,
+    unscored_fallback_limit: int = 0,
 ) -> Tuple[str, str, str]:
     """Run snippet scoring and build the solver prompt.
 
@@ -999,6 +1000,9 @@ def _prepare_solve_prompt(
     ``system_prompt_override`` swaps the tutor system prompt for a caller-supplied
     one (the Apollo "Ask Hoot" aside passes ``apollo_aside_prompt()``); ``None``
     keeps ``tutor_prompt()`` so the standalone-chat solve path is byte-identical.
+    ``unscored_fallback_limit`` is also opt-in for that aside lane: if every
+    citation score misses the floor, the solver still receives the first N
+    retrieval-ranked snippets instead of an empty excerpt list.
     """
     question_text = ""
     try:
@@ -1140,6 +1144,18 @@ def _prepare_solve_prompt(
             "source_text": getattr(sn, "text", ""),
         })
     scored_snippets.sort(key=lambda x: -x["score"])
+    if not scored_snippets and unscored_fallback_limit > 0:
+        for sn in bundle.snippets[:unscored_fallback_limit]:
+            marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
+            if not isinstance(marker, str) or not marker.strip():
+                marker = _fallback_citation_marker(sn)
+            scored_snippets.append({
+                "marker": marker.strip(),
+                "page": getattr(sn, "page", None),
+                "score": 0.0,
+                "section": getattr(sn, "section_path", ""),
+                "source_text": getattr(sn, "text", ""),
+            })
 
     system = tutor_prompt() if system_prompt_override is None else system_prompt_override
     proof_bundle = _load_proof_bundle()
@@ -1387,16 +1403,20 @@ def solve_with_bundle(
     subject: str | None = None,
     *,
     system_prompt_override: str | None = None,
+    unscored_fallback_limit: int = 0,
 ) -> ProposedSolution:
     """Solve the parsed task using only information from the provided bundle.
 
     ``system_prompt_override`` (keyword-only) swaps the tutor system prompt for a
     caller-supplied one; ``None`` keeps ``tutor_prompt()`` byte-identical.
+    ``unscored_fallback_limit`` opts a caller into retrieval-ranked excerpts when
+    citation scoring rejects the full bundle; the default preserves normal solves.
     """
     client = _client()
     system, user_base, model = _prepare_solve_prompt(
         parsed_task, bundle, hint, subject,
         system_prompt_override=system_prompt_override,
+        unscored_fallback_limit=unscored_fallback_limit,
     )
 
     def _chat(msgs: List[dict]) -> dict:

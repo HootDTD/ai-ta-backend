@@ -1,7 +1,10 @@
-"""Regression guard: the semantic distance expression must compute in halfvec.
+"""Regression guard: the semantic distance expression must compute in halfvec
+against the STORED ``embedding_halfvec`` column, with no per-row cast (PR-4).
 
-If this ever reverts to raw `vector` distance, the query stops matching
-idx_aita_chunks_embedding_hnsw and the semantic scan goes from ~0.1s back to ~3.5s.
+If this ever reverts to casting `embedding` per row, the query stops matching
+document_chunks__embedding_halfvec_stored_hnsw__idx and the semantic scan goes
+from ~0.1s back to ~0.6s+ (worse under RLS — see
+docs/architecture/rag-pipeline/hybrid-search.md).
 Compile-only — no database required.
 """
 
@@ -29,13 +32,18 @@ def _compile_full(selectable) -> str:
     return str(select(selectable).compile(dialect=postgresql.dialect())).lower()
 
 
-def test_both_operands_cast_to_halfvec():
+def test_query_operand_cast_chunk_side_is_plain_stored_column():
     expr = _halfvec_cosine_distance([0.1] * EMBEDDING_DIM)
     sql = _sql(expr)
-    assert "halfvec" in sql
-    # Both the column and the query vector must be cast (matches the index expression).
-    assert sql.count(f"halfvec({EMBEDDING_DIM})") >= 2
-    assert sql.count(f"extensions.halfvec({EMBEDDING_DIM})") >= 2
+    assert "embedding_halfvec" in sql, "chunk side must read the stored generated column"
+    # Only the query vector (a Python list, not a stored row) needs casting —
+    # the stored column is already halfvec, so there is exactly one cast.
+    assert sql.count(f"halfvec({EMBEDDING_DIM})") == 1
+    assert sql.count(f"extensions.halfvec({EMBEDDING_DIM})") == 1
+    # The chunk column itself must not be wrapped in a per-row CAST.
+    assert "embedding::" not in sql
+    assert "cast(document_chunks.embedding as" not in sql
+    assert "cast(document_chunks.embedding_halfvec as" not in sql
 
 
 def test_uses_cosine_distance_operator():
@@ -98,8 +106,13 @@ def test_keyword_cte_limits_before_window():
     assert "limit" in inner_sql
 
 
-def test_semantic_cte_still_uses_halfvec_both_operands():
+def test_semantic_cte_still_uses_halfvec_stored_column():
     cte = _build_semantic_cte([0.1] * EMBEDDING_DIM, [], n_results=300)
     sql = _compile_full(cte)
-    assert sql.count(f"halfvec({EMBEDDING_DIM})") >= 2
+    assert "embedding_halfvec" in sql
+    # The distance expression is emitted once in SELECT and again in ORDER BY
+    # (SQLAlchemy repeats it rather than referencing the label), so count
+    # only the query-vector cast is present — not that it's exactly one.
+    assert sql.count(f"halfvec({EMBEDDING_DIM})") >= 1
+    assert "embedding::" not in sql, "chunk column must not be cast per row"
     assert "<=>" in sql

@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.lifecycle import handle_get_session
 from apollo.persistence.models import (
+    Concept,
+    Problem,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -37,6 +39,8 @@ async def db():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
+        Concept.__table__,
+        Problem.__table__,
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
@@ -54,7 +58,7 @@ async def session_with_attempt(db: AsyncSession):
     sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
-        concept_id=1,
+        concept_id=None,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
         current_problem_id=1,
@@ -90,15 +94,9 @@ async def session_with_attempt(db: AsyncSession):
 async def test_get_session_degrades_kg_read_on_neo4j_down(db, session_with_attempt):
     sess, attempt = session_with_attempt
 
-    with (
-        patch(
-            "apollo.handlers.lifecycle.KGStore.read_graph",
-            new=AsyncMock(side_effect=ServiceUnavailable("aura down")),
-        ),
-        patch(
-            "apollo.handlers.lifecycle.list_problems_for_concept",
-            new=AsyncMock(return_value=[]),
-        ),
+    with patch(
+        "apollo.handlers.lifecycle.KGStore.read_graph",
+        new=AsyncMock(side_effect=ServiceUnavailable("aura down")),
     ):
         out = await handle_get_session(db=db, neo=None, session_id=sess.id)
 
@@ -119,17 +117,86 @@ async def test_get_session_healthy_read_unaffected(db, session_with_attempt):
 
     sess, attempt = session_with_attempt
 
-    with (
-        patch(
-            "apollo.handlers.lifecycle.KGStore.read_graph",
-            new=AsyncMock(return_value=KGGraph()),
-        ) as mock_read,
-        patch(
-            "apollo.handlers.lifecycle.list_problems_for_concept",
-            new=AsyncMock(return_value=[]),
-        ),
-    ):
+    with patch(
+        "apollo.handlers.lifecycle.KGStore.read_graph",
+        new=AsyncMock(return_value=KGGraph()),
+    ) as mock_read:
         out = await handle_get_session(db=db, neo=None, session_id=sess.id)
 
     mock_read.assert_awaited_once()
     assert out["kg"] == {"nodes": [], "edges": []}
+
+
+@pytest.mark.asyncio
+async def test_get_session_fetches_and_serializes_only_current_problem(db, monkeypatch):
+    concept = Concept(
+        course_id=TEST_SPACE_ID,
+        subject_slug="physics",
+        subject_display_name="Physics",
+        slug="newton-2",
+        display_name="Newton's Second Law",
+    )
+    db.add(concept)
+    await db.flush()
+
+    def _payload(code: str) -> dict:
+        return {
+            "id": code,
+            "concept_id": "newton-2",
+            "difficulty": "intro",
+            "problem_text": f"Problem {code}",
+            "given_values": {"m": 2.0, "a": 3.0},
+            "target_unknown": "F",
+            "reference_solution": [
+                {
+                    "step": 1,
+                    "entry_type": "equation",
+                    "id": f"{code}-step",
+                    "content": {"symbolic": "F = m*a"},
+                }
+            ],
+        }
+
+    current = Problem.from_pydantic_payload(
+        _payload("current"),
+        course_id=TEST_SPACE_ID,
+        concept_id=concept.id,
+        tier=2,
+    )
+    sibling = Problem.from_pydantic_payload(
+        _payload("sibling"),
+        course_id=TEST_SPACE_ID,
+        concept_id=concept.id,
+        tier=2,
+    )
+    db.add_all([current, sibling])
+    await db.flush()
+    sess = TutoringSession(
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=concept.id,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
+        current_problem_id=current.id,
+    )
+    db.add(sess)
+    await db.commit()
+
+    original_serializer = Problem.to_pydantic_payload
+
+    def _only_current_is_serialized(row, *, concept_slug):
+        assert row.id == current.id
+        return original_serializer(row, concept_slug=concept_slug)
+
+    monkeypatch.setattr(Problem, "to_pydantic_payload", _only_current_is_serialized)
+
+    out = await handle_get_session(db=db, neo=None, session_id=sess.id)
+
+    assert out["problem"] == {
+        "id": "current",
+        "concept_id": "newton-2",
+        "difficulty": "intro",
+        "problem_text": "Problem current",
+        "given_values": {"m": 2.0, "a": 3.0},
+        "target_unknown": "F",
+    }

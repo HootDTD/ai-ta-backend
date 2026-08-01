@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from apollo.errors import NoMatchingConceptError
-from apollo.overseer.concept_inference import infer_concept_id
+from apollo.overseer.concept_inference import APITimeoutError, infer_concept_id
 from apollo.subjects.curriculum_db import ConceptRow
 
 
@@ -104,3 +104,15 @@ def test_infer_rejects_bool_concept_id(mock_client_cls):
     candidates = [ConceptRow(concept_id=1, slug="x", display_name="X")]
     with pytest.raises(NoMatchingConceptError):
         infer_concept_id(transcript="t", candidates=candidates)
+
+
+@patch("apollo.overseer.concept_inference.OpenAI")
+def test_infer_timeout_uses_no_match_fallback(mock_client_cls):
+    client = MagicMock()
+    client.chat.completions.create.side_effect = APITimeoutError("request timed out")
+    mock_client_cls.return_value = client
+
+    with pytest.raises(NoMatchingConceptError):
+        infer_concept_id(transcript="most recent topic", candidates=_CANDIDATES)
+
+    assert client.chat.completions.create.call_args.kwargs["timeout"] == 30.0

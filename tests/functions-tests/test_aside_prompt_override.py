@@ -20,7 +20,7 @@ import types
 
 import ai.main_ai as mai
 from ai.prompts import apollo_aside_prompt, tutor_prompt
-from config.contracts import ParsedTask, ResearchBundle, ResearchMetadata
+from config.contracts import BundleSnippet, ParsedTask, ResearchBundle, ResearchMetadata
 
 # ---------------------------------------------------------------------------
 # Prompt contract
@@ -223,3 +223,100 @@ def test_prepare_solve_prompt_default_keeps_tutor_prompt():
     )
 
     assert system == tutor_prompt()
+
+
+def test_aside_uses_ranked_unscored_snippets_when_every_citation_score_is_zero(
+    monkeypatch,
+):
+    snippets = [
+        BundleSnippet(
+            id=str(index),
+            type="text",
+            page=index,
+            section_path=f"Section {index}",
+            text=f"ranked excerpt {index}",
+            figure_id=None,
+            why="retrieval rank",
+            source_path="source.pdf",
+            doc_title="Source",
+            doc_short="Source",
+            citation_marker=f"[Source, p. {index}]",
+        )
+        for index in range(1, 7)
+    ]
+    bundle = ResearchBundle(
+        metadata=ResearchMetadata(question="What is lift?"),
+        snippets=snippets,
+        provenance={
+            "cached_citation_scores": {
+                snippet.id: {
+                    "score": 0.0,
+                    "marker": snippet.citation_marker,
+                    "snippet_id": snippet.id,
+                }
+                for snippet in snippets
+            }
+        },
+    )
+    monkeypatch.setattr(mai, "_write_miniresponses", lambda *_args, **_kwargs: None)
+
+    _system, user_payload, _model = mai._prepare_solve_prompt(
+        ParsedTask(problem_type="conceptual", asked_outputs=["lift"]),
+        bundle,
+        system_prompt_override=apollo_aside_prompt(),
+        unscored_fallback_limit=5,
+    )
+
+    excerpts_line = next(
+        line for line in user_payload.splitlines() if line.startswith("SourceExcerpts ")
+    )
+    excerpts = json.loads(excerpts_line.split(": ", 1)[1])
+    assert [entry["text"] for entry in excerpts] == [
+        "ranked excerpt 1",
+        "ranked excerpt 2",
+        "ranked excerpt 3",
+        "ranked excerpt 4",
+        "ranked excerpt 5",
+    ]
+
+
+def test_unscored_fallback_synthesizes_marker_when_snippet_has_none(monkeypatch):
+    """A fallback snippet without a citation marker gets the default one."""
+    from config.settings import get_citation_label
+
+    snippet = BundleSnippet(
+        id="1",
+        type="text",
+        page=3,
+        section_path="Section 3",
+        text="ranked excerpt",
+        figure_id=None,
+        why="retrieval rank",
+        source_path="source.pdf",
+        doc_title="Source",
+        doc_short="Source",
+        citation_marker="",
+    )
+    bundle = ResearchBundle(
+        metadata=ResearchMetadata(question="What is lift?"),
+        snippets=[snippet],
+        provenance={
+            "cached_citation_scores": {
+                "1": {"score": 0.0, "marker": "", "snippet_id": "1"},
+            }
+        },
+    )
+    monkeypatch.setattr(mai, "_write_miniresponses", lambda *_args, **_kwargs: None)
+
+    _system, user_payload, _model = mai._prepare_solve_prompt(
+        ParsedTask(problem_type="conceptual", asked_outputs=["lift"]),
+        bundle,
+        system_prompt_override=apollo_aside_prompt(),
+        unscored_fallback_limit=5,
+    )
+
+    excerpts_line = next(
+        line for line in user_payload.splitlines() if line.startswith("SourceExcerpts ")
+    )
+    excerpts = json.loads(excerpts_line.split(": ", 1)[1])
+    assert [entry["marker"] for entry in excerpts] == [f"[{get_citation_label()}, p. 3]"]

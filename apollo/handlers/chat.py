@@ -33,6 +33,7 @@ from apollo.hoot_bridge.reference_answer import (
     ASIDE_MESSAGE_INTENT_TAG,
     MAX_ASIDES_PER_SESSION,
     MESSAGE_KIND_REFERENCE_ASIDE,
+    ReferenceAsideResult,
     answer_reference_question,
 )
 from apollo.hoot_bridge.reference_answer import (
@@ -65,6 +66,7 @@ _REFERENCE_QUESTION_CAP_REDIRECT = (
 _REFERENCE_QUESTION_APOLOGY = (
     "Hmm, I couldn't look that up right now. Let's keep going — what were you saying?"
 )
+_REFERENCE_QUESTION_EMPTY = "Type your question above first, then click Ask."
 
 
 async def _find_problem(
@@ -267,6 +269,27 @@ async def _execute_reference_question(
     and falls through as an ordinary teaching-shaped turn, never a 5xx.
     """
     current_count = int((sess.metadata_ or {}).get(ASIDE_COUNT_SESSION_METADATA_KEY, 0))
+    if not message.strip():
+        _LOG.info(
+            "apollo_reference_question_empty session_id=%s attempt_id=%s",
+            sess.id,
+            attempt_id,
+        )
+        return await _persist_reference_aside_turn(
+            db=db,
+            sess=sess,
+            attempt_id=attempt_id,
+            message=message,
+            store=store,
+            result=ReferenceAsideResult(
+                in_scope=True,
+                text=_REFERENCE_QUESTION_EMPTY,
+                citations=[],
+            ),
+            aside_count=current_count,
+            graph_stage="reference_question_empty",
+        )
+
     if current_count >= MAX_ASIDES_PER_SESSION:
         await _persist_turn(
             db,
@@ -299,14 +322,28 @@ async def _execute_reference_question(
             attempt_id,
             exc_info=True,
         )
-        await _persist_turn(
-            db,
-            session_id=sess.id,
-            course_id=sess.course_id,
-            attempt_id=attempt_id,
-            student_msg=message,
-            apollo_msg=_REFERENCE_QUESTION_APOLOGY,
-        )
+        # The bridge failure may have aborted the session's transaction (e.g.
+        # a retrieval SQL error): roll back so the apology persists on a clean
+        # transaction, and keep the persist itself best-effort — a dead
+        # connection must still produce the apology reply, not a 5xx
+        # (2026-08-01 halfvec schema-drift incident escaped here as a 500).
+        try:
+            await db.rollback()
+            await _persist_turn(
+                db,
+                session_id=sess.id,
+                course_id=sess.course_id,
+                attempt_id=attempt_id,
+                student_msg=message,
+                apollo_msg=_REFERENCE_QUESTION_APOLOGY,
+            )
+        except Exception:  # noqa: BLE001 - apology persistence is best-effort
+            _LOG.warning(
+                "apollo_reference_question_apology_persist_failed session_id=%s attempt_id=%s",
+                sess.id,
+                attempt_id,
+                exc_info=True,
+            )
         graph = await _read_graph_or_empty(
             store, attempt_id=attempt_id, stage="reference_question_failed"
         )
@@ -318,6 +355,31 @@ async def _execute_reference_question(
 
     next_count = current_count + 1
     sess.metadata_ = {**(sess.metadata_ or {}), ASIDE_COUNT_SESSION_METADATA_KEY: next_count}
+
+    return await _persist_reference_aside_turn(
+        db=db,
+        sess=sess,
+        attempt_id=attempt_id,
+        message=message,
+        store=store,
+        result=result,
+        aside_count=next_count,
+        graph_stage="reference_question",
+    )
+
+
+async def _persist_reference_aside_turn(
+    *,
+    db: AsyncSession,
+    sess: TutoringSession,
+    attempt_id: int,
+    message: str,
+    store: KGStore,
+    result: ReferenceAsideResult,
+    aside_count: int,
+    graph_stage: str,
+) -> dict[str, Any]:
+    """Persist and return the shared response envelope for an aside turn."""
 
     next_idx = await _next_turn_index(db, sess.id)
     db.add(
@@ -362,7 +424,7 @@ async def _execute_reference_question(
     )
     await db.commit()
 
-    graph = await _read_graph_or_empty(store, attempt_id=attempt_id, stage="reference_question")
+    graph = await _read_graph_or_empty(store, attempt_id=attempt_id, stage=graph_stage)
     return {
         "apollo_reply": _REFERENCE_QUESTION_RESUME_LINE,
         "kg_entries_added": 0,
@@ -373,7 +435,7 @@ async def _execute_reference_question(
             "citations": result.citations,
             "in_scope": result.in_scope,
         },
-        "intent_executed": {"intent": "reference_question", "aside_count": next_count},
+        "intent_executed": {"intent": "reference_question", "aside_count": aside_count},
     }
 
 

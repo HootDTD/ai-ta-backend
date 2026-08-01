@@ -6,8 +6,9 @@ owns:
 related:
   - apollo/conversation/routing/router
   - apollo/knowledge-graph/store
-  - apollo/overseer/problem-selector
-last_verified: 2026-07-30
+  - apollo/persistence/models
+  - apollo/schemas/problem
+last_verified: 2026-07-31
 stub: false
 ---
 
@@ -44,8 +45,11 @@ stub: false
 ## Data flow
 
 All three are `Depends(require_session_owner)` routes in `routing/router`.
-`handle_get_session` reads the current attempt's subgraph via `KGStore` and lists
-the teachable problem via `list_problems_for_concept` (`overseer/problem-selector`).
+`handle_get_session` reads the current attempt's subgraph via `KGStore` and loads
+only `current_problem_id` by its database id, joining its concept slug and keeping
+the course/concept, tier-2, and non-quarantined eligibility guards. It rebuilds
+the same public Pydantic problem shape without loading or validating the rest of
+the concept's problem pool.
 
 ## Invariants & gotchas
 
@@ -57,5 +61,5 @@ the teachable problem via `list_problems_for_concept` (`overseer/problem-selecto
 
 ## Related
 
-Route wiring: `routing/router`; KG reads: `knowledge-graph/store`; problem
-listing: `overseer/problem-selector`.
+Route wiring: `routing/router`; KG reads: `knowledge-graph/store`; problem ORM
+and public schema: `persistence/models` and `schemas/problem`.

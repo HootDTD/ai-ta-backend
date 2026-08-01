@@ -10,9 +10,18 @@ structurally incapable of exercising this code.
 This module builds a FRESH database on that same Docker Postgres server,
 applies the real migration chain (auth shim -> legacy snapshot -> DB-04
 create_app_schema_v1 -> DB-06 retrieval_functions_v1 -> DB-08b's own grants
-migration -> DB-08c's write-policy-gaps migration), seeds two tenants
-(course A / course B) across every app table the 45 policies cover, and
-proves, end to end, against real asyncpg/asyncpg-via-SQLAlchemy connections:
+migration -> DB-08c's write-policy-gaps migration -> DB-08d's inline-membership
+policy rewrite), seeds two tenants (course A / course B) across every app table
+the 45 policies cover, and proves, end to end, against real
+asyncpg/asyncpg-via-SQLAlchemy connections:
+
+Because DB-08d rewrites 38 of those 45 policies in place -- swapping the
+per-row ``internal.has_course_role()`` call for an equivalent inline
+membership subquery, with no change to which rows any role may see or write --
+this whole matrix doubles as DB-08d's equivalence suite: every assertion below
+was written against the pre-DB-08d policies and must still hold verbatim.
+See tests/database/test_db08d_rls_inline_membership_policies.py for the
+rewrite-specific structural and plan-shape assertions.
 
 1. ``app_runtime`` binds to all 45 app-schema policies exactly like
    ``authenticated`` does (the DB-08b membership grant), with an
@@ -66,6 +75,7 @@ _RETRIEVAL = _MIGRATIONS / "20260717050000_retrieval_functions_v1.sql"
 _GRANTS = _MIGRATIONS / "20260722120000_db08b_rls_enforcement_grants.sql"
 _POLICY_GAPS = _MIGRATIONS / "20260723060000_db08c_rls_write_policy_gaps.sql"
 _GROUNDING_BUNDLE = _MIGRATIONS / "20260728120000_apollo_grounding_bundle.sql"
+_INLINE_POLICIES = _MIGRATIONS / "20260731120000_db08d_rls_inline_membership_policies.sql"
 _DB_NAME = "db08b_rls_enforcement"
 
 STUDENT_A = "50000000-0000-4000-8000-00000000000a"
@@ -368,7 +378,8 @@ async def _seed(conn: asyncpg.Connection) -> None:
 
 @pytest.fixture(scope="session")
 def db08b_dsns(request: pytest.FixtureRequest) -> tuple[str, str]:
-    """Fresh DB with the DB-04 + DB-06 + DB-08b chain applied, plus seed data.
+    """Fresh DB with the DB-04 + DB-06 + DB-08b + DB-08d chain applied, plus
+    seed data.
 
     Returns (admin_dsn, sqlalchemy_asyncpg_dsn).
     """
@@ -395,6 +406,7 @@ def db08b_dsns(request: pytest.FixtureRequest) -> tuple[str, str]:
             await conn.execute(_GRANTS.read_text(encoding="utf-8"))
             await conn.execute(_POLICY_GAPS.read_text(encoding="utf-8"))
             await conn.execute(_GROUNDING_BUNDLE.read_text(encoding="utf-8"))
+            await conn.execute(_INLINE_POLICIES.read_text(encoding="utf-8"))
             await _seed(conn)
         finally:
             await conn.close()
