@@ -96,7 +96,12 @@ Ordered turn:
    excludes this row from grading) with the structured payload stored in the
    row's `message_metadata` as `{"aside": {citations, in_scope}}` (text is
    the row content) so `handlers/lifecycle`'s snapshot can replay citations
-   after a reload, and the persona resume line (untagged). Returns
+   after a reload, and the persona resume line (untagged). The resume line is
+   scope-dependent: `in_scope=True` asks how the answer fits into the lesson
+   (`_REFERENCE_QUESTION_RESUME_LINE`); `in_scope=False` (the bridge's
+   out-of-scope refusal) redirects back to the teaching thread instead
+   (`_REFERENCE_QUESTION_OUT_OF_SCOPE_RESUME_LINE`) — there is nothing to
+   "fit in". Returns
    `message_kind: "reference_aside"` plus an `aside: {text, citations,
    in_scope}` payload — the serializer shape the student-UI PR types against
    (see `hoot-bridge-reference-answer`).

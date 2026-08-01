@@ -134,6 +134,53 @@ async def test_reference_question_allowed_returns_aside_and_persona_resume(monke
     assert persisted[2].message_metadata == {}
 
 
+async def test_out_of_scope_reference_question_resumes_with_back_on_topic_line(monkeypatch):
+    """An in_scope=False refusal must NOT get the "how does that fit into what
+    you were teaching me?" resume line — there is nothing to fit in."""
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    db, sess, store, _, problem = _chat_context()
+    refusal = "That's outside what's covered in this course's materials."
+    bridge = AsyncMock(
+        return_value=ReferenceAsideResult(in_scope=False, text=refusal, citations=[])
+    )
+
+    with (
+        patch("apollo.handlers.chat.answer_reference_question", new=bridge),
+        patch("apollo.handlers.chat._next_turn_index", new=AsyncMock(return_value=8)),
+    ):
+        response = await _run_ask_hoot(
+            db=db,
+            sess=sess,
+            store=store,
+            problem=problem,
+        )
+
+    resume = "Okay, let's get back on topic then. What's the next thing you wanted to teach me?"
+    assert response == {
+        "apollo_reply": resume,
+        "kg_entries_added": 0,
+        "kg": {"nodes": [], "edges": []},
+        "message_kind": MESSAGE_KIND_REFERENCE_ASIDE,
+        "aside": {
+            "text": refusal,
+            "citations": [],
+            "in_scope": False,
+        },
+        "intent_executed": {"intent": "reference_question", "aside_count": 1},
+    }
+
+    persisted = [call.args[0] for call in db.add.call_args_list]
+    assert [(row.role, row.content, row.turn_index) for row in persisted] == [
+        ("student", _QUESTION, 8),
+        ("apollo", refusal, 9),
+        ("apollo", resume, 10),
+    ]
+    assert persisted[1].intent == ASIDE_MESSAGE_INTENT_TAG
+    assert persisted[1].message_metadata == {"aside": {"citations": [], "in_scope": False}}
+    assert persisted[2].intent is None
+
+
 async def test_empty_reference_question_returns_aside_without_retrieval_or_counting(
     monkeypatch, caplog
 ):
