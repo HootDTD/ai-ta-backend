@@ -23,7 +23,7 @@ def _mock_reply(text: str) -> MagicMock:
 _CANDIDATES = [ConceptRow(concept_id=11, slug="bernoulli", display_name="Bernoulli")]
 
 
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_infer_returns_concept_id_from_candidates(mock_client_cls):
     """T3.1 — LLM returns a candidate id; infer returns it as an int."""
     client = MagicMock()
@@ -38,7 +38,7 @@ def test_infer_returns_concept_id_from_candidates(mock_client_cls):
     assert isinstance(result, int)
 
 
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_infer_raises_on_unknown_concept_id(mock_client_cls):
     """T3.2 — an id not in the candidate set raises."""
     client = MagicMock()
@@ -49,7 +49,7 @@ def test_infer_raises_on_unknown_concept_id(mock_client_cls):
         infer_concept_id(transcript="off-topic", candidates=_CANDIDATES)
 
 
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_infer_raises_on_null(mock_client_cls):
     """T3.3 — a null concept_id raises (incl. the no-curriculum empty-candidates
     path that yields null)."""
@@ -61,7 +61,7 @@ def test_infer_raises_on_null(mock_client_cls):
         infer_concept_id(transcript="general chat", candidates=_CANDIDATES)
 
 
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_infer_raises_on_invalid_json(mock_client_cls):
     """T3.4 — invalid JSON raises."""
     client = MagicMock()
@@ -72,7 +72,7 @@ def test_infer_raises_on_invalid_json(mock_client_cls):
         infer_concept_id(transcript="whatever", candidates=_CANDIDATES)
 
 
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_infer_sends_candidate_display_names_to_llm(mock_client_cls):
     """T3.5 — the candidate concept_ids + display_names are sent to the LLM
     (proves the course's concepts, not a constant, drive the prompt)."""
@@ -93,7 +93,7 @@ def test_infer_sends_candidate_display_names_to_llm(mock_client_cls):
         assert c.display_name in user_content
 
 
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_infer_rejects_bool_concept_id(mock_client_cls):
     """T3.x — a boolean (JSON true) must NOT pass the int membership check
     (avoids the True == 1 foot-gun)."""
@@ -106,7 +106,7 @@ def test_infer_rejects_bool_concept_id(mock_client_cls):
         infer_concept_id(transcript="t", candidates=candidates)
 
 
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_infer_timeout_uses_no_match_fallback(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.side_effect = APITimeoutError("request timed out")

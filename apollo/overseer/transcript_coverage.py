@@ -11,8 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from openai import OpenAI
-
+from apollo.agent._llm import bounded_client
 from apollo.errors import CoverageGradingError
 from apollo.ontology import KGGraph
 from apollo.overseer.coverage_contract import CoverageVerdict, validate_coverage_verdict
@@ -277,7 +276,7 @@ def _call_adjudication(
     model: str,
     include_hoot_assisted: bool = False,
 ) -> str:
-    client = OpenAI()
+    client = bounded_client()
     response = client.chat.completions.create(  # type: ignore[call-overload]
         model=model,
         response_format={

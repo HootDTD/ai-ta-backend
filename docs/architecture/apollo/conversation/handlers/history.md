@@ -6,7 +6,7 @@ owns:
 related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/agent/persona-reply
-last_verified: 2026-07-25
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -30,6 +30,11 @@ attempt_id) -> (summary_or_none, raw_window)` plus `RAW_WINDOW_TURNS` /
 
 ## Invariants & gotchas
 
+- Dead code still gets swept by mechanical repo-wide passes: `load_windowed_history`'s
+  `_summarize` call now runs via `await asyncio.to_thread(_summarize, older)`
+  (2026-08-04, part of the Apollo event-loop-offloading sweep) rather than
+  inline — inert here since there is no live caller, but keeps the module
+  consistent with the live handlers if it is ever revived.
 - The `TutoringSession.history_summary` / `history_summary_up_to_turn` columns
   this module wrote are now only ever **reset to `None`** by `handlers/lifecycle`,
   `next.py`, and `restart_problem.py` — never populated by a live writer. Their

@@ -47,7 +47,7 @@ def _client_returning(text: str) -> MagicMock:
     return client
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_topic_output_is_sanitized(mock_openai):
     mock_openai.return_value = _client_returning(
         "Great work (proc_explain_causality, credit 0.90, weight 0.23). Misconception dock: 0.000."
@@ -65,7 +65,7 @@ def test_topic_output_is_sanitized(mock_openai):
     assert feedback is None
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_legacy_output_is_pattern_sanitized(mock_openai):
     mock_openai.return_value = _client_returning("Good start, credit=0.80 overall.")
 
@@ -80,7 +80,7 @@ def test_legacy_output_is_pattern_sanitized(mock_openai):
     assert feedback is None
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_clean_output_and_placeholder_are_preserved(mock_openai):
     clean = "You covered causality well (80%).\n\nNext step: explain overload."
     mock_openai.return_value = _client_returning(clean)
@@ -100,7 +100,7 @@ def test_clean_output_and_placeholder_are_preserved(mock_openai):
     )
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_structured_text_fields_are_sanitized_individually(mock_openai):
     topic_score = _topic_score()
     topic_score = TopicScoreResult(

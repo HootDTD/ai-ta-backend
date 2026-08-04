@@ -10,7 +10,7 @@ related:
   - apollo/overseer/topic-score
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-07-30
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -35,7 +35,10 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
 
 Two prompt paths. When a `TopicScoreResult` is passed, it delegates to
 [topic-narrative](topic-narrative.md)`.build_topic_narrative_prompt` and requests
-strict structured JSON from one `MAIN_MODEL` completion. Code validates topic
+strict structured JSON from one `MAIN_MODEL` completion via `bounded_client()`
+(`agent/llm-client`, 2026-08-04 — was a bare `OpenAI()`). `handlers/done.py`
+now calls `generate_diagnostic` through `asyncio.to_thread` (see `handlers/done`)
+so this narrative LLM call no longer blocks the event loop. Code validates topic
 keys/order, exact-gates each quote against that topic's `evidence_span`,
 sanitizes every prose field, appends deterministic misconception + negotiation
 entries in `recap[]`, then flattens headline → topic notes → recap → prefixed

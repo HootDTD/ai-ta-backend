@@ -8,7 +8,7 @@ related:
   - apollo/provisioning/_index
   - apollo/provisioning/scrape
   - platform/config-model-pins
-last_verified: 2026-07-25
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -23,6 +23,9 @@ is the pure config table backing it.
 ## Interface
 
 - `MeteredChat(*, ingest_run, client=None, ceiling=…, document_id=None)` — the metered client.
+  `client=None` (the default, when no client is injected) builds one via
+  `_make_default_client()`, which now returns `apollo.agent._llm.bounded_client()`
+  (2026-08-04 — was a bare `OpenAI()`), so the timeout/retry cap applies here too.
   - `.cheap(*, purpose, messages, response_format=None, temperature=0.0, model=None, reasoning_effort=None)` — cheap-tier call (`cheap_chat`-shaped).
   - `.main(...)` — main-tier call (`main_chat`-shaped; routes to `config.models.MAIN_MODEL`).
   - `.scrape_chat_fn(system_prompt)` — adapter for the positional-string `chat_fn(text)->str` scrape seam.

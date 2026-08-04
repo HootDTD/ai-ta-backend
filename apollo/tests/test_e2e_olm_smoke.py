@@ -309,7 +309,7 @@ async def test_negotiable_olm_chain_to_coverage_to_narration(
             ),
         ]
     )
-    with patch("apollo.overseer.coverage.OpenAI") as mc:
+    with patch("apollo.overseer.coverage.bounded_client") as mc:
         mc.return_value.chat.completions.create.side_effect = _create
         cov = await compute_coverage(post_graph, reference_graph)
 

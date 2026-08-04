@@ -1,7 +1,7 @@
 """WU-2A: context-aware one-call typed-edge extraction with provenance.
 
 Parser-ONLY tests. The GPT-4o call is mocked deterministically
-(`@patch("apollo.parser.parser_llm.OpenAI")`); the triviality classifier is
+(`@patch("apollo.parser.parser_llm.bounded_client")`); the triviality classifier is
 mocked where math-free prose is exercised
 (`@patch("apollo.parser.parser_llm.cheap_chat")`). NO Neo4j, NO network, NO
 live API, NO `scripts.spikes` import.
@@ -295,7 +295,7 @@ def test_fixture_entries_conform_to_strict_schema(concept):
     _assert_conforms(payload, schema)
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_schema_conformant_payload_yields_nodes(mock_cls, concept):
     """A payload that validates against build_extraction_schema() (FLAT shape)
     must produce nodes through parse_utterance. This is the regression guard
@@ -335,7 +335,7 @@ def _find(edges, edge_type):
 # ===========================================================================
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_backward_compat_no_graph_context(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -356,7 +356,7 @@ def test_parse_backward_compat_no_graph_context(mock_cls, concept):
     assert kwargs["response_format"]["json_schema"]["name"] == "kg_extraction"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_emits_typed_edges_from_strict_payload(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -375,7 +375,7 @@ def test_parse_emits_typed_edges_from_strict_payload(mock_cls, concept):
     assert e.provenance == "explicit"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_no_model_edges_falls_back_to_deterministic(mock_cls, concept):
     """Empty `edges` + graph_context None => today's deterministic fallback:
     within-turn USES (from uses_equation_ordinals) + PRECEDES chain."""
@@ -408,7 +408,7 @@ def test_parse_no_model_edges_falls_back_to_deterministic(mock_cls, concept):
 # ===========================================================================
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_emits_precedes_step_to_step(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -421,7 +421,7 @@ def test_parse_emits_precedes_step_to_step(mock_cls, concept):
     assert len(_find(edges, EdgeType.PRECEDES)) == 1
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_emits_uses_step_to_equation(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -434,7 +434,7 @@ def test_parse_emits_uses_step_to_equation(mock_cls, concept):
     assert len(_find(edges, EdgeType.USES)) == 1
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_emits_scopes_condition_to_equation(mock_cls, concept):
     """SCOPES comes alive (§4 — dead code in the deterministic parser)."""
     from apollo.parser.parser_llm import parse_utterance
@@ -451,7 +451,7 @@ def test_parse_emits_scopes_condition_to_equation(mock_cls, concept):
     assert scopes[0].to_node_type == "equation"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_emits_scopes_simplification_to_equation(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -466,7 +466,7 @@ def test_parse_emits_scopes_simplification_to_equation(mock_cls, concept):
     assert scopes[0].from_node_type == "simplification"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_emits_depends_on_any_to_any(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -487,7 +487,7 @@ def test_parse_emits_depends_on_any_to_any(mock_cls, concept):
 # ===========================================================================
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_links_to_existing_graph_node(mock_cls, concept):
     from apollo.parser.graph_context import ContextNode, GraphContext
     from apollo.parser.parser_llm import parse_utterance
@@ -507,7 +507,7 @@ def test_parse_links_to_existing_graph_node(mock_cls, concept):
     assert scopes[0].to_node_id == "eq_prev"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_cross_turn_late_condition_scopes_earlier_equation(mock_cls, concept):
     """§4 spike scenario: a late condition SCOPES-links to an earlier-turn
     equation supplied via graph_context."""
@@ -535,7 +535,7 @@ def test_parse_cross_turn_late_condition_scopes_earlier_equation(mock_cls, conce
     assert scopes[0].provenance == "inferred"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_cross_turn_endpoint_type_from_context(mock_cls, concept):
     """Endpoint type for a context node is read from graph_context.type_of,
     NOT re-derived. A DEPENDS_ON to a context `definition` validates."""
@@ -563,7 +563,7 @@ def test_parse_cross_turn_endpoint_type_from_context(mock_cls, concept):
 # ===========================================================================
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_tags_explicit_edge(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -573,7 +573,7 @@ def test_parse_tags_explicit_edge(mock_cls, concept):
     assert edges[0].provenance == "explicit"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_tags_inferred_edge(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -583,7 +583,7 @@ def test_parse_tags_inferred_edge(mock_cls, concept):
     assert edges[0].provenance == "inferred"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_missing_provenance_defaults_explicit(mock_cls, concept):
     """Defensive path: an edge with no provenance coerces to explicit."""
     from apollo.parser.parser_llm import parse_utterance
@@ -594,7 +594,7 @@ def test_parse_missing_provenance_defaults_explicit(mock_cls, concept):
     assert edges[0].provenance == "explicit"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_invalid_provenance_coerces_explicit(mock_cls, concept):
     """An out-of-vocabulary provenance value coerces to the safe default."""
     from apollo.parser.parser_llm import parse_utterance
@@ -610,7 +610,7 @@ def test_parse_invalid_provenance_coerces_explicit(mock_cls, concept):
 # ===========================================================================
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_rejects_disallowed_pair(mock_cls, concept, caplog):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -624,7 +624,7 @@ def test_parse_rejects_disallowed_pair(mock_cls, concept, caplog):
     assert "disallowed_pair" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_rejects_self_loop(mock_cls, concept, caplog):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -637,7 +637,7 @@ def test_parse_rejects_self_loop(mock_cls, concept, caplog):
     assert "self_loop" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_rejects_unresolvable_ref(mock_cls, concept, caplog):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -649,7 +649,7 @@ def test_parse_rejects_unresolvable_ref(mock_cls, concept, caplog):
     assert "unresolvable_ref" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_rejects_unknown_endpoint_type(mock_cls, concept, caplog):
     """A bare id not in graph_context (type unknown) is dropped + logged."""
     from apollo.parser.graph_context import GraphContext
@@ -665,7 +665,7 @@ def test_parse_rejects_unknown_endpoint_type(mock_cls, concept, caplog):
     assert "unresolvable_ref" in caplog.text or "unknown_endpoint_type" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_rejects_bad_edge_type(mock_cls, concept, caplog):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -679,7 +679,7 @@ def test_parse_rejects_bad_edge_type(mock_cls, concept, caplog):
     assert "bad_edge_type" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_one_bad_edge_does_not_drop_valid_edges(mock_cls, concept, caplog):
     """One valid USES + one disallowed SCOPES: the USES survives."""
     from apollo.parser.parser_llm import parse_utterance
@@ -699,7 +699,7 @@ def test_parse_one_bad_edge_does_not_drop_valid_edges(mock_cls, concept, caplog)
     assert "disallowed_pair" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_rejects_malformed_non_dict_edge(mock_cls, concept, caplog):
     """A non-dict element in `edges` is dropped + logged `malformed_edge`."""
     from apollo.parser.parser_llm import parse_utterance
@@ -721,7 +721,7 @@ def test_parse_rejects_malformed_non_dict_edge(mock_cls, concept, caplog):
     assert "malformed_edge" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_rejects_bare_id_with_no_context(mock_cls, concept, caplog):
     """A bare (non-"n<i>") id when graph_context is None cannot resolve ->
     `unresolvable_ref` (no prior graph to look it up in)."""
@@ -735,7 +735,7 @@ def test_parse_rejects_bare_id_with_no_context(mock_cls, concept, caplog):
     assert "unresolvable_ref" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_rejects_known_id_unknown_type(mock_cls, concept, caplog):
     """A bare id the LLM names but that is absent from the supplied
     graph_context resolves to an id with type None -> `unknown_endpoint_type`.
@@ -794,7 +794,7 @@ def test_build_typed_edge_validator_rejected_defensive(caplog, monkeypatch):
     assert "validator_rejected" in caplog.text
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_skips_non_dict_and_typeless_entries(mock_cls, concept):
     """`_build_nodes` skips entries that are not dicts or lack a `type` key
     (defensive guard) while keeping the valid ones."""
@@ -844,7 +844,7 @@ def test_build_precedes_chain_skips_validator_rejection(monkeypatch, concept):
     assert edges == []
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_ref_index_survives_skipped_entry(mock_cls, concept):
     """Risk #1: a malformed entry between two good ones must NOT shift the
     "n<i>" ref mapping. Ref keys on the ORIGINAL entry index."""
@@ -873,7 +873,7 @@ def test_parse_ref_index_survives_skipped_entry(mock_cls, concept):
 # ===========================================================================
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_triviality_short_circuit_unchanged(mock_cls, concept):
     """A short ACK ("ok") returns ([], []) and does NOT raise.
 
@@ -893,7 +893,7 @@ def test_triviality_short_circuit_unchanged(mock_cls, concept):
     # "ok" short-circuits on the ACK list before the classifier.
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_raises_on_nontrivial_zero_nodes(mock_cls, concept):
     """Non-trivial (math chars) utterance + empty entries => raise."""
     from apollo.parser.parser_llm import parse_utterance
@@ -905,7 +905,7 @@ def test_raises_on_nontrivial_zero_nodes(mock_cls, concept):
 
 
 @patch("apollo.parser.parser_llm.cheap_chat")
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_returns_empty_on_trivial_zero_nodes(mock_cls, mock_cheap, concept):
     """Trivial prose (classifier says not-teaching) + empty entries => ([], [])."""
     from apollo.parser.parser_llm import parse_utterance
@@ -930,7 +930,7 @@ def _mock_client_raw(content: str) -> MagicMock:
     return client
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_raises_on_invalid_json_when_nontrivial(mock_cls, concept):
     """Non-JSON LLM content + non-trivial (math) utterance => raise (unchanged)."""
     from apollo.parser.parser_llm import parse_utterance
@@ -941,7 +941,7 @@ def test_raises_on_invalid_json_when_nontrivial(mock_cls, concept):
 
 
 @patch("apollo.parser.parser_llm.cheap_chat")
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_returns_empty_on_invalid_json_when_trivial(mock_cls, mock_cheap, concept):
     """Non-JSON LLM content + trivial prose => ([], []) (no raise, unchanged)."""
     from apollo.parser.parser_llm import parse_utterance
@@ -956,7 +956,7 @@ def test_returns_empty_on_invalid_json_when_trivial(mock_cls, mock_cheap, concep
     assert (nodes, edges) == ([], [])
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_node_parser_confidence_still_propagates(mock_cls, concept):
     """The P1 confidence contract still holds under the strict-schema path."""
     from apollo.parser.parser_llm import parse_utterance
@@ -973,7 +973,7 @@ def test_node_parser_confidence_still_propagates(mock_cls, concept):
     assert nodes[0].parser_confidence == pytest.approx(0.45)
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_is_pure_function_replay(mock_cls, concept):
     """Same canned response twice => structurally-equal edge topology +
     provenance (node ids differ only by the uuid4 fallback)."""
@@ -1043,7 +1043,7 @@ def test_render_graph_context_injected_into_user_message(concept):
     ctx = GraphContext(
         nodes=(ContextNode(node_id="eq_prev", node_type="equation", label="bernoulli"),)
     )
-    with patch("apollo.parser.parser_llm.OpenAI") as mock_cls:
+    with patch("apollo.parser.parser_llm.bounded_client") as mock_cls:
         from apollo.parser.parser_llm import parse_utterance
 
         client = _mock_client(entries=[_COND], edges=[])
@@ -1080,7 +1080,7 @@ def test_prompt_builder_guard_still_passes(concept):
 # compacted target index. (Pre-WU-2B the fallback zipped raw_entries with the
 # COMPACTED nodes list and indexed `nodes[o]`, which mis-targeted on a skip.)
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_uses_fallback_survives_malformed_entry_before_equation(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
@@ -1109,7 +1109,7 @@ def test_uses_fallback_survives_malformed_entry_before_equation(mock_cls, concep
     assert uses[0].to_node_type == "equation"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_uses_fallback_no_malformed_entry_unchanged(mock_cls, concept):
     """Control: with no skipped entry, the happy-path USES fallback still
     produces the single correct edge."""
@@ -1132,7 +1132,7 @@ def test_uses_fallback_no_malformed_entry_unchanged(mock_cls, concept):
     assert uses[0].to_node_id == eq_node.node_id
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_uses_fallback_ordinal_to_non_equation_is_dropped(mock_cls, concept):
     """An ordinal pointing at a non-equation node yields no USES edge."""
     from apollo.parser.parser_llm import parse_utterance
@@ -1149,7 +1149,7 @@ def test_uses_fallback_ordinal_to_non_equation_is_dropped(mock_cls, concept):
     assert _find(edges, EdgeType.USES) == []
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_uses_fallback_out_of_range_ordinal_dropped(mock_cls, concept):
     """An ordinal with no matching original-index node is dropped (no IndexError)."""
     from apollo.parser.parser_llm import parse_utterance
@@ -1166,7 +1166,7 @@ def test_uses_fallback_out_of_range_ordinal_dropped(mock_cls, concept):
     assert _find(edges, EdgeType.USES) == []
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_uses_fallback_non_list_ordinals_skipped(mock_cls, concept):
     """A malformed (non-list) `uses_equation_ordinals` yields no USES edge."""
     from apollo.parser.parser_llm import parse_utterance

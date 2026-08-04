@@ -21,6 +21,7 @@ Heavy imports (retrieval, ai/main_ai, citations, DB models) are deferred into
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from dataclasses import dataclass
@@ -332,8 +333,8 @@ async def answer_reference_question(
     # against the "course/textbook" placeholder and rejects in-scope questions
     # on phrasing alone (2026-07-30 surveillance-tools aside bug).
     subject = await _course_subject(db, course_id=course_id)
-    relevance = check_question_relevance(
-        question, subject=subject, current_topic=_topic_hint(problem)
+    relevance = await asyncio.to_thread(
+        check_question_relevance, question, subject=subject, current_topic=_topic_hint(problem)
     )
     if relevance["relevance"] == "none":
         return ReferenceAsideResult(in_scope=False, text=_OUT_OF_SCOPE_TEXT, citations=[])
@@ -342,7 +343,9 @@ async def answer_reference_question(
     if relevance["relevance"] == "partial" and relevance.get("on_topic_portion"):
         keyword_query = relevance["on_topic_portion"]
     try:
-        _ctx_summary, filtered_terms = extract_and_filter_keywords(keyword_query, subject=subject)
+        _ctx_summary, filtered_terms = await asyncio.to_thread(
+            extract_and_filter_keywords, keyword_query, subject=subject
+        )
     except Exception:  # noqa: BLE001 - keyword hints are optional, never fatal
         filtered_terms = []
     keywords: list[str] = []
@@ -394,10 +397,11 @@ async def answer_reference_question(
     )
 
     try:
-        parsed_task = parse_question(question)
+        parsed_task = await asyncio.to_thread(parse_question, question)
     except ValueError:
         parsed_task = ParsedTask(problem_type="conceptual", asked_outputs=[question])
-    solution = solve_with_bundle(
+    solution = await asyncio.to_thread(
+        solve_with_bundle,
         parsed_task,
         bundle,
         system_prompt_override=apollo_aside_prompt(),

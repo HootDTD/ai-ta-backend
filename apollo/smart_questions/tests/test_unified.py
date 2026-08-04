@@ -393,7 +393,7 @@ def test_prompt_hygiene_schema_and_model_call(monkeypatch):
     monkeypatch.delenv("APOLLO_UNIFIED_QUESTION_REASONING_EFFORT", raising=False)
     monkeypatch.setattr(
         unified,
-        "OpenAI",
+        "bounded_client",
         lambda: SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
     )
     unified._call_unified(payload={})

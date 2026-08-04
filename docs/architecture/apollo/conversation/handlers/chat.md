@@ -15,7 +15,7 @@ related:
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
   - apollo/persistence/neo4j-client
-last_verified: 2026-08-01
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -53,6 +53,12 @@ Ordered turn:
 4. **Teaching path**: read the current subgraph (`_read_graph_or_empty`), project
    it via `build_graph_context` (`parser/graph-context`), then `parse_utterance`
    (`parser/parser-llm`) → nodes/edges.
+
+Both LLM calls on this path — `classify_intent` (step 3) and `parse_utterance`
+(step 4) — run via `await asyncio.to_thread(...)` (2026-08-04). Each was
+previously a synchronous OpenAI call made directly inside this `async def`
+handler, blocking the single uvicorn event loop for the call's duration; every
+other in-flight Apollo request on that worker stalled until it returned.
 5. **KG write** (`_write_kg_or_skip`): `write_nodes`/`write_edges` on `KGStore`;
    returns genuinely-new node count.
 6. **Questioning**: build the full transcript and call `plan_next_question`

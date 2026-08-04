@@ -7,7 +7,7 @@ owns:
 related:
   - platform/http-server
   - knowledge/teacher-weekly
-last_verified: 2026-07-25
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -19,7 +19,11 @@ ingestion logic.
 ## Interface
 
 - `Procfile` declares:
-  - `web: uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}` — the API.
+  - `web: uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000} --workers
+    ${WEB_CONCURRENCY:-4}` — the API, now multiple worker processes (default 4;
+    tunable via `WEB_CONCURRENCY`), each its own event loop — one hung
+    synchronous call inside a request handler no longer freezes every
+    concurrent Apollo turn on the replica (2026-08-04, `perf/apollo-event-loop-concurrency`).
   - `worker: python -m teacher_upload_worker` — the ingestion drainer.
 - `teacher_upload_worker.py::main()` — configures root logging, constructs a
   `TeacherWeeklyStorage()`, and calls `run_upload_worker_loop()`; guarded by

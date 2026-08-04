@@ -25,8 +25,7 @@ import logging
 import os
 from typing import Any, Dict, List
 
-from openai import OpenAI
-
+from apollo.agent._llm import bounded_client
 from config import models
 
 _LOG = logging.getLogger(__name__)
@@ -152,7 +151,7 @@ def draft_reply(
         },
     )
 
-    client = OpenAI()
+    client = bounded_client()
     resp = client.chat.completions.create(
         model=used_model,
         messages=messages,

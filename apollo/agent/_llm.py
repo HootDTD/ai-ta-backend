@@ -24,9 +24,28 @@ _LOG = logging.getLogger(__name__)
 
 _CHEAP_MODEL_DEFAULT = "gpt-4o-mini"
 
+_TIMEOUT_ENV = "APOLLO_OPENAI_TIMEOUT_S"
+_TIMEOUT_DEFAULT_S = 90.0
+_MAX_RETRIES_ENV = "APOLLO_OPENAI_MAX_RETRIES"
+_MAX_RETRIES_DEFAULT = 1
+
+
+def bounded_client() -> OpenAI:
+    """OpenAI client with an explicit request timeout and retry cap.
+
+    The SDK defaults (600 s timeout, 2 retries) let one hung request freeze
+    an Apollo turn for many minutes. Every Apollo OpenAI client is built
+    here so the tail stays bounded and tunable per environment. A per-call
+    ``timeout=`` still overrides the client-level value.
+    """
+    return OpenAI(
+        timeout=float(os.getenv(_TIMEOUT_ENV) or _TIMEOUT_DEFAULT_S),
+        max_retries=int(os.getenv(_MAX_RETRIES_ENV) or _MAX_RETRIES_DEFAULT),
+    )
+
 
 def _client() -> OpenAI:
-    return OpenAI()
+    return bounded_client()
 
 
 def _resolve_model(env_var: str, fallback: str) -> str:
@@ -96,4 +115,4 @@ def main_chat(
     return resp.choices[0].message.content or ""
 
 
-__all__ = ["cheap_chat", "main_chat"]
+__all__ = ["bounded_client", "cheap_chat", "main_chat"]

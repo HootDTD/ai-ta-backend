@@ -93,7 +93,7 @@ def _mock_reply(text: str):
     return MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_generate_diagnostic_appends_negotiation_line_when_present(mock_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("Solid teach.")
@@ -112,7 +112,7 @@ def test_generate_diagnostic_appends_negotiation_line_when_present(mock_cls):
     assert feedback is None
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_generate_diagnostic_omits_negotiation_line_when_zero(mock_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("Looks good.")

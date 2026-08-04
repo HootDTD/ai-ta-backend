@@ -12,7 +12,7 @@ related:
   - apollo/overseer/problem-selector
   - apollo/persistence/models
   - apollo/schemas/problem
-last_verified: 2026-07-31
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -27,7 +27,9 @@ search_space_id)`, create a `TEACHING`-phase `TutoringSession` + its first
 
 - `init_session_from_hoot(*, db, user_id, search_space_id, hoot_transcript,
   difficulty) -> dict` — the original Hoot→Apollo handoff. The transcript is used
-  for **exactly one thing**: `infer_concept_id` picks the concept.
+  for **exactly one thing**: `infer_concept_id` picks the concept, called via
+  `await asyncio.to_thread(infer_concept_id, ...)` (2026-08-04) so this LLM call
+  no longer blocks the event loop while session start waits on it.
 - `init_session_direct(*, db, user_id, search_space_id, concept_id, difficulty,
   problem_id=None) -> dict` — the WU-E2E standalone entry: the student explicitly
   picks `concept_id` (validated against the course's teachable set) and optionally

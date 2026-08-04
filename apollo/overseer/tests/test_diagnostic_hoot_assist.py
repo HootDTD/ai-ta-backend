@@ -82,7 +82,7 @@ def _structured_reply() -> str:
     )
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_topic_feedback_carries_hoot_assisted_flag_per_topic(mock_client_cls):
     mock_client_cls.return_value = _mock_client_returning(_structured_reply())
 
@@ -100,7 +100,7 @@ def test_topic_feedback_carries_hoot_assisted_flag_per_topic(mock_client_cls):
     assert by_key["p2"]["hoot_assisted"] is False
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_topic_feedback_flags_false_when_no_topic_assisted(mock_client_cls):
     mock_client_cls.return_value = _mock_client_returning(_structured_reply())
 

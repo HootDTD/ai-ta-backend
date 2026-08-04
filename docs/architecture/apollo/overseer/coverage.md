@@ -7,7 +7,7 @@ related:
   - apollo/overseer/transcript-coverage
   - apollo/resolution/content-tiers
   - apollo/solver/sympy-exec
-last_verified: 2026-07-25
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -30,7 +30,9 @@ stub: false
 Compares a frozen student `KGGraph` against the reference `KGGraph`: one batched
 binary LLM call per binary type (equation / condition / simplification) plus one
 procedure-match call per procedure step, run concurrently via `asyncio.to_thread`
-and `gather`. Equation verdicts pass through a SymPy sign pre-gate reusing
+and `gather`. Both call sites build their client via `bounded_client()`
+(`agent/llm-client`, 2026-08-04 — was a bare `OpenAI()`) even though this module
+is dormant on the live grading path. Equation verdicts pass through a SymPy sign pre-gate reusing
 `solver.sympy_exec.parse_zero_form` and `resolution.tiers` helpers
 (`_extended_locals` / `_symbolic_equiv` / `_zero_form` / `student_surface_text`).
 `negotiation_counts` are derived from student-node `DUAL`/`DISPUTED` status.
