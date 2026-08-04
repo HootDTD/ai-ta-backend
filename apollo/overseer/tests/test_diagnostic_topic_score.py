@@ -70,7 +70,7 @@ def _structured_reply(*, quote: str | None = "I applied continuity.") -> str:
     )
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_no_topic_score_uses_axis_prompt(mock_client_cls):
     client = _mock_client_returning("axis narrative")
     mock_client_cls.return_value = client
@@ -87,7 +87,7 @@ def test_no_topic_score_uses_axis_prompt(mock_client_cls):
     assert "reference_required_entries" in user_msg["content"]
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_none_topic_score_falls_back_to_axis_prompt(mock_client_cls):
     """``topic_score=None`` (compute_topic_score soft-failed) -> the axis-based
     prompt is used (never crash on a missing ledger)."""
@@ -106,7 +106,7 @@ def test_none_topic_score_falls_back_to_axis_prompt(mock_client_cls):
     assert "reference_required_entries" in user_msg["content"]
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_topic_score_uses_ledger_grounded_prompt(mock_client_cls):
     client = _mock_client_returning(_structured_reply())
     mock_client_cls.return_value = client
@@ -133,7 +133,7 @@ def test_topic_score_uses_ledger_grounded_prompt(mock_client_cls):
     assert called.kwargs["response_format"]["json_schema"]["strict"] is True
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_structured_success_returns_feedback_and_flattened_narrative(mock_client_cls):
     client = _mock_client_returning(_structured_reply())
     mock_client_cls.return_value = client
@@ -166,7 +166,7 @@ def test_structured_success_returns_feedback_and_flattened_narrative(mock_client
     )
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_json_parse_failure_soft_fails_to_legacy_narrative(mock_client_cls):
     client = _mock_client_returning("legacy ledger narrative")
     mock_client_cls.return_value = client
@@ -208,7 +208,7 @@ def test_json_parse_failure_soft_fails_to_legacy_narrative(mock_client_cls):
         {"headline": "Headline", "topic_feedback": [], "next_step": "Next"},
     ],
 )
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_json_validation_failure_soft_fails_without_a_second_completion(
     mock_client_cls,
     payload,
@@ -247,7 +247,7 @@ def test_unexpected_topic_feedback_failure_never_escapes(_mock_prompt):
     assert feedback is None
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_quote_mismatch_is_nulled_without_rejecting_feedback(mock_client_cls):
     client = _mock_client_returning(_structured_reply(quote="I invented this quote."))
     mock_client_cls.return_value = client
@@ -264,7 +264,7 @@ def test_quote_mismatch_is_nulled_without_rejecting_feedback(mock_client_cls):
     assert feedback["topic_feedback"][0]["quote"] is None
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_topic_score_recap_lines_are_deterministic_and_code_appended(mock_client_cls):
     """The model shape has no recap; code appends current helper outputs."""
     client = _mock_client_returning(_structured_reply())

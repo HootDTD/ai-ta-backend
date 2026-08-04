@@ -36,7 +36,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from openai import OpenAI
 from sympy import simplify
 from sympy.parsing.sympy_parser import (
     convert_xor,
@@ -44,6 +43,7 @@ from sympy.parsing.sympy_parser import (
     standard_transformations,
 )
 
+from apollo.agent._llm import bounded_client
 from apollo.errors import CoverageGradingError
 from apollo.ontology import EdgeType, KGGraph, Node
 from apollo.resolution.tiers import (
@@ -177,7 +177,7 @@ def _batch_binary_match(
     }
 
     def _call() -> dict[str, dict[str, Any]]:
-        client = OpenAI()
+        client = bounded_client()
         resp = client.chat.completions.create(
             model=used_model,
             response_format={"type": "json_object"},
@@ -408,7 +408,7 @@ def _procedure_match_score(
     }
 
     def _call() -> tuple[float, float]:
-        client = OpenAI()
+        client = bounded_client()
         resp = client.chat.completions.create(
             model=used_model,
             response_format={"type": "json_object"},

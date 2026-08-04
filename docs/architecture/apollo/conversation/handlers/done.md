@@ -19,7 +19,7 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-07-28
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -72,7 +72,10 @@ Ordered grade assembly (each step delegates to the owner doc):
    verbatim utterances; the same `course_evidence` lets feedback cite the course.
    With `INTERACTION3` enabled and the problem concept
    allowed by `INTERACTION_CONCEPTS`, one best-effort remediation pass decorates
-   at most three weak topics with citation-only review pointers.
+   at most three weak topics with citation-only review pointers. Called via
+   `await asyncio.to_thread(generate_diagnostic, ...)` (2026-08-04) — previously
+   a synchronous call inside this `async def` handler that blocked the event loop
+   for the narrative LLM's full round trip.
 7. XP: `compute_xp_earned`/`compute_progress_envelope`/`apply_xp`
    (`overseer/xp` + `persistence/progress-repo`); reattempt detection via
    `has_prior_graded_attempt` (`persistence/done-write-linkage`).

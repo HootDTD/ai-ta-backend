@@ -112,7 +112,7 @@ async def test_full_credit_maps_to_contract_and_calls_once():
         ]
     }
     client = _client(payload)
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=client):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
         result = await compute_transcript_coverage(
             [("student", "I integrate now")], _graph(), _problem()
         )
@@ -142,7 +142,7 @@ async def test_span_mismatch_does_not_zero_credit():
             }
         ]
     }
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
         result = await compute_transcript_coverage(
             [("apollo", "Apollo only"), ("student", "no")], _graph(), _problem()
         )
@@ -152,7 +152,7 @@ async def test_span_mismatch_does_not_zero_credit():
 
 @pytest.mark.asyncio
 async def test_empty_output_raises_named_error():
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client({})):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client({})):
         with pytest.raises(CoverageGradingError):
             await compute_transcript_coverage([], _graph(), _problem())
 
@@ -175,7 +175,7 @@ async def test_continuous_credit_passes_through_untouched():
             }
         ]
     }
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
         result = await compute_transcript_coverage(
             [("student", "I integrate both sides")], _graph(), _problem()
         )
@@ -201,7 +201,7 @@ async def test_basis_no_longer_overrides_credit():
             }
         ]
     }
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
         result = await compute_transcript_coverage(
             [("student", "I integrate")], _graph(), _problem()
         )
@@ -224,7 +224,7 @@ async def test_sub_half_credit_is_missing_in_per_step_but_raw_in_procedure_score
             }
         ]
     }
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
         result = await compute_transcript_coverage(
             [("student", "I integrate")], _graph(), _problem()
         )
@@ -247,7 +247,7 @@ async def test_missing_basis_raises_named_error():
             }
         ]
     }
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
         with pytest.raises(CoverageGradingError):
             await compute_transcript_coverage([("student", "I integrate")], _graph(), _problem())
 
@@ -255,7 +255,7 @@ async def test_missing_basis_raises_named_error():
 @pytest.mark.asyncio
 async def test_verdicts_not_a_list_raises_named_error():
     with patch(
-        "apollo.overseer.transcript_coverage.OpenAI", return_value=_client({"verdicts": {}})
+        "apollo.overseer.transcript_coverage.bounded_client", return_value=_client({"verdicts": {}})
     ):
         with pytest.raises(CoverageGradingError):
             await compute_transcript_coverage([], _graph(), _problem())
@@ -272,7 +272,7 @@ def _raw_client(raw_content):
 @pytest.mark.asyncio
 async def test_nan_credit_raises_named_error_via_finite01_guard():
     raw = '{"verdicts": [{"node_id": "p1", "covered": true, "credit": NaN, "confidence": 0.9, "evidence_span": "I integrate", "prompted": false, "corrected_later": false, "basis": "stated"}]}'
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_raw_client(raw)):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_raw_client(raw)):
         with pytest.raises(CoverageGradingError):
             await compute_transcript_coverage(
                 [("student", "I integrate now")], _graph(), _problem()
@@ -300,7 +300,7 @@ async def test_retry_path_succeeds_after_first_call_raises():
         RuntimeError("boom"),
         client.chat.completions.create.return_value,
     ]
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=client):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
         result = await compute_transcript_coverage(
             [("student", "I integrate now")], _graph(), _problem()
         )
@@ -312,7 +312,7 @@ async def test_retry_path_succeeds_after_first_call_raises():
 async def test_retry_path_exhausted_raises_named_error_after_two_attempts():
     client = MagicMock()
     client.chat.completions.create.side_effect = RuntimeError("boom")
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=client):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
         with pytest.raises(CoverageGradingError):
             await compute_transcript_coverage(
                 [("student", "I integrate now")], _graph(), _problem()
@@ -390,7 +390,7 @@ async def test_with_spans_returns_contract_coverage_plus_gated_spans():
         ]
     }
     client = _client(payload)
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=client):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
         coverage, spans = await compute_transcript_coverage_with_spans(
             [("student", "I integrate now")], _graph(), _problem()
         )

@@ -71,7 +71,7 @@ def _mock_openai_always(payload: str):
 # ---- compute_coverage end-to-end ----------------------------------------
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_compute_coverage_batches_binary_calls(mock_client_cls):
     """One LLM call per binary type, regardless of how many ref nodes."""
@@ -112,7 +112,7 @@ def test_compute_coverage_batches_binary_calls(mock_client_cls):
     assert result["confidences"]["ref_continuity"] == 0.9
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_low_confidence_covered_downgraded_to_missing(mock_client_cls):
     """Below-floor confidence on covered=true => downgraded to missing
@@ -138,7 +138,7 @@ def test_low_confidence_covered_downgraded_to_missing(mock_client_cls):
     assert result["confidences"]["ref_eq1"] == 0.2
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_empty_student_short_circuits_without_llm(mock_client_cls):
     """No student equations of a type => no LLM call needed; all missing."""
@@ -159,7 +159,7 @@ def test_empty_student_short_circuits_without_llm(mock_client_cls):
     assert client.chat.completions.create.call_count == 0
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_retry_on_transient_then_succeeds(mock_client_cls):
     """First call raises; second succeeds. Final result is the success."""
@@ -186,7 +186,7 @@ def test_retry_on_transient_then_succeeds(mock_client_cls):
     assert client.chat.completions.create.call_count == 2  # retry once
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_retry_exhausted_raises_coverage_grading_error(mock_client_cls):
     """All N attempts fail => CoverageGradingError, no silent downgrade."""
@@ -208,7 +208,7 @@ def test_retry_exhausted_raises_coverage_grading_error(mock_client_cls):
 # ---- _batch_binary_match unit tests -------------------------------------
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_batch_returns_verdict_per_ref_id(mock_client_cls):
     payload = json.dumps(
@@ -233,7 +233,7 @@ def test_batch_returns_verdict_per_ref_id(mock_client_cls):
     assert result["b"]["covered"] is False
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_batch_fills_missing_ref_with_not_covered(mock_client_cls):
     """If LLM returns matches for fewer ref_ids than asked, fill the
@@ -283,7 +283,7 @@ def test_batch_with_no_student_short_circuits_to_all_missing():
 # ---- procedure scoring with retry / confidence --------------------------
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_procedure_score_with_confidence(mock_client_cls):
     payload = json.dumps({"score": 0.8, "confidence": 0.9})
@@ -298,7 +298,7 @@ def test_procedure_score_with_confidence(mock_client_cls):
     assert result["per_step"]["r1"] == "covered"
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 @patch("apollo.overseer.coverage.time.sleep", lambda *_: None)
 def test_procedure_retry_exhausted_raises(mock_client_cls):
     client = MagicMock()

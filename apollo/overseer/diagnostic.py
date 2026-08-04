@@ -27,8 +27,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from openai import OpenAI
-
+from apollo.agent._llm import bounded_client
 from apollo.overseer.topic_narrative import build_topic_narrative_prompt, sanitize_narrative
 from apollo.overseer.topic_score import TopicScoreResult
 from config.models import MAIN_MODEL
@@ -181,7 +180,7 @@ def _generate_diagnostic(
         user_content = json.dumps(user_payload)
 
     try:
-        client = OpenAI()
+        client = bounded_client()
         completion_kwargs: dict[str, Any] = {
             "model": model,
             "messages": [

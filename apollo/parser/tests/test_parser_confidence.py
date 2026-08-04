@@ -123,7 +123,7 @@ def concept():
     return load_concept("fluid_mechanics", "bernoulli_principle")
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_utterance_propagates_confidence(mock_client_cls, concept):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_openai_response([
@@ -145,7 +145,7 @@ def test_parse_utterance_propagates_confidence(mock_client_cls, concept):
     assert nodes[0].parser_confidence == pytest.approx(0.45)
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_utterance_legacy_response_defaults_to_one(mock_client_cls, concept):
     """Pre-P1 prompt versions did not include `confidence`. Behavior is
     identical to today: nodes carry confidence 1.0 and never trigger the

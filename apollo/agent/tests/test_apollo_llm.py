@@ -38,7 +38,7 @@ def test_system_prompt_promotes_introspection_not_premature_confidence():
     assert "get it" not in lower or "if i had" in lower or "chain break" in lower or "gap" in lower
 
 
-@patch("apollo.agent.apollo_llm.OpenAI")
+@patch("apollo.agent.apollo_llm.bounded_client")
 def test_draft_reply_returns_string(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("What does that mean?")
@@ -51,7 +51,7 @@ def test_draft_reply_returns_string(mock_client_cls):
     assert out == "What does that mean?"
 
 
-@patch("apollo.agent.apollo_llm.OpenAI")
+@patch("apollo.agent.apollo_llm.bounded_client")
 def test_draft_reply_passes_kg_summary_to_llm(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("ok")
@@ -118,7 +118,7 @@ def test_system_prompt_distinguishes_plan_from_subject_questions():
 # ── Item #2: history summary + token budget + model env ────────────────────
 
 
-@patch("apollo.agent.apollo_llm.OpenAI")
+@patch("apollo.agent.apollo_llm.bounded_client")
 def test_draft_reply_includes_history_summary_when_provided(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("ok")
@@ -134,7 +134,7 @@ def test_draft_reply_includes_history_summary_when_provided(mock_client_cls):
     assert "EARLIER_SUMMARY_SENTINEL" in joined
 
 
-@patch("apollo.agent.apollo_llm.OpenAI")
+@patch("apollo.agent.apollo_llm.bounded_client")
 def test_draft_reply_omits_history_summary_block_when_none(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("ok")
@@ -146,7 +146,7 @@ def test_draft_reply_omits_history_summary_block_when_none(mock_client_cls):
     assert not any("Earlier-conversation summary" in c for c in contents)
 
 
-@patch("apollo.agent.apollo_llm.OpenAI")
+@patch("apollo.agent.apollo_llm.bounded_client")
 def test_draft_reply_uses_apollo_model_env_when_set(mock_client_cls, monkeypatch):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("ok")
@@ -159,7 +159,7 @@ def test_draft_reply_uses_apollo_model_env_when_set(mock_client_cls, monkeypatch
     assert used_model == "gpt-4o-mini"
 
 
-@patch("apollo.agent.apollo_llm.OpenAI")
+@patch("apollo.agent.apollo_llm.bounded_client")
 def test_draft_reply_falls_back_to_main_model(mock_client_cls, monkeypatch):
     """With no APOLLO_MODEL override, drafts use the pinned config.models.MAIN_MODEL."""
     client = MagicMock()
@@ -174,7 +174,7 @@ def test_draft_reply_falls_back_to_main_model(mock_client_cls, monkeypatch):
     assert used_model == "gpt-4o-2024-11-20"
 
 
-@patch("apollo.agent.apollo_llm.OpenAI")
+@patch("apollo.agent.apollo_llm.bounded_client")
 def test_draft_reply_explicit_model_arg_wins(mock_client_cls, monkeypatch):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("ok")
@@ -186,7 +186,7 @@ def test_draft_reply_explicit_model_arg_wins(mock_client_cls, monkeypatch):
     assert used_model == "explicit"
 
 
-@patch("apollo.agent.apollo_llm.OpenAI")
+@patch("apollo.agent.apollo_llm.bounded_client")
 def test_draft_reply_raises_on_token_overflow(mock_client_cls):
     """Pathological prompt size raises rather than silently truncating."""
     client = MagicMock()
@@ -237,7 +237,7 @@ class _CaptureClient:
 
 
 def test_draft_reply_includes_problem_and_kg_only(monkeypatch):
-    monkeypatch.setattr(apollo_llm, "OpenAI", _CaptureClient)
+    monkeypatch.setattr(apollo_llm, "bounded_client", _CaptureClient)
     reply = apollo_llm.draft_reply(
         history=[{"role": "user", "content": "pressure plus half rho v squared is constant"}],
         kg_summary="equation: P + 1/2 rho v^2 = const",

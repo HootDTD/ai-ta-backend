@@ -9,6 +9,7 @@ augmentations come from the concept registry, not from this file.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -526,7 +527,8 @@ async def handle_done(
         _LOG.warning("apollo_narrative_utterances_fetch_failed attempt_id=%s", attempt.id)
         narrative_utterances = ()
 
-    diagnostic_result = generate_diagnostic(
+    diagnostic_result = await asyncio.to_thread(
+        generate_diagnostic,
         coverage=coverage,
         reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,

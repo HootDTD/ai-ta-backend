@@ -12,8 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from openai import OpenAI
-
+from apollo.agent._llm import bounded_client
 from apollo.ontology import KGGraph
 
 LearnerState = Literal["understood", "tentative", "missing", "conflicting"]
@@ -214,7 +213,7 @@ def _is_reasoning_model(model: str) -> bool:
 def _call_unified(
     *, payload: dict[str, Any], messages: Sequence[dict[str, str]] | None = None
 ) -> str:
-    client: Any = OpenAI()
+    client: Any = bounded_client()
     model = os.getenv("APOLLO_UNIFIED_QUESTION_MODEL") or _DEFAULT_MODEL
     kwargs: dict[str, Any] = {
         "model": cast(Any, model),

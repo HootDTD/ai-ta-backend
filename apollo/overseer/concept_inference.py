@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 
-from openai import OpenAI
+from apollo.agent._llm import bounded_client
 
 try:
     from openai import APITimeoutError
@@ -54,7 +54,7 @@ def infer_concept_id(
     return null).
     """
     model = model or MAIN_MODEL
-    client = OpenAI()
+    client = bounded_client()
     user_content = json.dumps(
         {
             "transcript": transcript,

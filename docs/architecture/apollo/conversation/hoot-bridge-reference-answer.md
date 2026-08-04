@@ -8,7 +8,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/handlers/done
   - apollo/conversation/session-init
-last_verified: 2026-08-01
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -107,6 +107,13 @@ only persistence, written by the caller):
    `_structured_citations_from_bundle`, via `citations.formatter`) — kept
    local rather than imported from `server.py`, which this module must not
    route through (brief: no `/ask`, no `ai/router` wiring).
+
+Every synchronous LLM call in this compose (`check_question_relevance` step 1,
+`extract_and_filter_keywords` step 2, `parse_question` and `solve_with_bundle`
+step 4) now runs via `await asyncio.to_thread(...)` (2026-08-04) — this whole
+aside lane was previously invoked synchronously inside `handlers/chat`'s `async
+def handle_chat`, so a slow ask-Hoot lookup blocked the event loop for every
+other in-flight Apollo turn on the worker.
 
 ## Invariants & gotchas
 

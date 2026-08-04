@@ -179,7 +179,7 @@ def test_schema_gains_hoot_assisted_only_when_included():
 async def test_asides_carry_hoot_assisted_true_through_coverage():
     payload = {"verdicts": [_verdict_item(hoot_assisted=True)]}
     client = _client(payload)
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=client):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
         coverage, spans = await compute_transcript_coverage_with_spans(
             list(_TRANSCRIPT), _graph(), _Problem(), hoot_asides=_ASIDES
         )
@@ -195,7 +195,7 @@ async def test_hoot_assisted_defaults_false_when_absent_in_response():
     """Under the asides (include) path, a verdict that omits the field defaults
     to False rather than raising."""
     payload = {"verdicts": [_verdict_item()]}  # no hoot_assisted key
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
         coverage, _ = await compute_transcript_coverage_with_spans(
             list(_TRANSCRIPT), _graph(), _Problem(), hoot_asides=_ASIDES
         )
@@ -205,7 +205,7 @@ async def test_hoot_assisted_defaults_false_when_absent_in_response():
 @pytest.mark.asyncio
 async def test_non_bool_hoot_assisted_raises_named_error():
     payload = {"verdicts": [_verdict_item(hoot_assisted="yes")]}
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
         with pytest.raises(CoverageGradingError):
             await compute_transcript_coverage_with_spans(
                 list(_TRANSCRIPT), _graph(), _Problem(), hoot_asides=_ASIDES
@@ -216,7 +216,7 @@ async def test_non_bool_hoot_assisted_raises_named_error():
 async def test_no_asides_coverage_has_no_hoot_assisted_key_and_uses_base_schema():
     payload = {"verdicts": [_verdict_item(credit=0.7)]}
     client = _client(payload)
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=client):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
         coverage, spans = await compute_transcript_coverage_with_spans(
             list(_TRANSCRIPT), _graph(), _Problem()
         )

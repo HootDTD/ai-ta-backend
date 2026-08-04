@@ -79,7 +79,7 @@ def _mock_reply(text: str):
     return fake
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_generate_diagnostic_appends_line_when_detected(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply(
@@ -99,7 +99,7 @@ def test_generate_diagnostic_appends_line_when_detected(mock_client_cls):
     assert feedback is None
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_generate_diagnostic_omits_line_when_no_detection(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("Looks good.")

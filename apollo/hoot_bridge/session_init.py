@@ -285,7 +285,8 @@ async def init_session_from_hoot(
         )
 
     candidates = await list_course_concepts(db, search_space_id=search_space_id)
-    concept_id = infer_concept_id(
+    concept_id = await asyncio.to_thread(
+        infer_concept_id,
         transcript=hoot_transcript,
         candidates=candidates,
     )

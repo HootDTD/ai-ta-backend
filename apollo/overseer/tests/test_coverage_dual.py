@@ -105,7 +105,7 @@ def _build_graph(nodes, edges=None):
     return KGGraph(nodes=nodes, edges=edges or [])
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_dual_paraphrase_payload_reaches_llm(mock_client_cls):
     """Spy on the LLM call: the JSON body must include student_belief
     on the DUAL student entry."""
@@ -147,7 +147,7 @@ def test_dual_paraphrase_payload_reaches_llm(mock_client_cls):
     assert cov["per_step"]["r1"] == "covered"
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_accepted_payload_byte_identical_to_pre_p3(mock_client_cls):
     """Pre-P3 baseline: all-ACCEPTED student graph produces exactly the
     same payload as before P3.4 — no `student_belief` keys leak in."""
@@ -176,7 +176,7 @@ def test_accepted_payload_byte_identical_to_pre_p3(mock_client_cls):
     assert "student_belief" not in se
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_negotiation_counts_in_coverage_output(mock_client_cls):
     """compute_coverage exposes per-status counts so diagnostic.py can
     narrate "you negotiated N entries" without re-walking the graph."""
@@ -219,7 +219,7 @@ def test_negotiation_counts_in_coverage_output(mock_client_cls):
     assert counts["skipped"] == 1
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_negotiation_counts_zero_on_pre_p3_graph(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = MagicMock(
@@ -239,7 +239,7 @@ def test_negotiation_counts_zero_on_pre_p3_graph(mock_client_cls):
     }
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_dual_procedure_step_action_substitution_reaches_llm(mock_client_cls):
     """For procedure_step, the action field gets substituted with the
     student's belief — verifying the matcher gets the student's wording

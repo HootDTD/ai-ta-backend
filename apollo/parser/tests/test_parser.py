@@ -40,7 +40,7 @@ def _mock_openai_response(entries: list) -> MagicMock:
     return fake
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_returns_extracted_entries(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_openai_response([
@@ -53,7 +53,7 @@ def test_parse_returns_extracted_entries(mock_client_cls):
     assert result[0]["type"] == "equation"
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_raises_on_empty_extraction_from_nontrivial(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_openai_response([])
@@ -63,7 +63,7 @@ def test_parse_raises_on_empty_extraction_from_nontrivial(mock_client_cls):
         parse_utterance("pressure plus one-half rho v squared is constant")
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_returns_empty_on_trivial_acknowledgement(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_openai_response([])
@@ -74,7 +74,7 @@ def test_parse_returns_empty_on_trivial_acknowledgement(mock_client_cls):
     assert result == []
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parse_filters_malformed_entries(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_openai_response([
@@ -88,7 +88,7 @@ def test_parse_filters_malformed_entries(mock_client_cls):
     assert len(result) == 1
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parser_extracts_procedure_step_entries(mock_client_cls):
     payload = (
         '{"entries": [{"type": "procedure_step", "content": '
@@ -121,7 +121,7 @@ def test_is_non_trivial_detects_plan_speak():
     assert not _is_non_trivial("that all makes perfect sense to me now")
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parser_raises_on_empty_extraction_from_plan_speak(mock_client_cls):
     fake_resp = MagicMock()
     fake_resp.choices = [MagicMock(message=MagicMock(content='{"entries": []}'))]
@@ -133,7 +133,7 @@ def test_parser_raises_on_empty_extraction_from_plan_speak(mock_client_cls):
         parse_utterance("first I would do some thing then the next step is another thing")
 
 
-@patch("apollo.parser.parser_llm.OpenAI")
+@patch("apollo.parser.parser_llm.bounded_client")
 def test_parser_extracts_mixed_equation_and_procedure_step(mock_client_cls):
     payload = (
         '{"entries": ['

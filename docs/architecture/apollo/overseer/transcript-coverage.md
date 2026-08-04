@@ -13,7 +13,7 @@ related:
   - apollo/overseer/aside-penalty
   - apollo/ontology/graph
   - apollo/conversation/handlers/done
-last_verified: 2026-07-28
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -49,7 +49,8 @@ frozen KG, so a Neo4j-degraded Done still grades.
 
 `done.py` passes the full `(role, content)` transcript + the reference `KGGraph`.
 Only `_GRADED_NODE_TYPES` reference nodes become rubric items. One `MAIN_MODEL`
-structured call (temperature 0) returns per-node verdicts (covered / credit /
+structured call (temperature 0), made via `bounded_client()` (`agent/llm-client`,
+2026-08-04 — was a bare `OpenAI()`), returns per-node verdicts (covered / credit /
 confidence / evidence_span / basis). `_to_coverage_verdict` reduces them to
 `per_step` + `procedure_scores` + `confidences` + zeroed `negotiation_counts`,
 validated before return. `procedure_scores` (continuous credit) flow unchanged
