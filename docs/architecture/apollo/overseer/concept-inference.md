@@ -7,7 +7,7 @@ related:
   - apollo/overseer/problem-selector
   - apollo/conversation/curriculum/db
   - apollo/conversation/session-init
-last_verified: 2026-07-31
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -26,9 +26,13 @@ never sees this output — only the Overseer uses it to pick a problem.
 
 The handler threads in the course-scoped candidate list (`{concept_id,
 display_name}` from `app.concepts`, WU-3D §8A — no longer a hard-coded constant).
-One `MAIN_MODEL` `json_object` call (temperature 0) returns a single
+One `MAIN_MODEL` `json_object` call (temperature 0), made via `bounded_client()`
+(`agent/llm-client`, 2026-08-04 — was a bare `OpenAI()`), returns a single
 `concept_id`; the value is validated against the allowed id set before return.
-The provider request has a 30-second timeout.
+The provider request has a 30-second timeout — this call's own `timeout=` kwarg,
+which still overrides `bounded_client()`'s default. `hoot_bridge/session_init.py`
+now calls `infer_concept_id` via `asyncio.to_thread` (see `conversation/session-init`)
+so this call no longer blocks the event loop.
 
 ## Invariants & gotchas
 

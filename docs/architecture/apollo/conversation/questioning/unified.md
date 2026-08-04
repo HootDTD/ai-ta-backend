@@ -8,7 +8,7 @@ related:
   - apollo/conversation/agent/output-filter
   - apollo/ontology/graph
   - apollo/schemas/problem
-last_verified: 2026-07-25
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -30,7 +30,8 @@ A **single** LLM call both updates the durable per-node tally AND decides Apollo
 next move. The hard budget check comes first (`questions_asked >= cap` → `done`).
 It serializes the payload (public problem + `_public_question_parts` + private
 reference nodes/edges + `_serialize_tally` + budget + indexed transcript), calls
-`_call_unified` (`OpenAI` `json_schema` = `_schema()`; model from
+`_call_unified` (`bounded_client()` — `agent/llm-client`, 2026-08-04, was a bare
+`OpenAI()` — `json_schema` = `_schema()`; model from
 `APOLLO_UNIFIED_QUESTION_MODEL`; `reasoning_effort` set for reasoning models via
 `_is_reasoning_model`) on a thread. `_decode`/`_decode_updates` validate tally
 updates — every non-`missing` update needs a `_validated_evidence` verbatim

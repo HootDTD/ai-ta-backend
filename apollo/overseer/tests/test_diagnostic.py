@@ -34,7 +34,7 @@ def test_generate_diagnostic_narrates_without_solver(monkeypatch):
 
                     return _R()
 
-    monkeypatch.setattr(diagnostic, "OpenAI", _Client)
+    monkeypatch.setattr(diagnostic, "bounded_client", _Client)
 
     out, feedback = diagnostic.generate_diagnostic(
         coverage={"per_step": {"bernoulli": "missing"}, "procedure_scores": {}, "confidences": {}},
@@ -57,7 +57,7 @@ def _mock_reply(text: str) -> MagicMock:
     return fake
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_diagnostic_returns_string(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply(
@@ -88,7 +88,7 @@ def test_diagnostic_returns_string(mock_client_cls):
     assert feedback is None
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_diagnostic_prompt_includes_coverage_and_problem(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("ok")
@@ -111,7 +111,7 @@ def test_diagnostic_prompt_includes_coverage_and_problem(mock_client_cls):
     assert "missing" in joined.lower()
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_generate_diagnostic_passes_rubric_into_llm(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = MagicMock(
@@ -140,7 +140,7 @@ def test_generate_diagnostic_passes_rubric_into_llm(mock_client_cls):
     assert "78" in user_msg["content"]
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_generate_diagnostic_system_prompt_instructs_narrative_not_verdict(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = MagicMock(
@@ -172,7 +172,7 @@ def test_generate_diagnostic_system_prompt_instructs_narrative_not_verdict(mock_
     assert "do not re-grade" in sys_lower
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
 def test_generate_diagnostic_softfails_to_placeholder_on_llm_exception(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.side_effect = RuntimeError("network down")

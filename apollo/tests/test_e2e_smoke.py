@@ -79,11 +79,11 @@ def _mock_llm_response(text: str) -> MagicMock:
     return fake
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
-@patch("apollo.overseer.coverage.OpenAI")
-@patch("apollo.agent.apollo_llm.OpenAI")
-@patch("apollo.parser.parser_llm.OpenAI")
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
+@patch("apollo.overseer.coverage.bounded_client")
+@patch("apollo.agent.apollo_llm.bounded_client")
+@patch("apollo.parser.parser_llm.bounded_client")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_full_slice0a_happy_path(
     mock_infer_client_cls,
     mock_parser_client_cls,
@@ -243,7 +243,7 @@ def test_full_slice0a_happy_path(
     assert r.json()["status"] == "ended"
 
 
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_no_matching_concept_returns_409(mock_client_cls, app):
     client_mock = MagicMock()
     client_mock.chat.completions.create.return_value = _mock_llm_response('{"cluster_id": null}')
@@ -262,11 +262,11 @@ def test_no_matching_concept_returns_409(mock_client_cls, app):
     assert r.json()["error_code"] == "no_matching_concept"
 
 
-@patch("apollo.overseer.diagnostic.OpenAI")
-@patch("apollo.overseer.coverage.OpenAI")
-@patch("apollo.agent.apollo_llm.OpenAI")
-@patch("apollo.parser.parser_llm.OpenAI")
-@patch("apollo.overseer.concept_inference.OpenAI")
+@patch("apollo.overseer.diagnostic.bounded_client")
+@patch("apollo.overseer.coverage.bounded_client")
+@patch("apollo.agent.apollo_llm.bounded_client")
+@patch("apollo.parser.parser_llm.bounded_client")
+@patch("apollo.overseer.concept_inference.bounded_client")
 def test_e2e_switch_then_restart(
     mock_infer_client_cls,
     mock_parser_client_cls,

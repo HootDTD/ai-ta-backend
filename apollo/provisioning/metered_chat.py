@@ -72,9 +72,9 @@ def _resolve_model(env_var: str, fallback: str) -> str:
 
 
 def _make_default_client():  # pragma: no cover - exercised only when no client injected
-    from openai import OpenAI
+    from apollo.agent._llm import bounded_client
 
-    return OpenAI()
+    return bounded_client()
 
 
 class MeteredChat:

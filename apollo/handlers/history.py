@@ -14,6 +14,7 @@ turns recover.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -21,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.agent._llm import cheap_chat
-from apollo.persistence.models import TutoringSession, TutoringMessage
+from apollo.persistence.models import TutoringMessage, TutoringSession
 
 _LOG = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ async def load_windowed_history(
     )
 
     if needs_refresh:
-        new_summary = _summarize(older)
+        new_summary = await asyncio.to_thread(_summarize, older)
         if new_summary is not None:
             session.history_summary = new_summary
             session.history_summary_up_to_turn = last_older_turn

@@ -15,7 +15,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/ontology/nodes
   - apollo/ontology/edges
-last_verified: 2026-07-25
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -33,7 +33,8 @@ is empty glue).
 ## Data flow
 
 1. `_call_extraction`: **one** strict-`json_schema` GPT-4o call via a **direct
-   `OpenAI()` client** at `model=` arg or `config.models.MAIN_MODEL`;
+   `bounded_client()`** (`agent/llm-client`, 2026-08-04 — was a bare `OpenAI()`)
+   at `model=` arg or `config.models.MAIN_MODEL`;
    `response_format` = `extraction-schema.build_extraction_schema()`; system prompt
    = `build_system_prompt(concept)`; user message = `_render_graph_context` EXISTING
    GRAPH block + CURRENT MESSAGE.

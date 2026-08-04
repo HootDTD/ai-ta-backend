@@ -25,9 +25,7 @@ import logging
 import re
 import uuid
 
-from openai import OpenAI
-
-from apollo.agent._llm import cheap_chat
+from apollo.agent._llm import bounded_client, cheap_chat
 from apollo.errors import ParserCouldNotExtractError
 from apollo.ontology import (
     NODE_CONTENT_TYPES,
@@ -305,7 +303,7 @@ def _call_extraction(
 ) -> str:
     """Make the one strict-`json_schema` GPT-4o call; return the raw content."""
     context_block = _render_graph_context(graph_context)
-    client = OpenAI()
+    client = bounded_client()
     resp = client.chat.completions.create(
         model=model,
         response_format={"type": "json_schema", "json_schema": build_extraction_schema()},

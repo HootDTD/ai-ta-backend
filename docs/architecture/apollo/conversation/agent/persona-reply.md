@@ -9,7 +9,7 @@ related:
   - apollo/conversation/routing/errors
   - apollo/conversation/agent/output-filter
   - apollo/conversation/handlers/history
-last_verified: 2026-07-25
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -32,8 +32,9 @@ stub: false
 ## Data flow
 
 `draft_reply` assembled a persona system prompt + problem + KG summary + optional
-`history_summary` + chat history, ran a token-budget check, then a direct
-`OpenAI().chat.completions.create` (`APOLLO_MODEL` → `config.models.MAIN_MODEL`,
+`history_summary` + chat history, ran a token-budget check, then a
+`bounded_client().chat.completions.create` (`agent/llm-client`, 2026-08-04 —
+was a bare `OpenAI()`; `APOLLO_MODEL` → `config.models.MAIN_MODEL`,
 `temperature=0.7`). Structural anti-leak: it saw only the **student** KG (no
 reference material), so it could not name an un-taught concept; its own docstring
 notes "the output filter is removed in v1".

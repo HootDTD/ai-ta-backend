@@ -44,7 +44,7 @@ def _mock_openai(side_effect_contents):
     return client
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_all_covered_when_llm_says_so(mock_client_cls):
     # Student teaches continuity, bernoulli, and incompressibility (in their own words).
     mock_client_cls.return_value = _mock_openai([
@@ -65,7 +65,7 @@ def test_all_covered_when_llm_says_so(mock_client_cls):
     assert cov["per_step"]["incompressibility"] == "covered"
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_missing_continuity(mock_client_cls):
     # LLM judges: continuity NOT covered, incompressibility + bernoulli covered.
     # Reference walks the refs in order: continuity (eq), incompressibility (cond), bernoulli (eq).
@@ -86,7 +86,7 @@ def test_missing_continuity(mock_client_cls):
     assert cov["per_step"]["incompressibility"] == "covered"
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_missing_condition(mock_client_cls):
     # KG has no condition entries → incompressibility skipped without LLM call.
     mock_client_cls.return_value = _mock_openai([
@@ -116,7 +116,7 @@ def _ref_procedure(id_: str, order: int, action: str) -> dict:
             "depends_on": []}
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_compute_coverage_returns_enriched_shape(mock_client_cls):
     mock_client_cls.return_value = _mock_openai(['{"covered": true}'])
     kg = {
@@ -132,7 +132,7 @@ def test_compute_coverage_returns_enriched_shape(mock_client_cls):
     assert result["procedure_scores"] == {}
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_binary_matcher_softfails_to_missing_on_llm_exception(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.side_effect = RuntimeError("boom")
@@ -148,7 +148,7 @@ def test_binary_matcher_softfails_to_missing_on_llm_exception(mock_client_cls):
     assert result["per_step"]["eq1"] == "missing"
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_procedure_matcher_returns_partial_credit_per_step(mock_client_cls):
     client = MagicMock()
     # Two calls expected (one per reference procedure step).
@@ -180,7 +180,7 @@ def test_procedure_matcher_returns_partial_credit_per_step(mock_client_cls):
     assert result["per_step"]["plan_2"] == "missing"
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_procedure_matcher_softfails_to_zero_on_llm_exception(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.side_effect = RuntimeError("boom")
@@ -196,7 +196,7 @@ def test_procedure_matcher_softfails_to_zero_on_llm_exception(mock_client_cls):
     assert result["per_step"]["plan_1"] == "missing"
 
 
-@patch("apollo.overseer.coverage.OpenAI")
+@patch("apollo.overseer.coverage.bounded_client")
 def test_procedure_matcher_clamps_llm_score_to_0_1(mock_client_cls):
     client = MagicMock()
     client.chat.completions.create.return_value = MagicMock(

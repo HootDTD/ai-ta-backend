@@ -15,6 +15,7 @@ explicit handlers for restart/next/return-to-hoot.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -494,7 +495,8 @@ async def _maybe_intent_confirmation(
     confidence threshold, persist a confirmation turn and return a
     chat-shaped response. Otherwise return None and let the caller fall
     through to teaching."""
-    verdict = classify_intent(
+    verdict = await asyncio.to_thread(
+        classify_intent,
         utterance=message,
         history=history,
         concept=concept,
@@ -637,7 +639,8 @@ async def handle_chat(
     )
     graph_context = build_graph_context(prior_graph)
     try:
-        nodes, edges = parse_utterance(
+        nodes, edges = await asyncio.to_thread(
+            parse_utterance,
             message,
             concept=concept,
             attempt_id=current_attempt.id,

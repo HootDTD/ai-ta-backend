@@ -11,7 +11,7 @@ related:
   - apollo/conversation/agent/output-filter
   - apollo/provisioning/metered-chat
   - platform/config-model-pins
-last_verified: 2026-07-25
+last_verified: 2026-08-04
 stub: false
 ---
 
@@ -28,7 +28,14 @@ is empty namespace glue that rides here per D4).
 - `main_chat(*, purpose, messages, response_format=None, temperature=0.0, model=None) -> str`
   — main tier. Model resolves to the `model=` arg, else the `config.models.MAIN_MODEL`
   pin.
-- `__all__ = ["cheap_chat", "main_chat"]`.
+- `bounded_client() -> OpenAI` (2026-08-04) — the client factory every Apollo
+  `OpenAI()` construction site now goes through (`_client()` here, plus the
+  direct-client modules listed below). Sets `timeout=` from `APOLLO_OPENAI_TIMEOUT_S`
+  (default 90.0 s) and `max_retries=` from `APOLLO_OPENAI_MAX_RETRIES` (default 1),
+  bounding the tail the SDK's own defaults (600 s timeout, 2 retries) would
+  otherwise leave open — one hung request no longer freezes a turn for minutes.
+  A per-call `timeout=` kwarg still overrides the client-level value.
+- `__all__ = ["bounded_client", "cheap_chat", "main_chat"]`.
 
 ## Data flow
 
@@ -41,18 +48,21 @@ structured `llm_call` log line via `_log_call` (`purpose`/`model`/`tokens_in`/
 
 - Model resolution is env-driven with a hardcoded fallback — **never a model
   literal at call sites**. `purpose=` is a grep-friendly audit tag.
-- `_client()` returns a **fresh `OpenAI()` per call** — there is no process
-  singleton (the Neo4j client is the singleton; this is not).
+- `_client()` returns a **fresh `bounded_client()` per call** — there is no
+  process singleton (the Neo4j client is the singleton; this is not).
 - LIVE consumers of `cheap_chat`: `handlers/intent` (intent classifier) and
   `parser/parser_llm` (`_classify_teaching` triviality gate). It is also imported
   by the vestigial `agent/leakage_judge` and `handlers/history` (dead paths).
 - **DRIFT: `main_chat` currently has NO live importer.** The module docstring
-  claims it backs "parser, draft reply, coverage matcher", but the parser uses
-  its own `OpenAI()` client at MAIN_MODEL, `draft_reply` is vestigial, and the
+  claims it backs "parser, draft reply, coverage matcher", but the parser builds
+  its own `bounded_client()` at MAIN_MODEL, `draft_reply` is vestigial, and the
   Done-time transcript audit (`overseer/transcript_coverage`) also builds a direct
-  `OpenAI()` client — none call `main_chat`. `provisioning/metered_chat` provides
+  `bounded_client()` — none call `main_chat`. `provisioning/metered_chat` provides
   its own `cheap_chat`/`main_chat`-**shaped** metered tiers (it does not import
-  these). So `main_chat` is a defined-but-uncalled tier today.
+  these). So `main_chat` is a defined-but-uncalled tier today. All of those direct
+  clients still go through `bounded_client()` (2026-08-04), so the timeout/retry
+  cap applies uniformly even though the shared `cheap_chat`/`main_chat` tiers
+  aren't the ones calling it.
 
 ## Env flags
 
@@ -60,6 +70,9 @@ structured `llm_call` log line via `_log_call` (`purpose`/`model`/`tokens_in`/
 - The main tier is backed by the `config.models.MAIN_MODEL` code pin
   (`platform/config-model-pins`), not an env flag. (`APOLLO_MODEL` is read by the
   vestigial `agent/apollo_llm`, not here.)
+- `APOLLO_OPENAI_TIMEOUT_S` (default `90.0`) / `APOLLO_OPENAI_MAX_RETRIES`
+  (default `1`) — read by `bounded_client()`, applied to every Apollo OpenAI
+  client (this module and every direct-client module it seeds).
 
 ## Related
 
