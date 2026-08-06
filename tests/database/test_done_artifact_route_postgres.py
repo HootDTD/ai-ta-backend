@@ -176,6 +176,46 @@ async def test_done_writes_one_canonical_artifact_and_scorecard(db_session):
     assert out["grading_provenance"]["evidence_source"] == "transcript"
 
 
+async def test_second_done_click_soft_fails_artifact_conflict_instead_of_500(db_session):
+    """Prod incident 2026-08-05 (session 72, 4x 500): a re-clicked Done re-runs
+    grading on the same attempt, and its artifact INSERT hits the append-only
+    ``UNIQUE(attempt_id, role, grader_version)``. That conflict must take the
+    documented soft-fail path (log, rollback, return ``None``) — the re-click
+    still gets its full graded response — instead of escaping as a 500.
+
+    Regression shape: the except block's log line evaluated ``int(attempt.id)``
+    on an instance the failed flush had just expired, which re-entered the
+    poisoned session and raised ``PendingRollbackError`` before the rollback
+    could run."""
+    sid, cid, codes = await seed_course(
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
+    )
+    sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
+
+    patches = _neo_stubs(attempt.id) + _grading_stubs()
+    _start(patches)
+    try:
+        first = await handle_done(db=db_session, neo=object(), session_id=sess.id)
+        second = await handle_done(db=db_session, neo=object(), session_id=sess.id)
+    finally:
+        _stop(patches)
+
+    # The re-click is still served a complete graded response.
+    assert "rubric" in second
+    assert "progress" in second
+
+    # The artifact write degraded exactly as documented: the first row stands
+    # alone, and only the first response carries the scorecard projection.
+    rows = await _artifact_rows(db_session, attempt.id)
+    assert len(rows) == 1
+    assert rows[0].role == "canonical"
+    assert "scorecard" in first
+    assert "scorecard" not in second
+
+
 async def test_canonical_composite_matches_axis_rubric_and_band(db_session):
     """T1 regression (defect: canonical artifact built from an EMPTY coverage
     dict silently graded composite=0.0). Drives the real Done route and asserts

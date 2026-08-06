@@ -10,7 +10,7 @@ related:
   - apollo/persistence/models
   - apollo/projections/mastery
   - apollo/projections/scorecard
-last_verified: 2026-07-25
+last_verified: 2026-08-06
 stub: false
 ---
 
@@ -41,9 +41,21 @@ no dedicated columns in the target DDL, so they nest under the catch-all
 
 - **Append-only `UNIQUE(attempt_id, role, grader_version)`**; `role` is always
   `"canonical"`; `problem_id` is a real `BigInteger` FK to `app.problems.id`.
-- **Soft-fail**: any exception logs, rolls back, and returns `None` — the served
-  grade (already committed in `done.py`) is never affected. `done.py`'s
+  A re-clicked Done re-grades the same attempt and its INSERT hits this
+  constraint — that is an expected soft-fail, not an error path.
+- **Soft-fail**: any exception logs and returns `None` — the served grade
+  (already committed in `done.py`) is never affected. `done.py`'s
   `_project_mastery` reads the committed row back only *after* this returns.
+- **The INSERT runs inside a SAVEPOINT (`begin_nested`)**: an insert failure
+  rolls back only the savepoint, expunging the failed row while leaving the
+  outer transaction healthy and `attempt`/`sess` unexpired — `done.py` keeps
+  reading those instances after this returns, and a full `rollback()` here
+  would expire them into lazy-load failures (the 2026-08-05 prod 500: the
+  except path itself read `attempt.id` off an expired instance and raised
+  `PendingRollbackError` before the cleanup ran). Full rollback is reserved
+  for commit-stage failures. `attempt.id` is captured before the `try` for
+  the same reason. Regression gate:
+  `tests/database/test_done_artifact_route_postgres.py::test_second_done_click_soft_fails_artifact_conflict_instead_of_500`.
 - **DRIFT (Appendix A #26): `composite_score` and `node_coverage_score` are
   RETIRED legacy columns.** `_artifact_row` writes `scores.get("composite")` /
   `scores.get("node_coverage")`, but the live builder never sets a `"composite"`
