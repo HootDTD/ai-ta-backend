@@ -110,9 +110,9 @@ async def teaching_session_with_ledger(db: AsyncSession):
             turn_index=0,
         )
     )
-    db.add(_opportunity(sess, prior.id, "q1_prior_node"))
-    db.add(_opportunity(sess, current.id, "q1_current_node"))
-    db.add(_opportunity(sess, current.id, "q2_current_node"))
+    db.add(_opportunity(sess, int(prior.id), "q1_prior_node"))
+    db.add(_opportunity(sess, int(current.id), "q1_current_node"))
+    db.add(_opportunity(sess, int(current.id), "q2_current_node"))
     await db.commit()
     await db.refresh(sess)
     await db.refresh(prior)

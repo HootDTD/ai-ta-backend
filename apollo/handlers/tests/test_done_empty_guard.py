@@ -18,6 +18,7 @@ Same no-Docker harness as the other Done unit tests (``_old_path_patches``).
 from __future__ import annotations
 
 from contextlib import ExitStack
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -52,6 +53,7 @@ async def _run(*, student_message_count: int | None = None, auto_done: bool = Fa
     with ExitStack() as stack:
         for p in patches:
             started[getattr(p, "attribute", repr(p))] = stack.enter_context(p)
+        result: dict[str, Any] | Exception
         try:
             result = await handle_done(db=db, neo=MagicMock(), session_id=11, auto_done=auto_done)
         except Exception as exc:  # noqa: BLE001 - the guard test asserts on it

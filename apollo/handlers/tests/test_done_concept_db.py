@@ -20,6 +20,7 @@ from apollo.persistence.models import (
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
     TutoringSession,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
@@ -65,6 +66,19 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         course_id=sess.course_id,
     )
     db_session.add(attempt)
+    await db_session.flush()
+    # The empty-attempt guard (P0.1) refuses to grade transcripts with zero
+    # student messages — seed one so grading proceeds.
+    db_session.add(
+        TutoringMessage(
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt.id,
+            role="student",
+            content="Faster flow means lower pressure along the streamline.",
+            turn_index=0,
+        )
+    )
     await db_session.flush()
 
     envelope = MagicMock(
