@@ -381,7 +381,8 @@ async def test_ask_hoot_flag_off_returns_normal_teaching_turn(monkeypatch):
     db.execute = AsyncMock(side_effect=[session_result, attempt_result])
 
     bridge = AsyncMock()
-    persist_turn = AsyncMock()
+    persist_student = AsyncMock(return_value=0)
+    persist_reply = AsyncMock()
     normal_reply = "How does that idea connect to the problem?"
     decision = SimpleNamespace(
         action="ask",
@@ -413,7 +414,8 @@ async def test_ask_hoot_flag_off_returns_normal_teaching_turn(monkeypatch):
             "apollo.handlers.chat.plan_next_question",
             new=AsyncMock(return_value=decision),
         ),
-        patch("apollo.handlers.chat._persist_turn", new=persist_turn),
+        patch("apollo.handlers.chat._persist_student_message", new=persist_student),
+        patch("apollo.handlers.chat._persist_apollo_reply", new=persist_reply),
         patch("apollo.handlers.chat.answer_reference_question", new=bridge),
     ):
         response = await handle_chat(
@@ -432,4 +434,7 @@ async def test_ask_hoot_flag_off_returns_normal_teaching_turn(monkeypatch):
         "question_target": None,
     }
     bridge.assert_not_awaited()
-    persist_turn.assert_awaited_once()
+    # P0.3: the teaching path persists the student message up front and the
+    # apollo reply at the end — no pair-persist.
+    persist_student.assert_awaited_once()
+    persist_reply.assert_awaited_once()

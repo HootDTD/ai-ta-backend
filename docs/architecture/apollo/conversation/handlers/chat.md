@@ -50,9 +50,14 @@ Ordered turn:
    pending intent is just cleared. Otherwise `_maybe_intent_confirmation`
    classifies the utterance and, above threshold, persists a confirmation prompt
    and returns. The classifier never triggers the hint lane.
-4. **Teaching path**: read the current subgraph (`_read_graph_or_empty`), project
-   it via `build_graph_context` (`parser/graph-context`), then `parse_utterance`
-   (`parser/parser-llm`) → nodes/edges.
+4. **Teaching path**: FIRST persist the student message in its own commit
+   (`_persist_student_message`, 2026-08-07 P0.3 done-race fix — the turn's
+   LLM chain runs 10-17s and a Done clicked mid-turn used to grade a
+   transcript missing the student's last message; `history_pre` is loaded
+   before this persist so nothing double-counts). Then read the current
+   subgraph (`_read_graph_or_empty`), project it via `build_graph_context`
+   (`parser/graph-context`), then `parse_utterance` (`parser/parser-llm`) →
+   nodes/edges.
 
 Both LLM calls on this path — `classify_intent` (step 3) and `parse_utterance`
 (step 4) — run via `await asyncio.to_thread(...)` (2026-08-04). Each was
@@ -66,8 +71,13 @@ other in-flight Apollo request on that worker stalled until it returned.
    When it decides `done`, `handle_done` is dispatched with `auto_done=True`
    (2026-08-07 P0.4 — the engine, not the student, triggered grading; the
    stamp lands in `diagnostic_report` for grade forensics).
-7. `_persist_turn` appends the atomic (student, apollo) pair; `turn_index` from
-   `_next_turn_index`.
+7. `_persist_apollo_reply` appends Apollo's reply (the student row is already
+   durable from step 4; the pair lands with the same consecutive indexes as
+   the old pair-persist). The SHORT lanes — intent confirmations, aside
+   cap/apology — still use the atomic `_persist_turn` pair (their race window
+   is one classify call, not the teaching chain). The question ledger's
+   `turn_index` is the student row's index, byte-identical to the pre-P0.3
+   bookkeeping.
 
 ## INTERACTION4 "ask Hoot" hint lane
 
@@ -122,6 +132,14 @@ other in-flight Apollo request on that worker stalled until it returned.
 - **A parse miss still proceeds**: `ParserCouldNotExtractError` is caught, the
   turn contributes zero KG entries, and the conversational reply is generated
   anyway (no 422 card to the student).
+- **A failed teaching turn keeps the student row** (P0.3): a mid-chain raise
+  after the early persist leaves a student message with no Apollo reply. This
+  is deliberate — the transcript retains the student's words (grading-
+  favorable) and the next turn's history simply includes them; never "clean
+  up" the dangling row.
+- The residual done-race window is the intent-classify call (~1-2s) before the
+  early persist — accepted for P0; full elimination is the P3.4 concurrency
+  review.
 - **Neo4j is optional**: every KG read/write degrades on `KG_DEGRADED_ERRORS`
   (`_read_graph_or_empty` → empty `KGGraph`; `_write_kg_or_skip` → `nodes_added=0`);
   the Postgres + LLM reply always ships.
