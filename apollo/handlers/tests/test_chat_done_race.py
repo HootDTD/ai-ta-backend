@@ -192,6 +192,31 @@ async def test_planner_turn_index_matches_student_row(db_session_attempt):
 
 
 @pytest.mark.asyncio
+async def test_engine_decided_done_grades_with_auto_done_stamp(db_session_attempt):
+    """P0.4 call site: when the questioning engine (not the student) decides
+    the attempt is done, the chat path grades via handle_done(auto_done=True)."""
+    db, session_id, attempt_id = db_session_attempt
+    planner = AsyncMock(
+        return_value=QuestionDecision(action="done", question=None, target_node_id=None)
+    )
+    ps = _base_patches(_fake_store(), planner)
+    done_mock = AsyncMock(return_value={"grade": "B"})
+    done_patch = patch("apollo.handlers.done.handle_done", new=done_mock)
+    from apollo.handlers.chat import handle_chat
+
+    with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], done_patch:
+        result = await handle_chat(
+            db=db, neo=MagicMock(), session_id=session_id, message="that is everything I know"
+        )
+
+    done_mock.assert_awaited_once()
+    kwargs = done_mock.await_args.kwargs
+    assert kwargs["auto_done"] is True
+    assert kwargs["session_id"] == session_id
+    assert result["intent_executed"] == {"intent": "done", "result": {"grade": "B"}}
+
+
+@pytest.mark.asyncio
 async def test_failed_turn_keeps_student_message(db_session_attempt):
     """A mid-chain failure after the early persist keeps the student row —
     the message is never lost to the transcript again."""
