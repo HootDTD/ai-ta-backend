@@ -10,7 +10,7 @@ related:
   - apollo/overseer/topic-narrative
   - apollo/grading/artifact-build
   - apollo/conversation/handlers/done
-last_verified: 2026-07-28
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -65,6 +65,14 @@ pre-feature result).
 - **Empty misconceptions.** `TopicCredit.misconceptions` is always `()` and
   `TopicScoreResult.misconception_dock` is always `0.0`.
 - **No graded nodes → 0.** An all-ungraded reference returns a zero result.
+- **Only adjudicated nodes enter the denominator (2026-08-07 P0.5).** A graded
+  node absent from BOTH `per_step` and `procedure_scores` was omitted by the
+  adjudicator (abstain-not-zero, see `transcript-coverage`) — it is dropped and
+  weights renormalize over the adjudicated set. No-op for historical/graph-lane
+  coverage dicts (they carry every graded id). Graded nodes present but ZERO
+  adjudicated raises `ValueError` (never a silent F(0)); `done.py`'s soft-fail
+  wrapper converts that to the legacy rubric, and the serving lane already
+  raises `CoverageGradingError` before reaching here in that state.
 - Centrality is cycle-safe: `DEPENDS_ON` out-degree + `PRECEDES` topological
   position, combined and rescaled into `[CENTRALITY_W_MIN, 1]`.
 

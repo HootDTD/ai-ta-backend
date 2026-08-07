@@ -165,6 +165,28 @@ def compute_topic_score(
     if not graded_nodes:
         return TopicScoreResult(0, score_to_letter(0), 0.0, 0.0, ())
 
+    # Abstain-not-zero (2026-08-07 bimodal-fix P0.5): a graded node the
+    # adjudicator never returned a verdict for — even after the semantic retry
+    # — is OMITTED from the coverage maps by `_to_coverage_verdict`. Such a
+    # node must leave the denominator, not score 0: weights renormalize over
+    # the adjudicated set only. Membership in per_step marks a node as
+    # adjudicated (every adjudicated node gets a per_step entry);
+    # procedure_scores is checked too for symmetry with `_credit_for_node`.
+    # Historical/graph-lane coverage dicts carry every graded id, so this
+    # filter is a no-op for them. All graded nodes omitted is an adjudication
+    # failure, not a gradable outcome — raise (the Done path soft-fails to the
+    # legacy rubric; the serving lane already 503s before reaching here).
+    per_step = coverage.get("per_step", {}) or {}
+    procedure_scores = coverage.get("procedure_scores", {}) or {}
+    adjudicated = [
+        node
+        for node in graded_nodes
+        if node.node_id in per_step or node.node_id in procedure_scores
+    ]
+    if not adjudicated:
+        raise ValueError("no graded node was adjudicated; refusing to score an empty denominator")
+    graded_nodes = adjudicated
+
     weights = _weights_for([node.node_id for node in graded_nodes], centrality)
     # INTERACTION5: per-node Hoot-assist flags, present only when a Hoot aside was
     # graded. Absent → every topic reads False (byte-identical to pre-feature).

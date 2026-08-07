@@ -292,6 +292,12 @@ def _call_adjudication(
     return response.choices[0].message.content or "{}"
 
 
+def _graded_node_ids(reference_graph: KGGraph) -> list[str]:
+    return [
+        node.node_id for node in reference_graph.nodes if node.node_type in _GRADED_NODE_TYPES
+    ]
+
+
 def _to_coverage_verdict(
     verdicts: Sequence[NodeVerdict],
     reference_graph: KGGraph,
@@ -299,9 +305,7 @@ def _to_coverage_verdict(
     include_hoot_assisted: bool = False,
 ) -> CoverageVerdict:
     by_id = {verdict.node_id: verdict for verdict in verdicts}
-    graded_ids = [
-        node.node_id for node in reference_graph.nodes if node.node_type in _GRADED_NODE_TYPES
-    ]
+    graded_ids = _graded_node_ids(reference_graph)
     result: CoverageVerdict = {
         "per_step": {},
         "procedure_scores": {},
@@ -310,7 +314,20 @@ def _to_coverage_verdict(
     }
     for node_id in graded_ids:
         verdict = by_id.get(node_id)
-        credit = verdict.credit if verdict is not None else 0.0
+        if verdict is None:
+            # Abstain-not-zero (2026-08-07 bimodal-fix P0.5, defect I5): a
+            # graded node the adjudicator returned NO verdict for — even after
+            # the one semantic retry in `_adjudicate_all_graded` — is OMITTED
+            # from every coverage map instead of silently scoring 0.0. The
+            # topic lane drops omitted nodes from its denominator
+            # (`compute_topic_score`); the RAW legacy rubric still reads the
+            # omission as not-covered, but that rubric is not served when the
+            # topic score computes.
+            _LOG.warning(
+                "transcript_coverage_missing_verdict node_id=%s action=omitted", node_id
+            )
+            continue
+        credit = verdict.credit
         # Binary consumers (rubric.py axes) read ONLY per_step, so the covered
         # threshold must match the graph lane's scored branch (coverage.py
         # marks covered at >= 0.5) — requiring full credit would zero those
@@ -320,19 +337,19 @@ def _to_coverage_verdict(
         # score — per_step/"covered" only decides status for binary
         # consumers, it no longer promotes credit to 1.0.
         result["per_step"][node_id] = (
-            "covered" if verdict is not None and verdict.covered and credit >= 0.5 else "missing"
+            "covered" if verdict.covered and credit >= 0.5 else "missing"
         )
         result["procedure_scores"][node_id] = credit
-        result["confidences"][node_id] = verdict.confidence if verdict is not None else 0.0
+        result["confidences"][node_id] = verdict.confidence
     if include_hoot_assisted:
         # Per-node assist flags, keyed exactly like ``procedure_scores`` so the
         # downstream cap pass (``apollo/overseer/aside_penalty.py``) can pair a
-        # node's credit with its assist flag. A graded node with no verdict is
-        # not assisted. Present ONLY when asides were supplied — otherwise the
-        # dict is byte-identical to the pre-feature contract.
+        # node's credit with its assist flag — an omitted (no-verdict) node is
+        # omitted here too, keeping the key sets aligned. Present ONLY when
+        # asides were supplied — otherwise the dict is byte-identical to the
+        # pre-feature contract.
         result["hoot_assisted"] = {
-            node_id: (by_id[node_id].hoot_assisted if node_id in by_id else False)
-            for node_id in graded_ids
+            node_id: by_id[node_id].hoot_assisted for node_id in graded_ids if node_id in by_id
         }
     validate_coverage_verdict(result)
     return result
@@ -417,6 +434,67 @@ async def _adjudicate_verdicts(
     return verdicts
 
 
+async def _adjudicate_all_graded(
+    transcript: Sequence[tuple[str, str]],
+    reference_graph: KGGraph,
+    problem: Any,
+    *,
+    course_evidence: str | None = None,
+    hoot_asides: tuple[str, ...] = (),
+) -> list[NodeVerdict]:
+    """Adjudicate, then re-adjudicate ONCE if any graded node got no verdict.
+
+    Abstain-not-zero (2026-08-07 bimodal-fix P0.5, defect I5): the adjudicator
+    occasionally omits a graded node from ``verdicts[]`` (or misspells its
+    node_id); scoring that omission 0.0 silently is a false F ingredient.
+    Policy: one semantic re-adjudication for the missing nodes (first call's
+    verdicts always win for nodes both calls returned); nodes still missing
+    after the retry are excluded from the coverage maps — and hence the topic
+    denominator — by ``_to_coverage_verdict``. If NO graded node has a verdict
+    at all, that is an adjudication failure, not a gradable outcome: raise
+    ``CoverageGradingError`` (503 try-again), never a fabricated F(0). A retry
+    call that itself fails on provider errors degrades to exclusion (the first
+    call's partial verdicts are real; a 503 would discard them).
+    """
+    verdicts = await _adjudicate_verdicts(
+        transcript,
+        reference_graph,
+        problem,
+        course_evidence=course_evidence,
+        hoot_asides=hoot_asides,
+    )
+    graded_ids = _graded_node_ids(reference_graph)
+    returned = {verdict.node_id for verdict in verdicts}
+    missing = [node_id for node_id in graded_ids if node_id not in returned]
+    if missing:
+        _LOG.warning(
+            "transcript_coverage_missing_verdict node_ids=%s action=readjudicate", missing
+        )
+        try:
+            retry_verdicts = await _adjudicate_verdicts(
+                transcript,
+                reference_graph,
+                problem,
+                course_evidence=course_evidence,
+                hoot_asides=hoot_asides,
+            )
+        except CoverageGradingError:
+            _LOG.warning(
+                "transcript_coverage_missing_verdict node_ids=%s action=retry_failed", missing
+            )
+            retry_verdicts = []
+        retry_by_id = {verdict.node_id: verdict for verdict in retry_verdicts}
+        verdicts = list(verdicts) + [
+            retry_by_id[node_id] for node_id in missing if node_id in retry_by_id
+        ]
+    if graded_ids and not any(verdict.node_id in set(graded_ids) for verdict in verdicts):
+        raise CoverageGradingError(
+            stage="transcript_adjudication",
+            last_error="adjudicator returned no verdict for any graded node",
+        )
+    return verdicts
+
+
 def narrative_evidence_spans(
     verdicts: Sequence[NodeVerdict], transcript: Sequence[tuple[str, str]]
 ) -> dict[str, str]:
@@ -447,7 +525,7 @@ async def compute_transcript_coverage(
     *,
     course_evidence: str | None = None,
 ) -> CoverageVerdict:
-    verdicts = await _adjudicate_verdicts(
+    verdicts = await _adjudicate_all_graded(
         transcript, reference_graph, problem, course_evidence=course_evidence
     )
     return _to_coverage_verdict(verdicts, reference_graph)
@@ -479,7 +557,7 @@ async def compute_transcript_coverage_with_spans(
     downstream cap pass reads. An empty tuple reproduces today's coverage dict —
     no ``hoot_assisted`` key — and today's prompts/schema exactly. It never widens
     the span gate: a Hoot aside can never be quoted as student evidence."""
-    verdicts = await _adjudicate_verdicts(
+    verdicts = await _adjudicate_all_graded(
         transcript,
         reference_graph,
         problem,
