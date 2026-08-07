@@ -16,10 +16,11 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import (
+    EmptyAttemptError,
     KGUnavailableError,
     RetentionError,
 )
@@ -208,6 +209,26 @@ async def _student_utterances(
     return tuple(rows)
 
 
+async def _student_message_count(
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+) -> int:
+    """How many student messages this attempt has persisted.
+
+    Feeds the empty-attempt guard in ``handle_done`` (2026-08-07 bimodal-fix
+    defect I1). Counts ``role == "student"`` rows only — student rows are never
+    aside-tagged, so no intent filter is needed."""
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(TutoringMessage)
+            .where(TutoringMessage.attempt_id == attempt_id)
+            .where(TutoringMessage.role == _STUDENT_ROLE)
+        )
+    ).scalar_one()
+
+
 async def _full_transcript(
     db: AsyncSession,
     *,
@@ -366,6 +387,7 @@ async def handle_done(
     db: AsyncSession,
     neo: Neo4jClient | None,
     session_id: int,
+    auto_done: bool = False,
 ) -> dict[str, Any]:
     store = KGStore(db, neo)
 
@@ -390,6 +412,16 @@ async def handle_done(
     )
     if attempt is None:
         raise RuntimeError(f"no ProblemAttempt for session {session_id} / problem {problem.id}")
+
+    # Empty-attempt guard (2026-08-07 bimodal-fix defect I1): an attempt with
+    # zero student messages has nothing to adjudicate — grading it produced
+    # F(0) rows whose narrative was invented from the reference solution
+    # (phantom rows from browse/abandon flows; 9 of 87 graded pilot attempts).
+    # Refuse BEFORE any mutation (no freeze, no phase change, no XP, no
+    # narrative) and leave the attempt row untouched so a later real Done is
+    # not treated as a reattempt.
+    if await _student_message_count(db, attempt_id=int(attempt.id)) == 0:
+        raise EmptyAttemptError(session_id=session_id, attempt_id=int(attempt.id))
 
     # Read the student graph before freezing so the frozen subgraph is still
     # persisted; a degraded KG is tolerated (log-and-continue) rather than
@@ -593,7 +625,7 @@ async def handle_done(
 
     attempt.result = "graded"
     attempt.solver_trace = None
-    attempt.diagnostic_report = {
+    diagnostic_report = {
         "narrative": diagnostic_narrative,
         "rubric": rubric,
         "coverage": coverage,
@@ -604,6 +636,13 @@ async def handle_done(
         # must read this snapshot first and fall back to `rubric.overall`.
         "served_overall": dict(served_rubric["overall"]),
     }
+    # Audit stamp (2026-08-07 bimodal-fix P0.4): a Done triggered by budget
+    # exhaustion — not by the student — is marked so grade forensics can
+    # separate consented grades from auto-grades. Key absent on a student
+    # Done, keeping those rows byte-identical to the pre-stamp shape.
+    if auto_done:
+        diagnostic_report = {**diagnostic_report, "auto_done": True}
+    attempt.diagnostic_report = diagnostic_report
     sess.phase = SessionPhase.REPORT.value
     await db.commit()
 

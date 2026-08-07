@@ -712,7 +712,10 @@ async def handle_chat(
     if decision.action == "done":
         from apollo.handlers.done import handle_done  # noqa: PLC0415
 
-        done_result = await handle_done(db=db, neo=neo, session_id=session_id)
+        # This Done was decided by the questioning engine (budget exhaustion /
+        # coverage-sufficient), not clicked by the student — stamp it for
+        # grade forensics (bimodal-fix P0.4).
+        done_result = await handle_done(db=db, neo=neo, session_id=session_id, auto_done=True)
         return {
             "apollo_reply": validated,
             "kg_entries_added": nodes_added,

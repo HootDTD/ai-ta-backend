@@ -5,7 +5,7 @@ owns:
   - apollo/errors.py
 related:
   - apollo/conversation/routing/router
-last_verified: 2026-07-25
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -24,7 +24,7 @@ Base `ApolloError(Exception)` + ~17 subclasses. Each carries the fields the
 handler lifts into the JSON body. Grouped by the HTTP status `router` maps them to:
 
 - **422 input/parse** — `ParserCouldNotExtractError(utterance)`, `FilterRejectedError(rejected_term, draft, kg)`, `MalformedEquationError(entry_id, symbolic, parse_error)`.
-- **409 conflict/state** — `NoMatchingConceptError(transcript_summary)`, `PoolExhaustedError(concept_cluster_id, difficulty)`, `SessionFrozenError(session_id)`, `InvalidPhaseError(session_id, phase)`.
+- **409 conflict/state** — `NoMatchingConceptError(transcript_summary)`, `PoolExhaustedError(concept_cluster_id, difficulty)`, `SessionFrozenError(session_id)`, `InvalidPhaseError(session_id, phase)`, `EmptyAttemptError(session_id, attempt_id)` (2026-08-07 defect I1: Done on an attempt with zero student messages refuses to grade — student-correctable, so 409 not 503).
 - **404 not-found** — `KGEntryNotFoundError(attempt_id, node_id)`, `ProblemNotFoundError(problem_id, concept_id)`.
 - **503 degraded/infra** — `KGUnavailableError(stage, last_error)`, `CoverageGradingError(stage, last_error)`, `ResolutionUnavailableError(stage, last_error)`, `TranscriptAuditUnavailableError(last_error)`.
 - **500** — `ResolutionInvalidOutputError(returned_key, allowed_keys)` (closed-set hallucination; payload carries only the *count* of allowed keys).

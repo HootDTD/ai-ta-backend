@@ -114,6 +114,26 @@ class KGEntryNotFoundError(ApolloError):
         )
 
 
+class EmptyAttemptError(ApolloError):
+    """Done was requested for an attempt with zero persisted student messages.
+
+    2026-08-07 bimodal-fix defect I1: phantom attempt rows (browse/abandon
+    flows) reached the grader and were served F(0) with a narrative INVENTED
+    from the reference solution. There is nothing to adjudicate — refuse to
+    grade instead of fabricating one. Surfaces as a structured 409; the
+    attempt row is deliberately left untouched (marking it would flip
+    `is_reattempt_in_session` and dock XP on the student's real Done later).
+    """
+
+    def __init__(self, *, session_id: int, attempt_id: int) -> None:
+        self.session_id = session_id
+        self.attempt_id = attempt_id
+        super().__init__(
+            f"attempt {attempt_id} of session {session_id} has no student messages; "
+            "nothing to grade"
+        )
+
+
 class CoverageGradingError(ApolloError):
     """Coverage matcher exhausted retries on a transient failure.
 

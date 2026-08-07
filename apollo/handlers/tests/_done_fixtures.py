@@ -86,6 +86,9 @@ def _old_path_patches():
     db.commit = AsyncMock()
     patches = [
         patch("apollo.handlers.done._find_problem", new=AsyncMock(side_effect=_find_problem)),
+        # Empty-attempt guard (defect I1): the base golden is a non-empty
+        # attempt. The guard test overrides this with 0.
+        patch("apollo.handlers.done._student_message_count", new=AsyncMock(return_value=1)),
         patch("apollo.handlers.done.KGStore.read_graph", new=AsyncMock(return_value=KGGraph())),
         patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),

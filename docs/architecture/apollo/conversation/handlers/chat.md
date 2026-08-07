@@ -15,7 +15,7 @@ related:
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
   - apollo/persistence/neo4j-client
-last_verified: 2026-08-04
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -63,7 +63,9 @@ other in-flight Apollo request on that worker stalled until it returned.
    returns genuinely-new node count.
 6. **Questioning**: build the full transcript and call `plan_next_question`
    (`questioning/controller`), which produces Apollo's reply + `covered_topics`.
-   When it decides `done`, `handle_done` is dispatched.
+   When it decides `done`, `handle_done` is dispatched with `auto_done=True`
+   (2026-08-07 P0.4 — the engine, not the student, triggered grading; the
+   stamp lands in `diagnostic_report` for grade forensics).
 7. `_persist_turn` appends the atomic (student, apollo) pair; `turn_index` from
    `_next_turn_index`.
 

@@ -19,7 +19,7 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-08-04
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -33,17 +33,24 @@ than restating them.
 
 ## Interface
 
-- `handle_done(*, db, neo, session_id) -> dict` — the only public entry (called
-  by `routing/router`, and by `handlers/chat` when the intent/questioning gate
-  decides "done"). Returns the student grade payload (`rubric`, `topics`,
+- `handle_done(*, db, neo, session_id, auto_done=False) -> dict` — the only
+  public entry (called by `routing/router`, and by `handlers/chat` when the
+  intent/questioning gate decides "done"; the questioning gate passes
+  `auto_done=True`). Returns the student grade payload (`rubric`, `topics`,
   `progress`, `scorecard`, `grading_provenance`, `transcript`, …).
 
 ## Data flow
 
 Ordered grade assembly (each step delegates to the owner doc):
 
-1. Load session + problem (`_find_problem`) + latest `ProblemAttempt`; read the
-   student graph (tolerating degraded Neo4j) then `store.freeze(session_id)`.
+1. Load session + problem (`_find_problem`) + latest `ProblemAttempt`.
+   **Empty-attempt guard** (2026-08-07, defect I1): zero persisted student
+   messages (`_student_message_count`) → `EmptyAttemptError` (409
+   `empty_attempt`, `routing/errors`) BEFORE any mutation — no freeze, no
+   phase change, no XP, no narrative, and the attempt row is left untouched
+   (marking it would flip `is_reattempt_in_session` and dock XP on the real
+   Done later). Then read the student graph (tolerating degraded Neo4j) and
+   `store.freeze(session_id)`.
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
 3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans`
    (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated
@@ -122,7 +129,9 @@ Ordered grade assembly (each step delegates to the owner doc):
   `assisted_node_ids` if nothing matched or the cap pass soft-failed); off / no
   aside → key absent, provenance byte-identical.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
-  coverage, served_overall}`. `served_overall` (2026-07-26) is a snapshot of
+  coverage, served_overall}` plus `auto_done: true` iff the questioning engine
+  (not the student) triggered this Done (2026-08-07 P0.4 audit stamp; key
+  absent on a student Done, keeping those rows byte-identical). `served_overall` (2026-07-26) is a snapshot of
   `served_rubric["overall"]` — the grade the student was actually shown (topic
   score when it computed). Re-serving surfaces (`handlers/browse` grade cards,
   `handlers/progress` recents) read the snapshot first and fall back to
