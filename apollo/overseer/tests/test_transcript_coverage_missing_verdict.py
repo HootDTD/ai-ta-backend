@@ -83,8 +83,7 @@ def _sequenced_client(*outcomes):
     (a dict payload → JSON response; an Exception instance → raised)."""
     client = MagicMock()
     client.chat.completions.create.side_effect = [
-        outcome if isinstance(outcome, Exception) else _response(outcome)
-        for outcome in outcomes
+        outcome if isinstance(outcome, Exception) else _response(outcome) for outcome in outcomes
     ]
     return client
 

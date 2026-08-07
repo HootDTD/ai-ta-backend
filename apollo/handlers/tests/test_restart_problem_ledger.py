@@ -142,11 +142,7 @@ async def test_restart_deletes_current_attempt_ledger(db, teaching_session_with_
     )
     assert current_rows == []
     msgs = (
-        (
-            await db.execute(
-                select(TutoringMessage).where(TutoringMessage.attempt_id == current.id)
-            )
-        )
+        (await db.execute(select(TutoringMessage).where(TutoringMessage.attempt_id == current.id)))
         .scalars()
         .all()
     )

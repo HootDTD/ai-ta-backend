@@ -53,9 +53,7 @@ async def _run(*, student_message_count: int | None = None, auto_done: bool = Fa
         for p in patches:
             started[getattr(p, "attribute", repr(p))] = stack.enter_context(p)
         try:
-            result = await handle_done(
-                db=db, neo=MagicMock(), session_id=11, auto_done=auto_done
-            )
+            result = await handle_done(db=db, neo=MagicMock(), session_id=11, auto_done=auto_done)
         except Exception as exc:  # noqa: BLE001 - the guard test asserts on it
             result = exc
     return result, db, sess, attempt, started
