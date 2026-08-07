@@ -1,8 +1,8 @@
 """POST /apollo/sessions/{id}/restart_problem — wipe current attempt's KG + messages.
 
 Same ProblemAttempt row, same problem, same difficulty. Caller gets a clean
-conversation and a clean KG on the same problem. Blocked during SOLVING.
-INIT / BETWEEN raise InvalidPhaseError.
+conversation, a clean KG, and a clean question ledger on the same problem.
+Blocked during SOLVING. INIT / BETWEEN raise InvalidPhaseError.
 
 V3: KG wipe is now a Neo4j subgraph DETACH DELETE via KGStore.delete_subgraph.
 """
@@ -20,6 +20,7 @@ from apollo.persistence.models import (
     TutoringSession,
     TutoringMessage,
     ProblemAttempt,
+    QuestionOpportunity,
     SessionPhase,
     SessionStatus,
 )
@@ -83,6 +84,15 @@ async def handle_restart_problem(
         )
         raise KGUnavailableError(stage="restart_problem", last_error=str(exc)) from exc
     await db.execute(delete(TutoringMessage).where(TutoringMessage.attempt_id == current_attempt.id))
+    # The QuestionOpportunity ledger is keyed to the SAME attempt_id and is
+    # reloaded by the questioning controller on the next turn. Leaving it
+    # behind carries stale `times_asked` across the wipe: if pre-restart asks
+    # already hit the per-node cap, the FIRST post-restart message exhausts the
+    # budget and auto-grades a one-message transcript (2026-08-07 bimodal-fix
+    # spec, defect I4).
+    await db.execute(
+        delete(QuestionOpportunity).where(QuestionOpportunity.attempt_id == current_attempt.id)
+    )
 
     sess.phase = SessionPhase.TEACHING.value
     sess.pending_intent = None
