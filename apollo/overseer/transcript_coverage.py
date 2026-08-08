@@ -885,13 +885,15 @@ async def compute_transcript_coverage_with_spans(
     no ``hoot_assisted`` key — and today's prompts/schema exactly. It never widens
     the span gate: a Hoot aside can never be quoted as student evidence.
 
-    ``tally_context`` (bimodal-fix P1.3) is the live QuestionOpportunity state
-    ``done.py`` already loaded — ``list[{node_id, state, times_asked,
-    student_quote|null}]``. It is PROMPT CONTEXT only: it adds one data block and
-    one burden-of-proof rule (a node the tally marked ``understood`` with a quote
-    needs a cited reason to score below 0.85), never a code-level floor, cap, or
-    credit of its own. This module never touches the DB — the caller reads the
-    rows. ``None`` reproduces today's prompts byte for byte."""
+    ``tally_context`` (2026-08-07 bimodal-fix P1.3) is the questioning engine's
+    live QuestionOpportunity state for this attempt, supplied BY THE CALLER
+    (``handlers/done._tally_context``) — this module never touches the DB. Shape:
+    ``list[{node_id, state, times_asked, student_quote|null}]`` (see
+    :class:`TallyContextEntry`). It is PROMPT CONTEXT only: it adds one data block
+    and one burden-of-proof rule (a node the tally marked ``understood`` WITH a
+    quote needs an explicit cited reason to score below 0.85, defect U1), never a
+    code-level floor, cap, or credit of its own. ``None`` reproduces today's
+    prompts and today's grade byte for byte."""
     verdicts = await _adjudicate_all_graded(
         transcript,
         reference_graph,

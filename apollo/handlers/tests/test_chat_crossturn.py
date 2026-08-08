@@ -245,6 +245,9 @@ async def test_chat_response_uses_unified_envelope(db_session_attempt):
         "kg_entries_added",
         "kg",
         "covered_topics",
+        # P2.2 pre-Done coverage meter (2026-08-07).
+        "graded_topic_total",
+        "open_graded_topics",
         "question_target",
     }
 

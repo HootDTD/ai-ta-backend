@@ -77,6 +77,43 @@ async def test_zero_student_messages_raises_and_mutates_nothing():
     assert attempt.diagnostic_report is None
 
 
+async def test_no_attempt_row_at_all_raises_before_the_empty_guard():
+    """The guard's neighbour: session with no `ProblemAttempt` for the current
+    problem. It must raise on the lookup, ahead of the message count — the
+    empty-attempt path needs an attempt id to report."""
+    db, _sess, _attempt, patches = _old_path_patches()
+
+    class _SessResult:
+        def scalar_one(self):
+            return _sess
+
+    class _NoAttemptResult:
+        def scalars(self):
+            result = MagicMock()
+            result.first.return_value = None
+            return result
+
+    calls = {"n": 0}
+
+    async def _execute(*_args, **_kwargs):
+        calls["n"] += 1
+        return _SessResult() if calls["n"] == 1 else _NoAttemptResult()
+
+    db.execute = AsyncMock(side_effect=_execute)
+
+    from apollo.handlers.done import handle_done
+
+    started: dict[str, object] = {}
+    with ExitStack() as stack:
+        for p in patches:
+            started[getattr(p, "attribute", repr(p))] = stack.enter_context(p)
+        with pytest.raises(RuntimeError, match="no ProblemAttempt for session 11"):
+            await handle_done(db=db, neo=MagicMock(), session_id=11)
+
+    assert started["_student_message_count"].await_count == 0
+    assert db.commit.await_count == 0
+
+
 async def test_nonempty_attempt_grades_normally():
     result, db, sess, attempt, started = await _run(student_message_count=1)
 

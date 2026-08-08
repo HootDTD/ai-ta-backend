@@ -51,6 +51,12 @@ frozen KG, so a Neo4j-degraded Done still grades.
   Every field except `node_id` is defensively normalized here (unknown `state` →
   `"missing"`, non-int/negative `times_asked` → `0`, blank `student_quote` →
   `null`, non-mapping or non-rubric rows dropped). This module NEVER reads the DB.
+  The parameter NAME and default are load-bearing: `done.py` passes
+  `tally_context=` inside the sole grading lane, which is NOT soft-failed, so
+  renaming or dropping it turns every Done into a 503.
+  `handlers/tests/test_done_question_ledger.py::
+  test_coverage_entrypoint_really_accepts_tally_context` pins the unmocked
+  signature so a bad merge reds CI instead of prod.
 - From `coverage_contract.py`: `CoverageVerdict` / `NegotiationCounts` TypedDicts
   + `validate_coverage_verdict` (the frozen verdict schema this module and the
   dormant `coverage.py` must satisfy). `CoverageVerdict` gains ONE optional

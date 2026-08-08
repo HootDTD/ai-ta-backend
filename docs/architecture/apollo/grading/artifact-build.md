@@ -9,7 +9,7 @@ related:
   - apollo/projections/scorecard
   - apollo/grading/event-model
   - apollo/conversation/handlers/grading-artifact-writer
-last_verified: 2026-07-25
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -26,13 +26,15 @@ payload. `handlers/artifact_writer.py` persists its dict to
   topic_score=None) -> dict`.
 - `GRADER_USED_LLM_FALLBACK` / `GRADER_USED_LLM_TRANSCRIPT` — grader-version
   constants (imported by `handlers/artifact_writer.py`).
+- `LEDGER_STATUS_UNPROBED` (`"unprobed"`) — the third `node_ledger` status
+  (2026-08-07 P1.2b).
 - The facade `__init__.py` re-exports `build_llm_artifact` + those constants +
   the [event-model](event-model.md) symbols.
 
 ## Data flow
 
 From `coverage.per_step` it derives `node_coverage` and a `node_ledger`
-(`credited` / `unresolved` rows). `scores.composite` is set to the normalized
+(`credited` / `unresolved` / `unprobed` rows). `scores.composite` is set to the normalized
 `rubric["overall"]["score"]/100`; `scores.llm_rubric` carries the whole rubric.
 When a `TopicScoreResult` is passed, `scores.topic_score =
 serialize_topic_score(topic_score)` (the single serializer). The dict also carries
@@ -50,5 +52,19 @@ serialize_topic_score(topic_score)` (the single serializer). The dict also carri
   built payload; `GRADER_USED_LLM_TRANSCRIPT` is exported for consumers but not
   applied here (`done.py` sets `llm_transcript` on the separate
   `grading_provenance`).
+- **`unprobed` ledger rows (2026-08-07 P1.2b).** A graded node the questioning
+  loop never raised is dropped from the topic denominator with status
+  `unprobed`, but the adjudicator still returned a verdict for it, so it is
+  still in `coverage.per_step`. Filing it as `unresolved` would render
+  "Next time, explain X" in the scorecard's *missing or unclear* list while the
+  same payload's `topics[]` says X was not part of this grade — so those keys
+  (read off `topic_score.topics`) get their own status instead. It keeps a row
+  (the record stays complete) and leaves BOTH sides of the `node_coverage`
+  ratio. Every status-filtered consumer already ignores it by construction:
+  [scorecard](../projections/scorecard.md) matches `credited`/`unresolved`,
+  [mastery](../projections/mastery.md) `credited`/`misconception`,
+  [classroom](../projections/classroom.md) an explicit status list.
+  `topic_score=None` (soft-failed scoring) yields no `unprobed` rows at all —
+  byte-identical to the pre-fix payload.
 - `misconceptions` / `edge_ledger` are always empty; `abstention.abstained` is
   `None` (an LLM-only concept, lifted to `false` by the writer).
