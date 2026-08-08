@@ -27,6 +27,32 @@ def _problem() -> Problem:
     )
 
 
+def _graded_problem() -> Problem:
+    """One graded (procedure_step) node beside the ungraded definition."""
+    return Problem.model_validate(
+        {
+            "id": "p2",
+            "concept_id": "c1",
+            "difficulty": "intro",
+            "problem_text": "Explain x?",
+            "reference_solution": [
+                {
+                    "step": 1,
+                    "entry_type": "definition",
+                    "id": "def_x",
+                    "content": {"concept": "x", "meaning": "the private meaning"},
+                },
+                {
+                    "step": 2,
+                    "entry_type": "procedure_step",
+                    "id": "step_y",
+                    "content": {"action": "combine them", "purpose": "reach x", "order": 1},
+                },
+            ],
+        }
+    )
+
+
 class _Scalars:
     def __init__(self, rows):
         self.rows = rows
@@ -75,7 +101,7 @@ async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monk
         assert kwargs["tally_state"][0].status == "missing"
         assert kwargs["tally_state"][0].times_asked == 0
         assert kwargs["budget"].questions_asked == 0
-        return _ask(TallyUpdate("def_x", "tentative", EvidenceQuote(0, "x matters"), False))
+        return _ask(TallyUpdate("def_x", "tentative", EvidenceQuote(0, "x matters")))
 
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(
@@ -93,7 +119,6 @@ async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monk
     assert opportunity.session_id == 3
     assert opportunity.state == "tentative"
     assert opportunity.evidence == [{"turn_id": 0, "quote": "x matters"}]
-    assert opportunity.student_declined is False
     assert opportunity.times_asked == 1
     assert opportunity.last_asked_turn == 1
     assert opportunity.question == "What do you mean by x?"
@@ -121,10 +146,10 @@ async def test_confirm_once_round_trip_increments_target_to_two(monkeypatch):
 
     async def evaluate(**kwargs):
         state = kwargs["tally_state"][0]
-        assert state.student_declined is True
+        assert not hasattr(state, "student_declined")
         assert state.times_asked == 1
         assert kwargs["budget"].questions_asked == 1
-        return _ask(TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters"), False))
+        return _ask(TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters")))
 
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     await controller.plan_next_question(
@@ -137,7 +162,8 @@ async def test_confirm_once_round_trip_increments_target_to_two(monkeypatch):
         turn_index=4,
     )
     assert target.state == "understood"
-    assert target.student_declined is False
+    # P2.4: the dead decline flag is no longer read or written by the loop.
+    assert target.student_declined is True
     assert target.times_asked == 2
     assert target.last_asked_turn == 5
 
@@ -184,7 +210,10 @@ async def test_two_probe_cap_preserves_per_node_state_count_and_evidence(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_invalid_evidence_drops_update_and_preserves_prior(monkeypatch, caplog):
+async def test_evidence_validated_upstream_is_persisted_verbatim(monkeypatch):
+    """P2.4 (Q1): the engine's normalized matcher is the single validator — the
+    controller no longer re-checks the quote against the raw transcript, so a
+    quote differing only in case or punctuation is no longer silently dropped."""
     row = SimpleNamespace(
         reference_node_id="def_x",
         state="tentative",
@@ -202,7 +231,7 @@ async def test_invalid_evidence_drops_update_and_preserves_prior(monkeypatch, ca
         "evaluate_and_ask",
         lambda **kwargs: _async_result(
             UnifiedQuestionResult(
-                (TallyUpdate("def_x", "understood", EvidenceQuote(0, "invented"), True),),
+                (TallyUpdate("def_x", "understood", EvidenceQuote(0, "X Matters, really")),),
                 "done",
                 None,
                 None,
@@ -210,21 +239,52 @@ async def test_invalid_evidence_drops_update_and_preserves_prior(monkeypatch, ca
             )
         ),
     )
-    with caplog.at_level("WARNING"):
-        result = await controller.plan_next_question(
-            db,
-            course_id=11,
-            attempt_id=2,
-            session_id=3,
-            problem=_problem(),
-            transcript=[("student", "new words")],
-            turn_index=2,
-        )
+    result = await controller.plan_next_question(
+        db,
+        course_id=11,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "well x matters really!")],
+        turn_index=2,
+    )
     assert result.action == "done"
-    assert row.state == "tentative"
-    assert row.evidence == [{"turn_id": 0, "quote": "old quote"}]
-    assert row.student_declined is False
-    assert "apollo_question_opportunity_invalid_evidence" in caplog.text
+    assert row.state == "understood"
+    assert row.evidence == [
+        {"turn_id": 0, "quote": "old quote"},
+        {"turn_id": 0, "quote": "X Matters, really"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_decision_reports_graded_topic_counts_for_the_coverage_meter(monkeypatch):
+    """Cross-repo contract: chat.py serves `graded_topic_total` /
+    `open_graded_topics` from these counts."""
+    db = _DB([])
+
+    async def evaluate(**kwargs):
+        return UnifiedQuestionResult(
+            (TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters")),),
+            "ask",
+            "step_y",
+            "Go on. How do you combine them?",
+            "How do you combine them?",
+        )
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    result = await controller.plan_next_question(
+        db,
+        course_id=11,
+        attempt_id=2,
+        session_id=3,
+        problem=_graded_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=0,
+    )
+    # The understood node is ungraded, so the one graded node is still open.
+    assert result.graded_topic_total == 1
+    assert result.open_graded_topics == 1
+    assert result.covered_topics == (controller.CoveredTopic("def_x", "x"),)
 
 
 async def _async_result(value):
@@ -322,8 +382,8 @@ def test_controller_defensive_tally_decoders_and_validation():
     assert (
         controller._build_tally_state(SimpleNamespace(nodes=[node]), [row])[0].status == "missing"
     )
-    assert controller._valid_update_evidence(TallyUpdate("fallback", "missing"), [])
-    assert not controller._valid_update_evidence(TallyUpdate("fallback", "understood"), [])
+    # P2.4: the controller's raw-substring re-validator is gone for good.
+    assert not hasattr(controller, "_valid_update_evidence")
 
 
 @pytest.mark.asyncio
@@ -378,7 +438,7 @@ async def test_covered_topics_snapshot_includes_node_understood_this_turn(monkey
 
     async def evaluate(**kwargs):
         return UnifiedQuestionResult(
-            (TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters"), False),),
+            (TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters")),),
             "done",
             None,
             None,
@@ -405,7 +465,7 @@ async def test_covered_topics_excludes_non_understood_nodes(monkeypatch):
     db = _DB([])
 
     async def evaluate(**kwargs):
-        return _ask(TallyUpdate("def_x", "tentative", EvidenceQuote(0, "x matters"), False))
+        return _ask(TallyUpdate("def_x", "tentative", EvidenceQuote(0, "x matters")))
 
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(

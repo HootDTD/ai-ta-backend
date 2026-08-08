@@ -14,12 +14,22 @@ from typing import Any, Literal, cast
 
 from apollo.agent._llm import bounded_client
 from apollo.ontology import KGGraph
+from apollo.smart_questions.selection import (
+    MAX_ASKS_PER_NODE,
+    SelectionPolicy,
+    build_selection_policy,
+    is_graded,
+    ordered_nodes,
+)
 
 LearnerState = Literal["understood", "tentative", "missing", "conflicting"]
 FallbackReason = Literal[
     "malformed_regenerated",
     "malformed_exhausted",
     "budget_exhausted",
+    "off_policy_regenerated",
+    "off_policy_exhausted",
+    "no_probeable_node",
 ]
 
 _VALID_STATES: set[str] = {"understood", "tentative", "missing", "conflicting"}
@@ -61,7 +71,6 @@ class TallyState:
     label: str
     status: LearnerState
     evidence: tuple[EvidenceQuote, ...] = ()
-    student_declined: bool = False
     times_asked: int = 0
     last_asked_turn: int | None = None
 
@@ -71,7 +80,6 @@ class TallyUpdate:
     node_id: str
     status: LearnerState
     evidence: EvidenceQuote | None = None
-    student_declined: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -138,13 +146,11 @@ def _schema() -> dict[str, Any]:
                             "node_id",
                             "status",
                             "evidence",
-                            "student_declined",
                         ],
                         "properties": {
                             "node_id": {"type": "string"},
                             "status": {"type": "string", "enum": sorted(_VALID_STATES)},
                             "evidence": evidence,
-                            "student_declined": {"type": ["boolean", "null"]},
                         },
                     },
                 },
@@ -173,10 +179,18 @@ TALLY DUTY:
   do not re-derive the conversation history.
 - Use understood, tentative, conflicting, or missing. Every non-missing update needs one exact,
   verbatim quote and its student turn_id. Never manufacture, clean up, or paraphrase evidence.
-- Set student_declined=true when the student explicitly says they do not know or are not sure.
-  It remains true unless the student volunteers new information and you explicitly set it false.
-- Never re-ask the substance of a node whose prior state is understood or student_declined=true,
-  unless the student has just volunteered new information about it.
+- Never re-ask the substance of a node whose prior state is understood, unless the student has
+  just volunteered new information about it.
+
+PRIORITY (graded territory first):
+- Every private reference node carries graded=true or graded=false. The graded ones are what the
+  student's explanation is finally judged on; the ungraded ones are background vocabulary. The
+  payload lists graded nodes first.
+- budget.askable_node_ids is the complete list of nodes you may target this turn, graded ones
+  first. Target one of them and nothing else — a node outside that list is not available to you.
+- budget.reserved_for_graded is how many questions are being held for still-open graded nodes.
+  When only that many questions remain, askable_node_ids contains graded nodes only: spend what
+  is left there rather than on background vocabulary.
 
 RE-ASKING (confirm once, then move on):
 - Each node's times_asked in tally_state counts how many earlier turns already probed it.
@@ -184,17 +198,16 @@ RE-ASKING (confirm once, then move on):
   knowledge, not repeating yourself: ask from a genuinely different angle and never reuse your
   earlier wording. Approach the same idea through a new consequence, situation, or next step so a
   good answer this time confirms real understanding rather than a lucky echo.
-- Probe any one node at most twice. If a node's times_asked is 2 or more, do not target it again;
-  you have confirmed as much as this conversation can. Leave its status as it stands.
-- If a re-probe still draws uncertainty or a vague, hedging answer, do not keep pressing: set
-  student_declined=true when the student disclaims, otherwise leave the status and open new
-  territory next.
+- A node already probed twice, or already understood, is absent from askable_node_ids and cannot
+  be targeted again; you have confirmed as much as this conversation can. Leave its status as it
+  stands.
+- If a re-probe still draws uncertainty or a vague, hedging answer, do not keep pressing: leave
+  the status as it stands and open new territory next.
 
 DECISION:
-- Choose ask only for a node you may still productively probe, and target useful unresolved or
-  untouched territory.
-- Choose done when coverage is sufficient, the student signals done, or no node remains that you
-  may still probe (every node is understood, declined, or already probed twice).
+- Choose ask only for a node in askable_node_ids, and prefer useful unresolved or untouched
+  graded territory.
+- Choose done when coverage is sufficient, the student signals done, or askable_node_ids is empty.
 - target_node_id names the territory for bookkeeping. For done, question and target_node_id are null.
 
 STUDENT-FACING TURN:
@@ -282,7 +295,6 @@ def _serialize_tally(tally_state: Sequence[TallyState]) -> list[dict[str, Any]]:
             "label": item.label,
             "status": item.status,
             "evidence": [evidence.__dict__ for evidence in item.evidence],
-            "student_declined": item.student_declined,
             "times_asked": item.times_asked,
             "last_asked_turn": item.last_asked_turn,
         }
@@ -333,14 +345,23 @@ def _decode_updates(
             ):
                 evidence = EvidenceQuote(turn_id=turn_id, quote=quote)
         if status != "missing" and evidence is None:
+            # P2.4: this normalized check is the SINGLE evidence validator — the
+            # controller no longer re-checks raw substrings. Log the drop so a
+            # silently-lost tally update stays observable.
+            _LOG.warning(
+                "apollo_question_evidence_rejected node_id=%s status=%s quote=%r",
+                node_id,
+                status,
+                _bounded_debug_text(
+                    raw_evidence.get("quote") if isinstance(raw_evidence, dict) else None
+                ),
+            )
             continue
-        declined = item.get("student_declined")
         updates.append(
             TallyUpdate(
                 node_id=node_id,
                 status=cast(LearnerState, status),
                 evidence=evidence,
-                student_declined=declined if isinstance(declined, bool) else None,
             )
         )
     return tuple(updates)
@@ -445,22 +466,28 @@ _MALFORMED_FEEDBACK = (
 )
 
 
+def _off_policy_feedback(askable_ids: Sequence[str]) -> str:
+    """Name the only targets left, so the retry lands inside the reserved set."""
+    return (
+        "Forbidden class: target outside askable_node_ids. Regenerate with target_node_id set to "
+        f"one of: {', '.join(askable_ids)} — and ask about that node."
+    )
+
+
 def _fallback_public_question(
     *,
     public_parts: Sequence[str],
     reference_graph: KGGraph,
-    tally_state: Sequence[TallyState],
-    updates: Sequence[TallyUpdate],
+    target_node_id: str | None,
 ) -> str:
+    """A verbatim public clause standing in for the target node's question."""
     if not public_parts:
         return "?"
-    status_by_id = {item.node_id: item.status for item in tally_state}
-    status_by_id.update({item.node_id: item.status for item in updates})
     index = next(
         (
             node_index
             for node_index, node in enumerate(reference_graph.nodes)
-            if status_by_id.get(node.node_id, "missing") != "understood"
+            if node.node_id == target_node_id
         ),
         0,
     )
@@ -483,6 +510,133 @@ def _effective_counts(
     return Counter(statuses.values())
 
 
+def _build_payload(
+    *,
+    problem_text: str,
+    public_parts: Sequence[str],
+    reference_graph: KGGraph,
+    tally_state: Sequence[TallyState],
+    budget: QuestionBudget,
+    policy: SelectionPolicy,
+    transcript: Sequence[tuple[str, str]],
+) -> dict[str, Any]:
+    """Serialize the call payload with graded nodes first and the askable set named."""
+    return {
+        "public_problem": problem_text,
+        "public_question_parts": [
+            {"index": index, "text": text} for index, text in enumerate(public_parts)
+        ],
+        "private_reference_nodes": [
+            {
+                "node_id": node.node_id,
+                "type": node.node_type,
+                "graded": is_graded(node),
+                "content": node.content.model_dump(),
+            }
+            for node in ordered_nodes(reference_graph)
+        ],
+        "private_reference_edges": [edge.model_dump(mode="json") for edge in reference_graph.edges],
+        "tally_state": _serialize_tally(tally_state),
+        "budget": {
+            "questions_asked": budget.questions_asked,
+            "cap": budget.cap,
+            "reserved_for_graded": policy.reserved_for_graded,
+            "askable_node_ids": list(policy.askable_ids),
+        },
+        "transcript": [
+            {"turn_id": turn_id, "role": role, "content": content}
+            for turn_id, (role, content) in enumerate(transcript)
+        ],
+    }
+
+
+@dataclass(frozen=True)
+class _ServedReply:
+    reply: str
+    question: str
+    target: str
+    fallback_reason: FallbackReason | None
+    belt_hit_served: bool
+    draft_verdict: _BeltVerdict
+    regenerate_decoded: dict[str, Any] | None = None
+    regenerate_verdict: _BeltVerdict | None = None
+
+
+async def _resolve_served_reply(
+    *,
+    decoded: dict[str, Any],
+    raw: str,
+    base_messages: list[dict[str, str]],
+    payload: dict[str, Any],
+    policy: SelectionPolicy,
+    target: str,
+    reference_graph: KGGraph,
+    problem_text: str,
+    student_messages: Sequence[str],
+    public_parts: Sequence[str],
+) -> _ServedReply:
+    """One regenerate at most, for an off-policy target OR a malformed shape."""
+
+    def belt(text: str) -> _BeltVerdict:
+        return _belt_verdict(
+            text,
+            reference_graph=reference_graph,
+            public_text=problem_text,
+            student_messages=student_messages,
+        )
+
+    reply, question = _student_reply(decoded)
+    verdict = belt(reply)
+    off_policy = target not in policy.askable_ids
+    if not off_policy and not verdict.malformed:
+        return _ServedReply(reply, question, target, None, verdict.hit, verdict)
+
+    reason: FallbackReason = "off_policy_regenerated" if off_policy else "malformed_regenerated"
+    feedback = _off_policy_feedback(policy.askable_ids) if off_policy else _MALFORMED_FEEDBACK
+    regenerate_raw = await asyncio.to_thread(
+        _call_unified,
+        payload=payload,
+        messages=[
+            *base_messages,
+            {"role": "assistant", "content": raw},
+            {"role": "user", "content": feedback},
+        ],
+    )
+    regenerate_decoded = _decode(regenerate_raw)
+    reply, question = _student_reply(regenerate_decoded)
+    regenerate_verdict = belt(reply)
+    retried_target = regenerate_decoded.get("target_node_id")
+    if isinstance(retried_target, str) and retried_target in policy.askable_ids:
+        target, off_policy = retried_target, False
+    if off_policy or regenerate_verdict.malformed:
+        target = policy.askable_ids[0]
+        reply = question = _fallback_public_question(
+            public_parts=public_parts,
+            reference_graph=reference_graph,
+            target_node_id=target,
+        )
+        return _ServedReply(
+            reply,
+            question,
+            target,
+            "off_policy_exhausted" if off_policy else "malformed_exhausted",
+            False,
+            verdict,
+            regenerate_decoded,
+            regenerate_verdict,
+        )
+    return _ServedReply(
+        reply,
+        question,
+        target,
+        reason,
+        regenerate_verdict.hit,
+        verdict,
+        regenerate_decoded,
+        regenerate_verdict,
+    )
+
+
 async def evaluate_and_ask(
     *,
     transcript: Sequence[tuple[str, str]],
@@ -491,13 +645,14 @@ async def evaluate_and_ask(
     tally_state: Sequence[TallyState],
     budget: QuestionBudget,
 ) -> UnifiedQuestionResult:
-    """Apply the hard budget, then make one call and at most one malformed-shape regenerate."""
+    """Apply the hard budget and the selection policy around one call (+ ≤1 regenerate)."""
     if budget.questions_asked >= budget.cap:
         _log_decision(
             tally_counts=_effective_counts(tally_state, ()),
             action="done",
             target=None,
             budget=budget,
+            policy=None,
             fallback_reason="budget_exhausted",
             belt_hit_served=False,
             repeated_question_served=False,
@@ -507,39 +662,43 @@ async def evaluate_and_ask(
     problem_text = str(problem.problem_text)
     public_parts = _public_question_parts(problem_text)
     student_messages = [content for role, content in transcript if role == "student"]
-    payload = {
-        "public_problem": problem_text,
-        "public_question_parts": [
-            {"index": index, "text": text} for index, text in enumerate(public_parts)
-        ],
-        "private_reference_nodes": [
-            {"node_id": node.node_id, "type": node.node_type, "content": node.content.model_dump()}
-            for node in reference_graph.nodes
-        ],
-        "private_reference_edges": [edge.model_dump(mode="json") for edge in reference_graph.edges],
-        "tally_state": _serialize_tally(tally_state),
-        "budget": budget.__dict__,
-        "transcript": [
-            {"turn_id": turn_id, "role": role, "content": content}
-            for turn_id, (role, content) in enumerate(transcript)
-        ],
-    }
+    valid_ids = {node.node_id for node in reference_graph.nodes}
+    payload = _build_payload(
+        problem_text=problem_text,
+        public_parts=public_parts,
+        reference_graph=reference_graph,
+        tally_state=tally_state,
+        budget=budget,
+        policy=build_selection_policy(
+            reference_graph=reference_graph,
+            tally_state=tally_state,
+            questions_asked=budget.questions_asked,
+            cap=budget.cap,
+        ),
+        transcript=transcript,
+    )
     base_messages = _base_messages(payload)
     raw = await asyncio.to_thread(_call_unified, payload=payload, messages=base_messages)
     decoded = _decode(raw)
-    updates = _decode_updates(
-        decoded,
-        valid_ids={node.node_id for node in reference_graph.nodes},
-        transcript=transcript,
+    updates = _decode_updates(decoded, valid_ids=valid_ids, transcript=transcript)
+    # Re-resolve after this turn's updates: a node just understood stops being a
+    # target, and an emptied askable set IS the code-enforced done condition.
+    policy = build_selection_policy(
+        reference_graph=reference_graph,
+        tally_state=tally_state,
+        updates=updates,
+        questions_asked=budget.questions_asked,
+        cap=budget.cap,
     )
 
-    if decoded.get("action") == "done":
+    if decoded.get("action") == "done" or not policy.askable_ids:
         _log_decision(
             tally_counts=_effective_counts(tally_state, updates),
             action="done",
             target=None,
             budget=budget,
-            fallback_reason=None,
+            policy=policy,
+            fallback_reason=None if decoded.get("action") == "done" else "no_probeable_node",
             belt_hit_served=False,
             repeated_question_served=False,
         )
@@ -547,74 +706,41 @@ async def evaluate_and_ask(
         return UnifiedQuestionResult(updates, "done", None, None, None)
 
     requested_target = decoded.get("target_node_id")
-    valid_ids = {node.node_id for node in reference_graph.nodes}
-    effective_status = {item.node_id: item.status for item in tally_state}
-    effective_status.update({item.node_id: item.status for item in updates})
-    target = (
-        requested_target
-        if isinstance(requested_target, str) and requested_target in valid_ids
-        else next(
-            (
-                item.node_id
-                for item in tally_state
-                if effective_status[item.node_id] != "understood"
-            ),
-            reference_graph.nodes[0].node_id if reference_graph.nodes else None,
-        )
-    )
-    reply, question = _student_reply(decoded)
-    verdict = _belt_verdict(
-        reply,
+    served = await _resolve_served_reply(
+        decoded=decoded,
+        raw=raw,
+        base_messages=base_messages,
+        payload=payload,
+        policy=policy,
+        target=(
+            requested_target
+            if isinstance(requested_target, str) and requested_target in valid_ids
+            else policy.askable_ids[0]
+        ),
         reference_graph=reference_graph,
-        public_text=problem_text,
+        problem_text=problem_text,
         student_messages=student_messages,
+        public_parts=public_parts,
     )
-    fallback_reason: FallbackReason | None = None
-    regenerate_decoded: dict[str, Any] | None = None
-    regenerate_verdict: _BeltVerdict | None = None
-    belt_hit_served = verdict.hit
-    if verdict.malformed:
-        fallback_reason = "malformed_regenerated"
-        regenerate_messages = [
-            *base_messages,
-            {"role": "assistant", "content": raw},
-            {"role": "user", "content": _MALFORMED_FEEDBACK},
-        ]
-        regenerate_raw = await asyncio.to_thread(
-            _call_unified, payload=payload, messages=regenerate_messages
-        )
-        regenerate_decoded = _decode(regenerate_raw)
-        reply, question = _student_reply(regenerate_decoded)
-        regenerate_verdict = _belt_verdict(
-            reply,
-            reference_graph=reference_graph,
-            public_text=problem_text,
-            student_messages=student_messages,
-        )
-        belt_hit_served = regenerate_verdict.hit
-        if regenerate_verdict.malformed:
-            reply = question = _fallback_public_question(
-                public_parts=public_parts,
-                reference_graph=reference_graph,
-                tally_state=tally_state,
-                updates=updates,
-            )
-            fallback_reason = "malformed_exhausted"
-            belt_hit_served = False
-
     prior_questions = {_normalized(item) for item in _transcript_questions(transcript)}
-    repeated = _normalized(question) in prior_questions
     _log_decision(
         tally_counts=_effective_counts(tally_state, updates),
         action="ask",
-        target=target,
+        target=served.target,
         budget=budget,
-        fallback_reason=fallback_reason,
-        belt_hit_served=belt_hit_served,
-        repeated_question_served=repeated,
+        policy=policy,
+        fallback_reason=served.fallback_reason,
+        belt_hit_served=served.belt_hit_served,
+        repeated_question_served=_normalized(served.question) in prior_questions,
     )
-    _log_debug_cycle(decoded, verdict, regenerate_decoded, regenerate_verdict, reply)
-    return UnifiedQuestionResult(updates, "ask", target, reply, question)
+    _log_debug_cycle(
+        decoded,
+        served.draft_verdict,
+        served.regenerate_decoded,
+        served.regenerate_verdict,
+        served.reply,
+    )
+    return UnifiedQuestionResult(updates, "ask", served.target, served.reply, served.question)
 
 
 def _transcript_questions(transcript: Sequence[tuple[str, str]]) -> list[str]:
@@ -671,19 +797,26 @@ def _log_decision(
     action: str,
     target: str | None,
     budget: QuestionBudget,
+    policy: SelectionPolicy | None,
     fallback_reason: FallbackReason | None,
     belt_hit_served: bool,
     repeated_question_served: bool,
 ) -> None:
     _LOG.info(
         "apollo_unified_question_decision model=%s action=%s target=%s tally=%s "
-        "budget=%s/%s fallback_reason=%s belt_hit_served=%s repeated_question_served=%s",
+        "budget=%s/%s graded_open=%s/%s reserved_for_graded=%s graded_only=%s askable=%s "
+        "fallback_reason=%s belt_hit_served=%s repeated_question_served=%s",
         os.getenv("APOLLO_UNIFIED_QUESTION_MODEL") or _DEFAULT_MODEL,
         action,
         target,
         dict(sorted(tally_counts.items())),
         budget.questions_asked,
         budget.cap,
+        policy.open_graded_topics if policy is not None else None,
+        policy.graded_topic_total if policy is not None else None,
+        policy.reserved_for_graded if policy is not None else None,
+        policy.graded_only if policy is not None else None,
+        len(policy.askable_ids) if policy is not None else None,
         fallback_reason,
         belt_hit_served,
         repeated_question_served,
@@ -691,11 +824,14 @@ def _log_decision(
 
 
 __all__ = [
+    "MAX_ASKS_PER_NODE",
     "EvidenceQuote",
     "QuestionBudget",
+    "SelectionPolicy",
     "TallyState",
     "TallyUpdate",
     "UnifiedQuestionResult",
+    "build_selection_policy",
     "evaluate_and_ask",
     "question_cap",
 ]

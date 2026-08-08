@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import QuestionOpportunity
 from apollo.schemas.problem import Problem
+from apollo.smart_questions.selection import build_selection_policy
 from apollo.smart_questions.unified import (
     EvidenceQuote,
     QuestionBudget,
@@ -41,6 +42,11 @@ class QuestionDecision:
     question: str | None = None
     target_node_id: str | None = None
     covered_topics: tuple[CoveredTopic, ...] = ()
+    #: Graded reference nodes on this problem — the ones the grade is computed
+    #: over. Served to the student-ui pre-Done coverage meter.
+    graded_topic_total: int = 0
+    #: Graded nodes whose tally state is not yet ``understood``.
+    open_graded_topics: int = 0
 
 
 def _node_label(node: Any) -> str:
@@ -89,7 +95,6 @@ def _build_tally_state(reference_graph: Any, rows: list[Any]) -> tuple[TallyStat
                 label=_node_label(node),
                 status=cast(Any, status),
                 evidence=_evidence_rows(row.evidence) if row is not None else (),
-                student_declined=bool(row.student_declined) if row is not None else False,
                 times_asked=int(row.times_asked) if row is not None else 0,
                 last_asked_turn=(
                     int(row.last_asked_turn)
@@ -99,15 +104,6 @@ def _build_tally_state(reference_graph: Any, rows: list[Any]) -> tuple[TallyStat
             )
         )
     return tuple(state)
-
-
-def _valid_update_evidence(update: TallyUpdate, transcript: list[tuple[str, str]]) -> bool:
-    if update.status == "missing" and update.evidence is None:
-        return True
-    if update.evidence is None or not 0 <= update.evidence.turn_id < len(transcript):
-        return False
-    role, content = transcript[update.evidence.turn_id]
-    return role == "student" and update.evidence.quote in content
 
 
 def _new_opportunity_row(
@@ -121,7 +117,6 @@ def _new_opportunity_row(
         state="missing",
         question="",
         evidence=[],
-        student_declined=False,
         times_asked=0,
     )
 
@@ -134,18 +129,17 @@ def _apply_tally_updates(
     attempt_id: int,
     rows: list[Any],
     updates: tuple[TallyUpdate, ...],
-    transcript: list[tuple[str, str]],
 ) -> dict[str, Any]:
+    """Persist the engine's tally updates.
+
+    P2.4: there is no second evidence check here. ``unified._decode_updates``
+    already rejected (and logged) any non-``missing`` update whose quote is not
+    a normalized verbatim match inside the cited student turn; the old raw
+    case/punctuation-sensitive re-check only ever dropped valid updates, which
+    left nodes stuck ``missing`` and made Apollo re-probe covered territory.
+    """
     by_id = {str(row.reference_node_id): row for row in rows}
     for update in updates:
-        if not _valid_update_evidence(update, transcript):
-            _LOG.warning(
-                "apollo_question_opportunity_invalid_evidence attempt_id=%s node_id=%s turn_id=%s",
-                attempt_id,
-                update.node_id,
-                update.evidence.turn_id if update.evidence is not None else None,
-            )
-            continue
         row = by_id.get(update.node_id)
         if row is None:
             row = _new_opportunity_row(
@@ -166,14 +160,10 @@ def _apply_tally_updates(
             if serialized not in evidence:
                 evidence.append(serialized)
             row.evidence = evidence
-        if update.student_declined is not None:
-            row.student_declined = update.student_declined
     return by_id
 
 
-def _covered_topics(
-    reference_graph: Any, tally_by_id: dict[str, Any]
-) -> tuple[CoveredTopic, ...]:
+def _covered_topics(reference_graph: Any, tally_by_id: dict[str, Any]) -> tuple[CoveredTopic, ...]:
     """Current covered snapshot: every reference node whose tally status is
     ``understood`` after this turn's updates, with its human label. A node with
     no tally row defaults to ``missing`` and is absent (never celebrated). The
@@ -271,9 +261,14 @@ async def plan_next_question(
         attempt_id=attempt_id,
         rows=opportunity_rows,
         updates=result.tally_updates,
-        transcript=transcript,
     )
     covered_topics = _covered_topics(reference_graph, tally_by_id)
+    policy = build_selection_policy(
+        reference_graph=reference_graph,
+        tally_state=_build_tally_state(reference_graph, list(tally_by_id.values())),
+        questions_asked=budget.questions_asked,
+        cap=budget.cap,
+    )
 
     if result.action == "ask" and result.target_node_id is not None:
         target_row = tally_by_id.get(result.target_node_id)
@@ -299,10 +294,17 @@ async def plan_next_question(
         turn_index=turn_index,
     )
     if result.action == "done":
-        return QuestionDecision(action="done", covered_topics=covered_topics)
+        return QuestionDecision(
+            action="done",
+            covered_topics=covered_topics,
+            graded_topic_total=policy.graded_topic_total,
+            open_graded_topics=policy.open_graded_topics,
+        )
     return QuestionDecision(
         action="ask",
         question=cast(str, result.reply),
         target_node_id=cast(str, result.target_node_id),
         covered_topics=covered_topics,
+        graded_topic_total=policy.graded_topic_total,
+        open_graded_topics=policy.open_graded_topics,
     )

@@ -60,6 +60,7 @@ Grading-path recipe (D21): to change grading, start at handlers/done (the orches
 | Leaf | Role · owns |
 |---|---|
 | [unified](questioning/unified.md) | evaluate_and_ask one-call engine + log-only belt · smart_questions/unified.py |
+| [selection](questioning/selection.md) | graded-first target policy + 2-ask cap + graded budget reservation · smart_questions/selection.py |
 | [controller](questioning/controller.md) | plan_next_question persistence orchestration · smart_questions/controller.py |
 | [registry](curriculum/registry.md) | filesystem authoring registry · apollo/subjects/__init__.py |
 | [db](curriculum/db.md) | live DB-backed concept loader · apollo/subjects/curriculum_db.py |

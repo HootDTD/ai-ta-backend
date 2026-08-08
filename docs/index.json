@@ -1,8 +1,8 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-07-31",
-  "repo": "perf-v2",
+  "generated_at": "2026-08-07",
+  "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -178,6 +178,7 @@
     "apollo/schemas/variable_map.py": "apollo/schemas/authoring-schemas",
     "apollo/smart_questions/__init__.py": "apollo/conversation/questioning/controller",
     "apollo/smart_questions/controller.py": "apollo/conversation/questioning/controller",
+    "apollo/smart_questions/selection.py": "apollo/conversation/questioning/selection",
     "apollo/smart_questions/unified.py": "apollo/conversation/questioning/unified",
     "apollo/solver/__init__.py": "apollo/solver/sympy-exec",
     "apollo/solver/forward_chain.py": "apollo/solver/sufficiency",
@@ -574,6 +575,14 @@
       "owns": [
         "apollo/smart_questions/controller.py",
         "apollo/smart_questions/__init__.py"
+      ]
+    },
+    "apollo/conversation/questioning/selection": {
+      "path": "docs/architecture/apollo/conversation/questioning/selection.md",
+      "kind": "leaf",
+      "description": "Deterministic question-target policy \u2014 graded-first ordering, the 2-asks-per-node cap, and the graded budget reservation.",
+      "owns": [
+        "apollo/smart_questions/selection.py"
       ]
     },
     "apollo/conversation/questioning/unified": {
@@ -2043,6 +2052,7 @@
         "apollo/conversation/parser/graph-context",
         "apollo/conversation/parser/parser-llm",
         "apollo/conversation/questioning/controller",
+        "apollo/conversation/questioning/selection",
         "apollo/conversation/questioning/unified",
         "apollo/conversation/routing/auth-deps",
         "apollo/conversation/routing/errors",
