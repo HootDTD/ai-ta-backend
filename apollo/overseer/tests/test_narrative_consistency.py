@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from apollo.overseer.narrative_consistency import (
+    FALLBACK_HEADLINE,
     PRAISE_FLOOR,
     enforce_narrative_consistency,
 )
@@ -108,6 +109,14 @@ def test_imperative_instruction_already_names_the_gap() -> None:
     result = enforce_narrative_consistency(feedback, topics=[_topic(credit=0.0)])
 
     assert _note(result) == "Make the continuity step explicit."
+
+
+def test_stripping_praise_keeps_a_surviving_gap_sentence_as_is() -> None:
+    feedback = _feedback("You clearly nailed it. But the mechanism never came through.")
+
+    result = enforce_narrative_consistency(feedback, topics=[_topic(credit=0.0)])
+
+    assert _note(result) == "But the mechanism never came through."
 
 
 def test_mixed_praise_and_gap_sentence_survives() -> None:
@@ -200,14 +209,33 @@ def test_headline_praising_an_uncredited_topic_is_replaced() -> None:
 
 
 def test_generic_headline_praise_that_names_no_topic_survives() -> None:
+    """Praise the ledger cannot contradict is left alone — this gate is not a
+    tone police."""
     feedback = _feedback(
         "Make the continuity step explicit.",
-        headline="You made a serious effort here.",
+        headline="You clearly put real work into this.",
     )
 
     result = enforce_narrative_consistency(feedback, topics=[_topic(credit=0.0)])
 
-    assert result["headline"] == "You made a serious effort here."
+    assert result["headline"] == "You clearly put real work into this."
+
+
+def test_headline_is_matched_against_every_uncredited_topic() -> None:
+    feedback = _feedback(
+        "Make the continuity step explicit.",
+        headline="You clearly explained adoption of the network effect.",
+    )
+
+    result = enforce_narrative_consistency(
+        feedback,
+        topics=[
+            _topic(credit=0.0),
+            _topic(key="t2", credit=0.0, display_name="network effect adoption"),
+        ],
+    )
+
+    assert result["headline"] == FALLBACK_HEADLINE
 
 
 def test_next_step_praising_an_uncredited_topic_falls_back_to_a_teach_it_move() -> None:
@@ -233,6 +261,31 @@ def test_unknown_canonical_key_is_left_alone() -> None:
     result = enforce_narrative_consistency(feedback, topics=[_topic(credit=0.0)])
 
     assert _note(result) == "You clearly explained everything."
+
+
+def test_abbreviation_is_not_a_sentence_boundary() -> None:
+    """ "e.g." must not split praise into a praise half and a stranded half."""
+    feedback = _feedback("You clearly explained it, e.g. with the pipe example.")
+
+    result = enforce_narrative_consistency(feedback, topics=[_topic(credit=0.0)])
+
+    assert "pipe example" not in _note(result)
+
+
+def test_malformed_payload_fields_pass_through_untouched() -> None:
+    """The gate is total: a shape it does not understand is never rewritten."""
+    feedback: dict[str, Any] = {
+        "headline": None,
+        "topic_feedback": ["not a dict", {"canonical_key": "t1"}],
+        "recap": [],
+        "next_step": 7,
+    }
+
+    result = enforce_narrative_consistency(feedback, topics=[_topic(credit=0.0)])
+
+    assert result["headline"] is None
+    assert result["next_step"] == 7
+    assert result["topic_feedback"] == ["not a dict", {"canonical_key": "t1"}]
 
 
 def test_no_topics_returns_an_equal_payload() -> None:
