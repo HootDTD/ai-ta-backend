@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from apollo.overseer.topic_score import TopicScoreResult
 from apollo.overseer.topic_score_serialize import serialize_topic_score
@@ -58,6 +59,11 @@ def build_llm_artifact(
     """Build the canonical artifact from transcript coverage and topic scoring."""
     per_step: dict[str, str] = coverage.get("per_step") or {}
     confidences: dict[str, float] = coverage.get("confidences") or {}
+    # 2026-08-08: the adjudicator's declared evidence class per node
+    # (stated / used / implied / absent). OPTIONAL both ways — the dormant graph
+    # lane emits none, and every artifact written before today has none — so it
+    # is read with `.get` and lands as None rather than being required.
+    basis: dict[str, str] = coverage.get("basis") or {}
     unprobed_keys = _unprobed_keys(topic_score)
     covered = [
         key for key, status in per_step.items() if status == "covered" and key not in unprobed_keys
@@ -77,7 +83,13 @@ def build_llm_artifact(
         {
             "canonical_key": key,
             "status": status,
+            # `method` stays the GRAPH lane's resolver vocabulary (exact /
+            # fuzzy / semantic / nli / clarification, per migration 034's row
+            # comment). `basis` is the transcript adjudicator's evidence class
+            # and gets its own key — two enums in one field would make both
+            # unreadable, and the pair (status, basis) is the whole diagnostic.
             "method": None,
+            "basis": basis.get(key),
             "confidence": confidences.get(key),
             "evidence_span": None,
         }
@@ -94,7 +106,10 @@ def build_llm_artifact(
         len(missing),
         len(unprobed),
     )
-    artifact = {
+    # Annotated because the payload is a heterogeneous JSONB document: without it
+    # mypy narrows the literal to a union of every value type and then rejects the
+    # `scores.topic_score` assignment below (3 pre-existing errors, 2026-08-08).
+    artifact: dict[str, Any] = {
         "grader_used": GRADER_USED_LLM_FALLBACK,
         "versions": {
             "grader": _GRADER_VERSION_LLM_FALLBACK,

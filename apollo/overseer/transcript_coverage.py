@@ -14,7 +14,11 @@ from typing import Any, TypedDict
 from apollo.agent._llm import bounded_client
 from apollo.errors import CoverageGradingError
 from apollo.ontology import KGGraph
-from apollo.overseer.coverage_contract import CoverageVerdict, validate_coverage_verdict
+from apollo.overseer.coverage_contract import (
+    BASIS_VALUES,
+    CoverageVerdict,
+    validate_coverage_verdict,
+)
 from apollo.overseer.topic_score import _GRADED_NODE_TYPES, _display_name_for
 from config.models import MAIN_MODEL
 
@@ -602,6 +606,7 @@ def _to_coverage_verdict(
         "procedure_scores": {},
         "confidences": {},
         "negotiation_counts": {"dual": 0, "disputed": 0, "paraphrased": 0, "skipped": 0},
+        "basis": {},
     }
     for node_id in graded_ids:
         verdict = by_id.get(node_id)
@@ -628,6 +633,27 @@ def _to_coverage_verdict(
         result["per_step"][node_id] = "covered" if verdict.covered and credit >= 0.5 else "missing"
         result["procedure_scores"][node_id] = credit
         result["confidences"][node_id] = verdict.confidence
+        # 2026-08-08: the adjudicator's own answer to WHY this credit exists,
+        # carried out of the verdict instead of dying in a log line. Keyed like
+        # `procedure_scores` (so an omitted node is omitted here too), it pairs
+        # every credit with the evidence class the model declared for it —
+        # `absent` alongside a positive credit is the cell the 2026-08-08 replay
+        # could only count in aggregate. It changes NO grade: nothing in this
+        # module or downstream reads it back, by design (instrument, then size,
+        # then decide whether anything should gate on it).
+        #
+        # A basis outside the schema's own enum is DROPPED, never raised on. The
+        # strict schema makes it near-impossible, but this field is a diagnostic
+        # and a diagnostic must not be able to 503 a grading the student earned —
+        # the node simply has no basis row, exactly like an omitted verdict.
+        if verdict.basis in BASIS_VALUES:
+            result["basis"][node_id] = verdict.basis
+        else:
+            _LOG.warning(
+                "transcript_coverage_basis_off_enum node_id=%s basis=%r action=dropped",
+                node_id,
+                verdict.basis,
+            )
     if include_hoot_assisted:
         # Per-node assist flags, keyed exactly like ``procedure_scores`` so the
         # downstream cap pass (``apollo/overseer/aside_penalty.py``) can pair a

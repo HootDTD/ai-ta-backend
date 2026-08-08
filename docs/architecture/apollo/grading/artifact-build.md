@@ -34,7 +34,8 @@ payload. `handlers/artifact_writer.py` persists its dict to
 ## Data flow
 
 From `coverage.per_step` it derives `node_coverage` and a `node_ledger`
-(`credited` / `unresolved` / `unprobed` rows). `scores.composite` is set to the normalized
+(`credited` / `unresolved` / `unprobed` rows, each carrying the adjudicator's
+`basis`). `scores.composite` is set to the normalized
 `rubric["overall"]["score"]/100`; `scores.llm_rubric` carries the whole rubric.
 When a `TopicScoreResult` is passed, `scores.topic_score =
 serialize_topic_score(topic_score)` (the single serializer). The dict also carries
@@ -71,5 +72,17 @@ serialize_topic_score(topic_score)` (the single serializer). The dict also carri
   of this course is never taught or asked about" is the signal that branch
   exists for — so it matches `LEDGER_STATUS_UNPROBED` explicitly and reports
   `n_unprobed` alongside `mean_coverage` (review fix, 2026-08-08).
+- **Every ledger row records `basis` — in its OWN key, not `method` (2026-08-08).**
+  `basis ∈ {stated, used, implied, absent}` is the transcript adjudicator's own
+  declaration of WHY a credit exists; until now it reached only a log line, which
+  is why the 2026-08-08 replay could count the `absent`-yet-credited cell in
+  aggregate but never per attempt. `method` stays the graph lane's resolver
+  vocabulary (`exact` / `fuzzy` / `semantic` / `nli` / `clarification`, per
+  migration 034's row comment) and remains `None` here — two enums in one field
+  would make both unreadable, and the pair `(status, basis)` is the diagnostic.
+  Read `coverage["basis"]` with `.get`: it is OPTIONAL both ways (the dormant
+  graph lane emits none; every artifact written before 2026-08-08 has none), so a
+  key with no basis lands as `None` rather than failing the write. Nothing scores
+  on it — see [transcript-coverage](../overseer/transcript-coverage.md).
 - `misconceptions` / `edge_ledger` are always empty; `abstention.abstained` is
   `None` (an LLM-only concept, lifted to `false` by the writer).

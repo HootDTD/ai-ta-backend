@@ -58,9 +58,11 @@ frozen KG, so a Neo4j-degraded Done still grades.
   test_coverage_entrypoint_really_accepts_tally_context` pins the unmocked
   signature so a bad merge reds CI instead of prod.
 - From `coverage_contract.py`: `CoverageVerdict` / `NegotiationCounts` TypedDicts
-  + `validate_coverage_verdict` (the frozen verdict schema this module and the
-  dormant `coverage.py` must satisfy). `CoverageVerdict` gains ONE optional
-  additive key, `hoot_assisted: {node_id: bool}` (INTERACTION5); others rejected.
+  + `validate_coverage_verdict` + `BASIS_VALUES` (the frozen verdict schema this
+  module and the dormant `coverage.py` must satisfy). `CoverageVerdict` allows
+  exactly TWO optional additive keys — `hoot_assisted: {node_id: bool}`
+  (INTERACTION5) and `basis: {node_id: stated|used|implied|absent}` (2026-08-08);
+  any other extra key is rejected.
 
 ## Data flow
 
@@ -69,11 +71,11 @@ frozen KG, so a Neo4j-degraded Done still grades.
 nodes become rubric items. One `MAIN_MODEL` structured call (temperature 0) via
 `bounded_client()` (`agent/llm-client`) returns per-node verdicts (covered /
 credit / confidence / evidence_span / basis); each `credit` is snapped onto
-`CREDIT_ANCHORS` BEFORE any consumer sees it. `_to_coverage_verdict` reduces the
-verdicts to `per_step` + `procedure_scores` + `confidences` + zeroed
+`CREDIT_ANCHORS` BEFORE any consumer sees it. `_to_coverage_verdict` reduces them
+to `per_step` + `procedure_scores` + `confidences` + `basis` + zeroed
 `negotiation_counts`, validated before return; `procedure_scores` (anchored
-credit) flows into the [topic score](topic-score.md) and `per_step` into the
-[rubric](rubric.md) axes.
+credit) flows into the [topic score](topic-score.md), `per_step` into the
+[rubric](rubric.md) axes, `basis` into the artifact's `node_ledger`.
 
 The user message is `PROBLEM → RUBRIC ITEMS → [COURSE EVIDENCE] → [HOOT LOOKUP
 ANSWERS] → [LIVE TUTOR TALLY] → DIALOGUE`; every optional block sits before the
@@ -82,30 +84,30 @@ The system prompt appends the matching frames in the same order.
 
 ## Invariants & gotchas
 
-- **Credit is a FOUR-POINT SCALE, not a continuum (2026-08-07 P1.1).**
-  `CREDIT_ANCHORS` is declared in the structured-output schema (`credit: {type:
-  number, enum: [...]}`) AND enforced by `_snap_credit`, which quantizes any
-  off-anchor verdict to the nearest anchor and logs
-  `transcript_coverage_credit_snapped`. Ties snap DOWN (distances rounded to 9 dp
-  so a midpoint like 0.925 is a tie despite float error) — the grader never
-  manufactures credit the model did not judge. This REVERSES the earlier
-  "continuous credit passes through untouched" rule: under `gpt-5.1` the free
-  scale collapsed to the extremes (129 of 259 prod topic credits exactly 0, 114 ≥
-  0.9, 8 mid), which with 1–3 graded nodes made a B unreachable. The snap
-  happens at parse time, so no downstream consumer ever sees an off-anchor credit;
-  that cross-consumer statement (and the one deliberate non-anchor value,
-  [aside-penalty](aside-penalty.md)'s 0.5 cap) lives in [_index](_index.md).
+- **Credit is a FOUR-POINT SCALE, not a continuum (2026-08-07 P1.1).** `CREDIT_ANCHORS` is
+  declared in the structured-output schema (`credit: {type: number, enum: [...]}`) AND
+  enforced by `_snap_credit`, which quantizes any off-anchor verdict to the nearest anchor
+  and logs `transcript_coverage_credit_snapped`. Ties snap DOWN (distances rounded to 9 dp
+  so a midpoint like 0.925 is a tie despite float error) — the grader never manufactures
+  credit the model did not judge. This REVERSES the earlier "continuous credit passes
+  through untouched" rule: under `gpt-5.1` the free scale collapsed to the extremes (129
+  of 259 prod topic credits exactly 0, 114 ≥ 0.9, 8 mid), which with 1–3 graded nodes made
+  a B unreachable. The snap happens at parse time, so no downstream consumer ever sees an
+  off-anchor credit; that cross-consumer statement (and the one deliberate non-anchor
+  value, [aside-penalty](aside-penalty.md)'s 0.5 cap) lives in [_index](_index.md).
 - **Exemplars ARE the calibration (≥2 per anchor), and each is a PARAPHRASE** of
   a real Week-4 transcript: a copied clause would ride a pilot student's words
   into every future call. `test_transcript_coverage_exemplars.py` pins that.
-- **Two levers against the too-cheap 0.6 were measured and REJECTED 2026-08-08;
-  the cheap 0.6 itself is still open.** A prompt content floor (`f625bcf`,
-  REVERTED) moved nothing on its 8–27-char target and drove 5 of 6 deterministic
-  node moves DOWN on long transcripts (one certified partial C(63)→F(8)). A code
-  clamp on `covered=False` re-bimodalizes the grade (B 16→3, median 72→49):
-  `covered` means FULLY covered, the normal shape of a genuine partial. Evidence
-  + the prompt self-contradictions a retry must fix first:
-  `_archive/experiments/2026-08-08-apollo-06-floor.md`.
+- **No code clamp on the model's credit, and no prompt floor** — both measured and
+  REJECTED 2026-08-08; `covered` means FULLY covered, so `covered=False` + a mid
+  credit is the normal shape of a genuine partial. The 0.6 anchor is still too
+  cheap: `_archive/experiments/2026-08-08-apollo-06-floor.md`.
+- **`basis` is PERSISTED and gates NOTHING (2026-08-08)**, so the next lever can
+  be sized before it is written: the adjudicator's evidence class per node, keyed
+  like `procedure_scores` (an omitted node is omitted here too), riding into every
+  `node_ledger` row. An off-enum value is DROPPED with
+  `transcript_coverage_basis_off_enum`, never raised on — a diagnostic must never
+  be able to 503 a grading the student earned.
 - **The credit enum is neither a new failure mode nor a permanent tax.** ONLY an
   error matching `_is_schema_rejection` (a request-validation signature AND a
   schema subject — never a 429/timeout/5xx) drops it; that path rebuilds the
@@ -113,10 +115,10 @@ The system prompt appends the matching frames in the same order.
   `transcript_coverage_credit_enum_downgraded`, latches the enum off for the
   PROCESS (a restart re-arms it, which is when a provider fix would land), and
   earns an EXTRA attempt so it never spends the like-for-like retry a transient
-  fault is entitled to. Downgrading on a transient error would both grade that
-  attempt under the unconstrained schema and forge the "enum unsupported" signal
-  the calibration arm reads — hence the two-part match. `_snap_credit` anchors
-  either way; `credit_enum=` is the fallback, not a caller-facing option.
+  fault is entitled to. Downgrading on a transient error would grade that attempt
+  under the unconstrained schema AND forge the "enum unsupported" signal the
+  calibration arm reads — hence the two-part match. `_snap_credit` anchors either
+  way; `credit_enum=` is the fallback, not a caller-facing option.
 - **The live tally is prior context, never a rail (2026-08-07 P1.3, defect
   U1).** `tally_context` adds ONE data block + ONE prompt rule: a node the tally
   marked `understood` WITH a student quote needs an explicit, dialogue-cited
@@ -125,15 +127,14 @@ The system prompt appends the matching frames in the same order.
   code-level floor, cap, or credit — the burden of proof lives entirely in the
   prompt, so the adjudicator stays the grader of record. `tally_context=None`
   (every caller until `done.py` wires it) reproduces both prompts BYTE FOR BYTE.
-- **The tally RULE and the tally BLOCK appear or disappear together.** Both
-  builders filter rows to the rubric ids, so `build_system_prompt` appends the
-  rule only when given `reference_items` AND ≥1 row survives; a `tally_context`
-  without `reference_items` is ignored and logged
-  (`transcript_coverage_tally_rule_skipped`). Otherwise a tally naming only
-  ungraded definition nodes — which `question_opportunities` rows naturally
-  contain — would leave the model a rule about a block it cannot see.
-  `_adjudicate_verdicts` filters once and hands both builders the same rows and
-  items; the re-adjudication retry re-sends the same context.
+- **The tally RULE and the tally BLOCK appear or disappear together.** Both builders
+  filter rows to the rubric ids, so `build_system_prompt` appends the rule only when
+  given `reference_items` AND ≥1 row survives; a `tally_context` without
+  `reference_items` is ignored and logged (`transcript_coverage_tally_rule_skipped`).
+  Otherwise a tally naming only ungraded definition nodes — which
+  `question_opportunities` rows naturally contain — would leave the model a rule about a
+  block it cannot see. `_adjudicate_verdicts` filters once and hands both builders the
+  same rows and items; the re-adjudication retry re-sends the same context.
 - **`per_step["covered"]` needs `verdict.covered` AND `credit >= 0.5`** — matches
   the graph lane's scored threshold; the credit is never promoted to 1.0.
 - **`validate_span` is diagnostic only** — the serving lane never zeroes or
@@ -157,11 +158,10 @@ The system prompt appends the matching frames in the same order.
 - **The Hoot-aside frame is purely additive (INTERACTION5, default OFF).**
   `hoot_asides=()` reproduces the prompt, the JSON schema, AND the coverage dict
   BYTE-FOR-BYTE. Non-empty asides add the `HOOT LOOKUP ANSWERS` block + the
-  strict-schema `hoot_assisted` boolean, and the verdict carries
-  `hoot_assisted: {node_id: bool}` keyed exactly like `procedure_scores`. An
-  aside is untrusted data and NEVER quotable as student evidence; the flat cap it
-  feeds is applied downstream by [aside-penalty](aside-penalty.md).
-
+  strict-schema `hoot_assisted` boolean, and the verdict carries `hoot_assisted:
+  {node_id: bool}` keyed exactly like `procedure_scores`. An aside is untrusted data and
+  NEVER quotable as student evidence; the flat cap it feeds is applied downstream by
+  [aside-penalty](aside-penalty.md).
 ## Related
 
 Grade-of-record and composite-retirement invariants live in [_index](_index.md).
