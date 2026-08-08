@@ -321,6 +321,13 @@ def _build_rubric_items(reference_graph: KGGraph) -> list[dict]:
 # four-item list in their own words), the 0.6 case is attempt 158 (right
 # direction, none of the item's substance), and the last 0 case is the
 # bare-agreement pattern the anti-gaming rail already forbids.
+#
+# The paraphrase is CALIBRATION-NEUTRAL, measured not assumed: with the reverted
+# 0.6 floor out of the prompt, attempts 158 / 73 / 159 were replayed live 8 times
+# each against this wording and every one reproduced its pre-paraphrase grade —
+# 158 C(63) with 0.85/0.6/0.6 in 8 of 8, nothing like the F(8) the floor produced
+# 4 of 4. The -55 point regression on 158 belongs to the floor alone.
+# `docs/_archive/experiments/2026-08-08-apollo-06-floor.md` §"Bisect".
 _CALIBRATION_EXEMPLARS = (
     " CALIBRATION EXAMPLES (the wording is illustrative; the pattern is what matters)."
     " 1.0 — the student states the item's substance in their own words and, where the item calls "

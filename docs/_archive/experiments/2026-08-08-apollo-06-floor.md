@@ -99,6 +99,39 @@ wave-3 credit log lines, `absent|0.6` is 39 (5.8%) versus ~30% for
 never persisted — which is what the `basis` persistence work (same day) fixes.
 **Instrument first, size second, gate third.**
 
+## Bisect: was `378a789`'s paraphrase a second suspect?
+
+The re-validation dismissed the paraphrase on the grounds that "158 is stable at
+C(63) across the hardened samples" — those were the **pre-floor** numbers, read
+from the wrong arm. 158 is in fact the round's largest regression *and* the exact
+transcript whose verbatim clause the paraphrase rewrote, so the two changes had to
+be separated.
+
+**Arm.** The worktree with `f625bcf` reverted, i.e. the pre-floor prompt plus the
+paraphrase and nothing else. Verified two ways: `git diff 1b990d6 HEAD --
+apollo/overseer/transcript_coverage.py` shows only the paraphrased clause and its
+comment, and the harness dumps the prompt it actually sends
+(`floor_present: false`, `verbatim_158_present: false`, `paraphrase_present: true`,
+3221 chars).
+
+**8 samples** (2 runs × 4), 24 live calls, 0 errors, `Semaphore(10)`, temp 0.
+
+| attempt | wave-4 PREFLOOR (4/4) | wave-4 HARDENED, floor in (4/4) | **BISECT, paraphrase only (8 samples)** |
+|---|---|---|---|
+| 158 | C(63) · 0.85 / 0.6 / 0.6 | **F(8)** · 0.6 / 0.0 / 0.0 | **C(63) 8/8**, credits identical to pre-floor 8/8 |
+| 73 | B−(73) · 0.6 / 1.0 | **D(32)** · 0.0 / 1.0 | **B−(73) 8/8**, credits identical 8/8 |
+| 159 | C+(69) · 1.0 / 0.6 | C+(66) · 0.85 / 0.6 | **C+ 8/8**; 69 in 6/8, 66 in 2/8 |
+
+**Verdict: `378a789` is exonerated and stays, unchanged.** It reproduces the
+pre-floor grade on all three, including the two the floor destroyed. 159's single
+node flip (1.0 ↔ 0.85) appears in *both* directions inside one arm, so it is the
+pipeline's own non-determinism, not an effect of either commit — the letter never
+moves. No rewrite of the exemplar's shape was needed; the thin-but-genuine
+partial still calibrates at 0.6.
+
+Artifacts: `replay/run-p1/clamp/run_bisect.py`, `bisect_paraphrase.jsonl`,
+`bisect_paraphrase_s5_8.jsonl`, `bisect.json`, `system_prompt_*.txt`.
+
 ## Standing constraints (unchanged)
 
 * P1 code and the P1.4 re-authored rubric bank **ship together**. The false-pass
