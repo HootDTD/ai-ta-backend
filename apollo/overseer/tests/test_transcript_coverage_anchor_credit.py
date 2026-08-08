@@ -14,8 +14,11 @@ Policy under test:
   the real Week-4 transcript patterns;
 * a credit the model still returns off-anchor is SNAPPED to the nearest anchor
   (ties resolve DOWN — never invent credit the model did not judge) and logged;
-* the enum can never become a new hard-failure mode: if the first provider call
-  fails, the retry drops the enum and the code snap alone enforces the anchors.
+* the enum can never become a new hard-failure mode: an error that REJECTS the
+  schema drops the enum (and latches it off for the process) while the code snap
+  alone enforces the anchors — but a transient 429/timeout is retried
+  like-for-like, so a rate limit can neither degrade one grade to the pre-P1.1
+  schema nor forge the "enum unsupported" signal the calibration arm reads.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from apollo.errors import CoverageGradingError
 from apollo.ontology import KGGraph, build_node
 from apollo.overseer.coverage_contract import validate_coverage_verdict
 from apollo.overseer.transcript_coverage import (
@@ -35,6 +39,8 @@ from apollo.overseer.transcript_coverage import (
     build_transcript_grader_schema,
     compute_transcript_coverage,
     compute_transcript_coverage_with_spans,
+    credit_enum_supported,
+    reset_credit_enum_support,
 )
 
 pytestmark = pytest.mark.unit
@@ -252,23 +258,31 @@ async def test_credit_just_over_half_snaps_up_to_partial_and_stays_covered():
 
 
 # --------------------------------------------------------------------------- #
-# The enum is never a new failure mode
+# The enum is never a new failure mode — and never downgraded on a transient one
 # --------------------------------------------------------------------------- #
+_SCHEMA_REJECTION = RuntimeError(
+    "Error code: 400 - Invalid schema for response_format 'apollo_transcript_coverage': "
+    "'enum' is not permitted for 'number'"
+)
+_TRANSIENT = RuntimeError("Error code: 429 - Rate limit reached for gpt-5.1")
+
+
+async def _run(client: MagicMock):
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
+        return await compute_transcript_coverage(
+            [("student", "I integrate now")], _graph(), _problem()
+        )
+
+
 @pytest.mark.asyncio
-async def test_provider_failure_retries_without_the_credit_enum():
+async def test_schema_rejection_retries_without_the_credit_enum():
     """A provider that rejects a numeric enum must not take grading down: the
-    second attempt sends the pre-P1.1 schema and the code snap still enforces
+    next attempt sends the pre-P1.1 schema and the code snap still enforces
     the anchors."""
     client = _client({"verdicts": [_item(0.79)]})
     good = client.chat.completions.create.return_value
-    client.chat.completions.create.side_effect = [
-        RuntimeError("400 Invalid schema for response_format"),
-        good,
-    ]
-    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
-        result = await compute_transcript_coverage(
-            [("student", "I integrate now")], _graph(), _problem()
-        )
+    client.chat.completions.create.side_effect = [_SCHEMA_REJECTION, good]
+    result = await _run(client)
     assert client.chat.completions.create.call_count == 2
     assert "enum" in _credit_schema(client, 0)
     assert "enum" not in _credit_schema(client, 1)
@@ -277,16 +291,96 @@ async def test_provider_failure_retries_without_the_credit_enum():
 
 
 @pytest.mark.asyncio
-async def test_downgrade_is_logged(caplog):
+async def test_schema_rejection_downgrade_is_logged(caplog):
     client = _client({"verdicts": [_item(1.0)]})
     good = client.chat.completions.create.return_value
-    client.chat.completions.create.side_effect = [RuntimeError("boom"), good]
+    client.chat.completions.create.side_effect = [_SCHEMA_REJECTION, good]
     with caplog.at_level(logging.WARNING, logger="apollo.overseer.transcript_coverage"):
-        with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=client):
-            await compute_transcript_coverage(
-                [("student", "I integrate now")], _graph(), _problem()
-            )
+        await _run(client)
     assert any(
         "transcript_coverage_credit_enum_downgraded" in record.getMessage()
         for record in caplog.records
     )
+
+
+@pytest.mark.asyncio
+async def test_transient_error_retries_with_the_enum_intact(caplog):
+    """A 429/timeout/5xx says nothing about the schema. Downgrading on it would
+    (a) silently grade that attempt under the unconstrained pre-P1.1 schema, so
+    the model re-emits the 0.9/0.95/0 distribution P1.1 exists to break, and
+    (b) fire the log line the calibration arm reads as proof the enum is
+    unsupported — dropping the enum repo-wide on one rate limit."""
+    client = _client({"verdicts": [_item(0.79)]})
+    good = client.chat.completions.create.return_value
+    client.chat.completions.create.side_effect = [_TRANSIENT, good]
+    with caplog.at_level(logging.WARNING, logger="apollo.overseer.transcript_coverage"):
+        result = await _run(client)
+    assert client.chat.completions.create.call_count == 2
+    assert "enum" in _credit_schema(client, 0)
+    assert "enum" in _credit_schema(client, 1)
+    assert not any(
+        "transcript_coverage_credit_enum_downgraded" in record.getMessage()
+        for record in caplog.records
+    )
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.85)
+
+
+@pytest.mark.asyncio
+async def test_two_transient_errors_still_fail_closed():
+    """The like-for-like retry budget is unchanged by P1.1: two transient
+    failures raise the structured grading error, never a fabricated grade."""
+    client = _client({"verdicts": [_item(1.0)]})
+    client.chat.completions.create.side_effect = [_TRANSIENT, _TRANSIENT]
+    with pytest.raises(CoverageGradingError):
+        await _run(client)
+    assert client.chat.completions.create.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_schema_downgrade_does_not_consume_the_transient_retry():
+    """Dropping the enum is a schema change, not a fault, so it earns its own
+    attempt: a rejection followed by a 429 still gets one like-for-like retry."""
+    client = _client({"verdicts": [_item(0.95)]})
+    good = client.chat.completions.create.return_value
+    client.chat.completions.create.side_effect = [_SCHEMA_REJECTION, _TRANSIENT, good]
+    result = await _run(client)
+    assert client.chat.completions.create.call_count == 3
+    assert "enum" in _credit_schema(client, 0)
+    assert "enum" not in _credit_schema(client, 1)
+    assert "enum" not in _credit_schema(client, 2)
+    assert result["procedure_scores"]["p1"] == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_schema_rejection_latches_the_enum_off_for_the_process():
+    """A genuine rejection is deterministic — re-sending the enum on every later
+    Done would cost a wasted full-prompt adjudication call per grade forever."""
+    first = _client({"verdicts": [_item(1.0)]})
+    first.chat.completions.create.side_effect = [
+        _SCHEMA_REJECTION,
+        first.chat.completions.create.return_value,
+    ]
+    await _run(first)
+    assert credit_enum_supported() is False
+
+    later = _client({"verdicts": [_item(1.0)]})
+    await _run(later)
+    later.chat.completions.create.assert_called_once()
+    assert "enum" not in _credit_schema(later, 0)
+
+
+@pytest.mark.asyncio
+async def test_a_transient_failure_never_latches_the_enum_off():
+    client = _client({"verdicts": [_item(1.0)]})
+    good = client.chat.completions.create.return_value
+    client.chat.completions.create.side_effect = [_TRANSIENT, good]
+    await _run(client)
+    assert credit_enum_supported() is True
+
+
+def test_the_latch_starts_armed_and_can_be_re_armed():
+    """The conftest fixture re-arms it around every test; a deploy re-arms it in
+    production, which is exactly when a provider-side fix would land."""
+    assert credit_enum_supported() is True
+    reset_credit_enum_support()
+    assert credit_enum_supported() is True

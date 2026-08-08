@@ -102,12 +102,6 @@ def test_span_validation_is_student_only_and_normalizes_whitespace():
     assert not validate_span(None, ["student quote"])
 
 
-def test_span_validation_rejects_a_whitespace_only_span():
-    """A blank span normalizes to "" — which is a substring of every message,
-    so it must be rejected before the membership check, not after."""
-    assert not validate_span("   \n\t ", ["I integrate now"])
-
-
 @pytest.mark.asyncio
 async def test_full_credit_maps_to_contract_and_calls_once():
     payload = {

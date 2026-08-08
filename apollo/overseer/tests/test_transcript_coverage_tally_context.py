@@ -21,6 +21,7 @@ The tally is prior context, never proof and never a ceiling: ``tentative`` /
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -154,7 +155,7 @@ def test_tally_entries_for_non_rubric_nodes_are_dropped_entirely():
 # The grounded build
 # --------------------------------------------------------------------------- #
 def test_system_prompt_gains_the_tally_rule_when_context_is_present():
-    grounded = build_system_prompt(_Problem(), tally_context=_TALLY)
+    grounded = build_system_prompt(_Problem(), tally_context=_TALLY, reference_items=_ITEMS)
     baseline = build_system_prompt(_Problem())
 
     assert grounded.startswith(baseline)
@@ -168,7 +169,7 @@ def test_system_prompt_gains_the_tally_rule_when_context_is_present():
 
 
 def test_tally_is_prior_context_not_a_ceiling_for_the_other_states():
-    grounded = build_system_prompt(_Problem(), tally_context=_TALLY)
+    grounded = build_system_prompt(_Problem(), tally_context=_TALLY, reference_items=_ITEMS)
     assert "carries no such presumption and never caps your credit" in grounded
     assert "never proof by itself" in grounded
 
@@ -215,10 +216,50 @@ def test_tally_block_orders_after_evidence_and_asides():
 
 def test_system_prompt_appends_tally_frame_after_the_other_frames():
     prompt = build_system_prompt(
-        _Problem(), course_evidence=_EVIDENCE, hoot_asides=_ASIDES, tally_context=_TALLY
+        _Problem(),
+        course_evidence=_EVIDENCE,
+        hoot_asides=_ASIDES,
+        tally_context=_TALLY,
+        reference_items=_ITEMS,
     )
     assert prompt.index("COURSE EVIDENCE") < prompt.index("HOOT LOOKUP ANSWERS")
     assert prompt.index("HOOT LOOKUP ANSWERS") < prompt.index("LIVE TUTOR TALLY")
+
+
+# --------------------------------------------------------------------------- #
+# The rule and the data block appear or disappear TOGETHER
+# --------------------------------------------------------------------------- #
+def test_system_prompt_drops_the_rule_when_no_row_survives_the_rubric_filter():
+    """The regression: a tally naming only ungraded (definition) nodes — which
+    ``question_opportunities`` rows naturally contain — must not leave the system
+    prompt instructing the model to consult a block ``build_user_message``
+    dropped."""
+    ungraded = [{"node_id": "def_ante", "state": "understood", "times_asked": 1}]
+    system = build_system_prompt(_Problem(), tally_context=ungraded, reference_items=_ITEMS)
+    user = build_user_message(_Problem(), _ITEMS, _TRANSCRIPT, tally_context=ungraded)
+
+    assert "LIVE TUTOR TALLY" not in system
+    assert "LIVE TUTOR TALLY" not in user
+    assert system == build_system_prompt(_Problem())
+
+
+def test_system_prompt_ignores_a_tally_it_cannot_filter_and_says_so(caplog):
+    """Without ``reference_items`` the builder cannot know which rows the user
+    message will keep, so it emits no rule rather than a rule about data that
+    may not be there — and logs the misuse instead of failing silently."""
+    with caplog.at_level(logging.WARNING, logger="apollo.overseer.transcript_coverage"):
+        prompt = build_system_prompt(_Problem(), tally_context=_TALLY)
+
+    assert prompt == build_system_prompt(_Problem())
+    assert any(
+        "transcript_coverage_tally_rule_skipped" in record.getMessage() for record in caplog.records
+    )
+
+
+def test_empty_reference_items_drop_every_row():
+    assert build_system_prompt(
+        _Problem(), tally_context=_TALLY, reference_items=[]
+    ) == build_system_prompt(_Problem())
 
 
 # --------------------------------------------------------------------------- #
