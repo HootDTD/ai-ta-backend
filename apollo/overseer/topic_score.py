@@ -7,6 +7,7 @@ every topic, so existing UI clients continue to deserialize responses safely.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -14,12 +15,43 @@ from typing import Any, Literal
 from apollo.ontology import EdgeType, KGGraph, Node
 from apollo.overseer.rubric import score_to_letter
 
+_LOG = logging.getLogger(__name__)
+
 CENTRALITY_W_MIN = 0.30
 _GRADED_NODE_TYPES = frozenset(
     {"equation", "condition", "simplification", "procedure_step"}
 )
 
-TopicStatus = Literal["covered", "partial", "missing"]
+# D2 post-grade closure (2026-08-07): a topic that earned LESS than this credit
+# exposes its reference statement as ``TopicCredit.reference_text`` so the UI can
+# render "what full credit looks like". At or above it the field is None — a
+# student who already demonstrated the topic is never shown the answer, and the
+# reveal is per-node, never the full worked solution.
+REFERENCE_TEXT_CREDIT_THRESHOLD = 0.6
+
+# Ordered content fields rendered into a node's reference statement. Each node
+# content model owns a disjoint subset (equation: label/symbolic, condition:
+# label/applies_when, simplification: applies_when/transformation,
+# procedure_step: action/purpose), so one ordered pass reads naturally for every
+# type without a per-type branch. Non-prose fields (``variables``, ``order``,
+# ``uses_equations``) are deliberately excluded.
+_REFERENCE_TEXT_FIELDS: tuple[str, ...] = (
+    "label",
+    "concept",
+    "term",
+    "action",
+    "applies_when",
+    "symbolic",
+    "meaning",
+    "symbol",
+    "purpose",
+    "transformation",
+)
+
+# ``unprobed`` (2026-08-07 P1.2b) is NOT a grade: it marks a graded node the
+# questioning loop never raised this attempt, which therefore left the
+# denominator entirely.
+TopicStatus = Literal["covered", "partial", "missing", "unprobed"]
 
 
 def _clamp01(value: float) -> float:
@@ -57,6 +89,10 @@ class TopicCredit:
     # leaves every topic False and the result byte-identical to the pre-feature
     # build. Feedback/narrative surfacing (Agent D) reads this field.
     hoot_assisted: bool = False
+    # D2 (2026-08-07): this node's reference statement, populated ONLY when
+    # ``credit < REFERENCE_TEXT_CREDIT_THRESHOLD`` — the "what full credit looks
+    # like" reveal the student-UI renders per missed topic. None otherwise.
+    reference_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +111,23 @@ def _display_name_for(node: Node) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def reference_statement_for(node: Any) -> str | None:
+    """The node's reference statement, or ``None`` when it carries no prose.
+
+    Rendered from the node's own content only (never the problem's full worked
+    solution — D2 caps the reveal at one node). Parts are joined with an em
+    dash, e.g. ``"Bernoulli — p + q = c"``, ``"Solve for v — isolate the
+    unknown"``.
+    """
+    content: Any = node.content
+    parts = [
+        value.strip()
+        for field in _REFERENCE_TEXT_FIELDS
+        if isinstance(value := getattr(content, field, None), str) and value.strip()
+    ]
+    return " — ".join(parts) if parts else None
 
 
 def _credit_for_node(node_id: str, coverage: dict) -> tuple[float, TopicStatus]:
@@ -159,8 +212,22 @@ def compute_topic_score(
     reference_nodes: list[Node],
     centrality: dict[str, float],
     evidence_spans: dict[str, str] | None = None,
+    asked_node_ids: frozenset[str] | None = None,
 ) -> TopicScoreResult:
-    """Compute topic credit; the retired detector contributes no dock."""
+    """Compute topic credit; the retired detector contributes no dock.
+
+    ``asked_node_ids`` (2026-08-07 bimodal-fix P1.2b) is the set of reference
+    node ids that have a ``QuestionOpportunity`` row for THIS attempt — i.e. the
+    questioning loop either asked about them or recorded a tally update for them
+    (a node the student taught spontaneously gets a row too, so this is "the
+    tutor engaged with it", not merely "it was asked"). Graded nodes outside the
+    set are excluded from the denominator (weight 0) and reported with status
+    ``unprobed``: in the pilot 31% of graded nodes had no row at all and scored
+    ``missing`` 85% of the time, so students were failing on topics nobody
+    raised. ``None`` (feature not wired / ledger read failed) reproduces the
+    pre-fix result byte for byte, and so does a set that happens to cover every
+    graded node.
+    """
     graded_nodes = [node for node in reference_nodes if node.node_type in _GRADED_NODE_TYPES]
     if not graded_nodes:
         return TopicScoreResult(0, score_to_letter(0), 0.0, 0.0, ())
@@ -187,7 +254,29 @@ def compute_topic_score(
         raise ValueError("no graded node was adjudicated; refusing to score an empty denominator")
     graded_nodes = adjudicated
 
-    weights = _weights_for([node.node_id for node in graded_nodes], centrality)
+    # P1.2b safety net (2026-08-07): the denominator is the PROBED subset — the
+    # graded nodes the question ledger actually engaged with this attempt. The
+    # rest stay in ``topics`` (so the artifact and the UI can say "not part of
+    # this grade") with weight 0 and status ``unprobed``. Degenerate case: a
+    # ledger naming none of the graded nodes would leave an empty denominator,
+    # so fall back to grading every adjudicated node — the safety net must never
+    # make a Done ungradeable.
+    # Kept as an ORDERED list (not a set) so weight normalization sums the same
+    # floats in the same order on every run — the grade must be reproducible.
+    probed_order = [node.node_id for node in graded_nodes]
+    if asked_node_ids is not None:
+        probed = [node_id for node_id in probed_order if node_id in asked_node_ids]
+        if probed:
+            probed_order = probed
+        else:
+            _LOG.warning(
+                "apollo_topic_score_no_probed_graded_node graded=%d ledger_nodes=%d",
+                len(graded_nodes),
+                len(asked_node_ids),
+            )
+    probed_ids = frozenset(probed_order)
+
+    weights = _weights_for(probed_order, centrality)
     # INTERACTION5: per-node Hoot-assist flags, present only when a Hoot aside was
     # graded. Absent → every topic reads False (byte-identical to pre-feature).
     assist_map = coverage.get("hoot_assisted", {}) or {}
@@ -195,17 +284,24 @@ def compute_topic_score(
     coverage_component = 0.0
     for node in graded_nodes:
         credit, status = _credit_for_node(node.node_id, coverage)
-        coverage_component += weights[node.node_id] * credit
+        probed = node.node_id in probed_ids
+        weight = weights[node.node_id] if probed else 0.0
+        coverage_component += weight * credit
         topics.append(
             TopicCredit(
                 canonical_key=node.node_id,
                 display_name=_display_name_for(node),
                 credit=credit,
-                status=status,
-                weight=weights[node.node_id],
+                status=status if probed else "unprobed",
+                weight=weight,
                 misconceptions=(),
                 evidence_span=(evidence_spans or {}).get(node.node_id),
                 hoot_assisted=bool(assist_map.get(node.node_id, False)),
+                reference_text=(
+                    reference_statement_for(node)
+                    if credit < REFERENCE_TEXT_CREDIT_THRESHOLD
+                    else None
+                ),
             )
         )
 
@@ -221,9 +317,11 @@ def compute_topic_score(
 
 __all__ = [
     "CENTRALITY_W_MIN",
+    "REFERENCE_TEXT_CREDIT_THRESHOLD",
     "TopicCredit",
     "TopicMisconception",
     "TopicScoreResult",
     "compute_centrality",
     "compute_topic_score",
+    "reference_statement_for",
 ]

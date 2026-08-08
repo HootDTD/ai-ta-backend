@@ -205,11 +205,15 @@ async def test_topics_served_with_expected_shape(monkeypatch):
             "weight",
             "evidence_span",
             "hoot_assisted",
+            "reference_text",
             "misconceptions",
         }
         assert t["evidence_span"] is None
         # No asides in this harness -> the additive flag serves False.
         assert t["hoot_assisted"] is False
+    # D2: only the sub-threshold topic exposes "what full credit looks like".
+    assert by_key["eq1"]["reference_text"] is None
+    assert by_key["c1"]["reference_text"] is not None
 
 
 async def test_feedback_served_with_topic_score_and_flattened_narrative(monkeypatch):

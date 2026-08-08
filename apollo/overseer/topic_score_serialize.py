@@ -10,13 +10,19 @@ drift in field names. Field names are pinned exactly to the spec's §2 shape:
 
     {score, letter, coverage_component, misconception_dock, topics: [
         {canonical_key, display_name, credit, status, weight, evidence_span,
-         hoot_assisted,
+         hoot_assisted, reference_text,
          misconceptions: [{canonical_key, resolved, dock_points, evidence_span}]}
     ]}
 
 ``hoot_assisted`` (INTERACTION5) is additive and defaults ``False``; it is
 ``True`` only when a Hoot lookup aside credit-capped the topic. Absent-safe for
 older UI clients that ignore the key.
+
+``reference_text`` (2026-08-07 decision D2) is additive and defaults ``None``;
+it carries the node's reference statement ONLY for a topic that scored below
+``REFERENCE_TEXT_CREDIT_THRESHOLD``, so the student-UI can render "what full
+credit looks like" per missed topic. The gate lives in ``compute_topic_score``
+(which owns the credit), never here — this module stays a dumb shape mapper.
 
 Pure module: no IO. Kept separate from ``topic_score.py`` (the already-landed,
 100%-covered pure-computation module) so this additive serialization concern
@@ -48,6 +54,9 @@ def _serialize_topic(topic: TopicCredit) -> dict:
         # INTERACTION5: additive per-topic flag (default False). True only when a
         # Hoot lookup aside capped this topic. Absent-safe for old UI clients.
         "hoot_assisted": topic.hoot_assisted,
+        # D2: the missed-topic reference statement, or None. Gated upstream on
+        # credit; this module never re-decides who may see it.
+        "reference_text": topic.reference_text,
         "misconceptions": [_serialize_misconception(m) for m in topic.misconceptions],
     }
 
