@@ -30,7 +30,7 @@ import pytest
 from apollo.ontology import KGGraph, build_node
 from apollo.overseer.topic_score import (
     MAX_REFERENCE_TEXT_REVEALS,
-    MIN_PROBED_GRADED_NODES,
+    MIN_GRADED_DENOMINATOR,
     REFERENCE_TEXT_CREDIT_THRESHOLD,
     TopicCredit,
     _reveal_reference_text,
@@ -140,9 +140,12 @@ def test_unprobed_node_still_appears_in_topics_for_the_artifact():
     assert [topic.canonical_key for topic in result.topics] == ["eq.0", "eq.1", "eq.never"]
 
 
-def test_unprobed_node_never_contributes_credit_even_when_adjudicated_positive():
-    """A never-asked node cannot raise the grade either — the denominator is
-    the probed set, so its credit is reported but unweighted."""
+def test_unprobed_node_the_adjudicator_credited_is_kept_not_confiscated():
+    """The exclusion is ASYMMETRIC (review fix): a node with no ledger row is
+    dropped only when the adjudicator ALSO found no credit for it. The tally is
+    a lossy record of a spontaneously-taught node, so zeroing its weight would
+    confiscate work the student demonstrably did. Full contract in
+    ``test_topic_score_denominator.py``."""
     nodes = [_equation("eq.0"), _equation("eq.1"), _equation("eq.never")]
     result = compute_topic_score(
         coverage=_coverage(
@@ -155,8 +158,9 @@ def test_unprobed_node_never_contributes_credit_even_when_adjudicated_positive()
 
     by_key = {topic.canonical_key: topic for topic in result.topics}
     assert by_key["eq.never"].credit == 1.0
-    assert by_key["eq.never"].weight == 0.0
-    assert result.score == 0
+    assert by_key["eq.never"].weight > 0.0
+    assert by_key["eq.never"].status != "unprobed"
+    assert result.score == 33
 
 
 def test_asked_node_ids_none_leaves_the_grade_arithmetic_unchanged():
@@ -199,8 +203,8 @@ def test_single_probed_node_does_not_collapse_the_denominator(caplog):
     A student who explains ONE of five graded nodes and stops (or whose
     auto-done fires before the loop mints any other ledger row) must not be
     graded on that one node alone — that would make bailing out early the
-    highest-scoring strategy. Below the floor the FULL adjudicated denominator
-    is restored, so the attempt scores 20 (F), not 100 (A+).
+    highest-scoring strategy. The denominator is widened back to the floor
+    (three of five), so the attempt scores 33 (D), not 100 (A+).
     """
     nodes = [_equation(f"eq.{i}") for i in range(5)]
     with caplog.at_level("WARNING"):
@@ -214,11 +218,11 @@ def test_single_probed_node_does_not_collapse_the_denominator(caplog):
             asked_node_ids=frozenset({"eq.0"}),
         )
 
-    assert result.score == 20
-    assert result.letter == "F"
-    assert all(topic.status != "unprobed" for topic in result.topics)
-    assert "apollo_topic_score_probe_floor_not_met" in caplog.text
-    assert "probed=1 required=3" in caplog.text
+    assert result.score == 33
+    assert result.letter == "D"
+    assert sum(1 for topic in result.topics if topic.status == "unprobed") == 2
+    assert "apollo_topic_score_denominator_widened" in caplog.text
+    assert "kept=1 required=3" in caplog.text
 
 
 def test_floor_is_half_the_graded_nodes_rounded_up():
@@ -235,9 +239,10 @@ def test_floor_is_half_the_graded_nodes_rounded_up():
     assert {t.canonical_key for t in result.topics if t.status == "unprobed"} == {"eq.never"}
 
 
-def test_floor_never_drops_below_two_probed_nodes():
+def test_floor_never_drops_below_two_graded_nodes():
     """2 graded / 1 probed fails the absolute floor even though it is half the
-    nodes: a single node is too thin a denominator to carry a whole grade."""
+    nodes: a single node is too thin a denominator to carry a whole grade, so
+    the never-probed one is widened back in."""
     nodes = [_equation("eq.0"), _equation("eq.never")]
     result = compute_topic_score(
         coverage=_coverage("eq.0", "eq.never", scores={"eq.0": 1.0}),
@@ -246,7 +251,7 @@ def test_floor_never_drops_below_two_probed_nodes():
         asked_node_ids=frozenset({"eq.0"}),
     )
 
-    assert MIN_PROBED_GRADED_NODES == 2
+    assert MIN_GRADED_DENOMINATOR == 2
     assert result.score == 50
     assert all(topic.status != "unprobed" for topic in result.topics)
 
@@ -269,8 +274,8 @@ def test_a_one_graded_node_problem_is_never_blocked_by_the_absolute_floor():
 
 def test_no_graded_node_probed_falls_back_to_grading_all_of_them(caplog):
     """Degenerate safety valve: if the ledger names none of the graded nodes,
-    excluding them all would leave an empty denominator. Grade the adjudicated
-    set exactly as before and log — the safety net must never make a Done
+    excluding every uncredited one would leave a sub-floor denominator. The
+    widening restores it and logs — the safety net must never make a Done
     ungradeable."""
     nodes = [_equation("eq.one"), _equation("eq.two")]
     with caplog.at_level("WARNING"):
@@ -283,8 +288,8 @@ def test_no_graded_node_probed_falls_back_to_grading_all_of_them(caplog):
 
     assert result.score == 50
     assert all(topic.status != "unprobed" for topic in result.topics)
-    assert "apollo_topic_score_probe_floor_not_met" in caplog.text
-    assert "probed=0" in caplog.text
+    assert "apollo_topic_score_denominator_widened" in caplog.text
+    assert "kept=1 required=2" in caplog.text
 
 
 def test_ungraded_types_are_untouched_by_the_probe_filter():

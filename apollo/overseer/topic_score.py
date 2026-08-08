@@ -18,9 +18,7 @@ from apollo.overseer.rubric import score_to_letter
 _LOG = logging.getLogger(__name__)
 
 CENTRALITY_W_MIN = 0.30
-_GRADED_NODE_TYPES = frozenset(
-    {"equation", "condition", "simplification", "procedure_step"}
-)
+_GRADED_NODE_TYPES = frozenset({"equation", "condition", "simplification", "procedure_step"})
 
 # D2 post-grade closure (2026-08-07): a topic that earned LESS than this credit
 # exposes its reference statement as ``TopicCredit.reference_text`` so the UI can
@@ -38,16 +36,32 @@ REFERENCE_TEXT_CREDIT_THRESHOLD = 0.6
 # talk about the same nodes.
 MAX_REFERENCE_TEXT_REVEALS = 2
 
-# P1.2b floor (2026-08-07). Renormalizing over the probed subset is a safety net
-# for budget-starved sessions, NOT a licence to grade a whole problem on one
-# node: a student who explains one of five graded topics and immediately clicks
-# Done (or whose auto-done fires before the loop mints another ledger row) would
-# otherwise renormalize that single node to weight 1.0 and score A+, making
-# bailing out early the highest-scoring strategy. Below the floor the FULL
-# adjudicated denominator is restored (pre-fix behaviour). Prod sizing (135
-# Week-4 attempts): P1.2b changes the denominator on 16 of them, and 8 of those
-# 16 are exactly the single-probed-node case this floor blocks.
-MIN_PROBED_GRADED_NODES = 2
+# P1.2b keep rule (2026-08-07, review fix). The ledger is a LOSSY record of what
+# the student taught — the adjudicator reads the transcript and scores every
+# graded rubric item whether or not the questioning loop ever minted a row for
+# it (in the pilot ~15% of ledger-less graded nodes were NOT `missing`). So the
+# exclusion is asymmetric: a node with no ledger row leaves the denominator ONLY
+# when the adjudicator also found no credit for it. At or above this threshold —
+# the lowest P1.1 adjudication anchor that means "the student landed this" — the
+# node is graded normally, because dropping it would confiscate demonstrated
+# work from the numerator AND hide it from the narrative (`graded_topics_only`).
+UNPROBED_CREDIT_KEEP_THRESHOLD = 0.6
+
+# P1.2b floor (2026-08-07, review fix). Renormalizing over the engaged subset is
+# a safety net for budget-starved sessions, NOT a licence to grade a whole
+# problem on one node: a student who explains one of five graded topics and
+# immediately clicks Done (or whose auto-done fires before the loop mints
+# another ledger row) would otherwise renormalize that single node to weight 1.0
+# and score A+, making bailing out early the highest-scoring strategy.
+#
+# This is a MINIMUM WIDTH, not an on/off gate: below it the denominator is
+# widened back only as far as the floor (highest-credit dropped node first), so
+# the budget-starved sessions P1.2b exists for still get most of the relief. The
+# first build restored the FULL denominator instead, which withheld relief
+# precisely from the population the spec named as P1.2b's target. Prod sizing
+# (135 Week-4 attempts): P1.2b changes the denominator on 16 of them, and 8 of
+# those 16 are the single-probed-node case this floor bounds.
+MIN_GRADED_DENOMINATOR = 2
 
 # Ordered content fields rendered into a node's reference statement. Each node
 # content model owns a disjoint subset (equation: label/symbolic, condition:
@@ -150,13 +164,54 @@ def reference_statement_for(node: Any) -> str | None:
     return " — ".join(parts) if parts else None
 
 
-def _probe_floor(graded_count: int) -> int:
-    """Minimum probed graded nodes required before P1.2b may shrink the
-    denominator: at least ``MIN_PROBED_GRADED_NODES`` AND at least half the
-    adjudicated graded nodes, but never more than there are graded nodes (a
-    1-node rubric must not be permanently blocked by an unreachable floor —
+def _denominator_floor(graded_count: int) -> int:
+    """Narrowest denominator P1.2b may serve: at least ``MIN_GRADED_DENOMINATOR``
+    AND at least half the adjudicated graded nodes, but never more than there are
+    graded nodes (a 1-node rubric must not be blocked by an unreachable floor —
     there the filter is a no-op anyway)."""
-    return min(max(MIN_PROBED_GRADED_NODES, math.ceil(graded_count / 2)), graded_count)
+    return min(max(MIN_GRADED_DENOMINATOR, math.ceil(graded_count / 2)), graded_count)
+
+
+def _denominator(
+    node_ids: list[str],
+    credits: dict[str, float],
+    asked_node_ids: frozenset[str] | None,
+) -> list[str]:
+    """The ordered graded node ids the grade is divided by (P1.2b).
+
+    ``None`` (feature not wired / ledger read failed) keeps every adjudicated
+    node, reproducing the pre-fix arithmetic. Otherwise a node is KEPT when the
+    ledger engaged with it OR the adjudicator credited it at
+    ``UNPROBED_CREDIT_KEEP_THRESHOLD`` or above — the asymmetry that stops the
+    safety net confiscating work the tally simply failed to record. If fewer
+    nodes survive than ``_denominator_floor`` allows, the dropped nodes are put
+    back highest-credit first (reference order breaking ties, so the grade is
+    reproducible) until the floor is met: widening is a policy decision of ours,
+    so it costs the student as little as it can. Order is always reference order
+    — never a set — so weight normalization sums the same floats every run.
+    """
+    if asked_node_ids is None:
+        return list(node_ids)
+    kept = {
+        node_id
+        for node_id in node_ids
+        if node_id in asked_node_ids or credits[node_id] >= UNPROBED_CREDIT_KEEP_THRESHOLD
+    }
+    required = _denominator_floor(len(node_ids))
+    if len(kept) < required:
+        rank = {node_id: index for index, node_id in enumerate(node_ids)}
+        dropped = sorted(
+            (node_id for node_id in node_ids if node_id not in kept),
+            key=lambda node_id: (-credits[node_id], rank[node_id]),
+        )
+        _LOG.warning(
+            "apollo_topic_score_denominator_widened graded=%d kept=%d required=%d",
+            len(node_ids),
+            len(kept),
+            required,
+        )
+        kept |= set(dropped[: required - len(kept)])
+    return [node_id for node_id in node_ids if node_id in kept]
 
 
 def _reveal_reference_text(
@@ -278,10 +333,7 @@ def compute_centrality(reference_graph: KGGraph) -> dict[str, float]:
         except ValueError:
             pass
 
-    combined = {
-        node_id: min(1.0, depends[node_id] + positions[node_id])
-        for node_id in node_ids
-    }
+    combined = {node_id: min(1.0, depends[node_id] + positions[node_id]) for node_id in node_ids}
     return _rescale(combined, node_ids)
 
 
@@ -307,15 +359,18 @@ def compute_topic_score(
     """Compute topic credit; the retired detector contributes no dock.
 
     ``asked_node_ids`` (2026-08-07 bimodal-fix P1.2b) is the set of reference
-    node ids that have a ``QuestionOpportunity`` row for THIS attempt — i.e. the
-    questioning loop either asked about them or recorded a tally update for them
-    (a node the student taught spontaneously gets a row too, so this is "the
-    tutor engaged with it", not merely "it was asked"). Graded nodes outside the
-    set are excluded from the denominator (weight 0) and reported with status
-    ``unprobed``: in the pilot 31% of graded nodes had no row at all and scored
-    ``missing`` 85% of the time, so students were failing on topics nobody
-    raised. The exclusion is gated by ``_probe_floor`` so a collapsed ledger can
-    never renormalize one node into the whole grade.
+    node ids the questioning loop actually ENGAGED with this attempt — it really
+    asked about them, or the tally recorded the student teaching them. (The
+    caller derives it; ``done.py``'s ``_probed_node_ids`` is the live producer,
+    and a bare ``QuestionOpportunity`` row is deliberately not enough.) A graded
+    node outside the set that the adjudicator ALSO gave no credit is excluded
+    from the denominator (weight 0) and reported with status ``unprobed``: in
+    the pilot 31% of graded nodes had no row at all and scored ``missing`` 85%
+    of the time, so students were failing on topics nobody raised. The exclusion
+    is asymmetric — a node the adjudicator credited is graded normally even with
+    no row (see ``UNPROBED_CREDIT_KEEP_THRESHOLD``) — and bounded below by
+    ``_denominator_floor`` so a collapsed ledger can never renormalize one node
+    into the whole grade.
 
     ``None`` (feature not wired / ledger read failed) reproduces the pre-fix
     GRADE ARITHMETIC exactly — score, letter, per-topic credit/weight/status —
@@ -349,48 +404,39 @@ def compute_topic_score(
         raise ValueError("no graded node was adjudicated; refusing to score an empty denominator")
     graded_nodes = adjudicated
 
-    # P1.2b safety net (2026-08-07): the denominator is the PROBED subset — the
-    # graded nodes the question ledger actually engaged with this attempt. The
-    # rest stay in ``topics`` (so the artifact and the UI can say "not part of
-    # this grade") with weight 0 and status ``unprobed``.
-    #
-    # The shrink only happens ABOVE the floor (`_probe_floor`): too few probed
-    # nodes and the full adjudicated denominator is restored, so neither an
-    # empty denominator nor a one-node denominator can ever be served.
-    # Kept as an ORDERED list (not a set) so weight normalization sums the same
-    # floats in the same order on every run — the grade must be reproducible.
-    probed_order = [node.node_id for node in graded_nodes]
-    if asked_node_ids is not None:
-        probed = [node_id for node_id in probed_order if node_id in asked_node_ids]
-        required = _probe_floor(len(graded_nodes))
-        if len(probed) >= required:
-            probed_order = probed
-        else:
-            _LOG.warning(
-                "apollo_topic_score_probe_floor_not_met graded=%d probed=%d required=%d",
-                len(graded_nodes),
-                len(probed),
-                required,
-            )
-    probed_ids = frozenset(probed_order)
+    # P1.2b safety net (2026-08-07): the denominator is the graded nodes this
+    # attempt can fairly be answerable for — the ones the question ledger
+    # engaged with, plus any the adjudicator credited anyway. The rest stay in
+    # ``topics`` (so the artifact and the UI can say "not part of this grade")
+    # with weight 0 and status ``unprobed``. `_denominator` owns both halves of
+    # the rule (asymmetric keep + floor widening) and its result is an ORDERED
+    # list, never a set, so weight normalization sums the same floats in the
+    # same order on every run — the grade must be reproducible.
+    verdicts = {node.node_id: _credit_for_node(node.node_id, coverage) for node in graded_nodes}
+    denominator = _denominator(
+        [node.node_id for node in graded_nodes],
+        {node_id: credit for node_id, (credit, _status) in verdicts.items()},
+        asked_node_ids,
+    )
+    denominator_ids = frozenset(denominator)
 
-    weights = _weights_for(probed_order, centrality)
+    weights = _weights_for(denominator, centrality)
     # INTERACTION5: per-node Hoot-assist flags, present only when a Hoot aside was
     # graded. Absent → every topic reads False (byte-identical to pre-feature).
     assist_map = coverage.get("hoot_assisted", {}) or {}
     topics: list[TopicCredit] = []
     coverage_component = 0.0
     for node in graded_nodes:
-        credit, status = _credit_for_node(node.node_id, coverage)
-        probed = node.node_id in probed_ids
-        weight = weights[node.node_id] if probed else 0.0
+        credit, status = verdicts[node.node_id]
+        graded = node.node_id in denominator_ids
+        weight = weights[node.node_id] if graded else 0.0
         coverage_component += weight * credit
         topics.append(
             TopicCredit(
                 canonical_key=node.node_id,
                 display_name=_display_name_for(node),
                 credit=credit,
-                status=status if probed else "unprobed",
+                status=status if graded else "unprobed",
                 weight=weight,
                 misconceptions=(),
                 evidence_span=(evidence_spans or {}).get(node.node_id),
@@ -415,8 +461,9 @@ def compute_topic_score(
 __all__ = [
     "CENTRALITY_W_MIN",
     "MAX_REFERENCE_TEXT_REVEALS",
-    "MIN_PROBED_GRADED_NODES",
+    "MIN_GRADED_DENOMINATOR",
     "REFERENCE_TEXT_CREDIT_THRESHOLD",
+    "UNPROBED_CREDIT_KEEP_THRESHOLD",
     "TopicCredit",
     "TopicMisconception",
     "TopicScoreResult",
