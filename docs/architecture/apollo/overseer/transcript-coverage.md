@@ -26,18 +26,32 @@ frozen KG, so a Neo4j-degraded Done still grades.
 ## Interface
 
 - `compute_transcript_coverage_with_spans(transcript, reference_graph, problem,
-  *, course_evidence=None, hoot_asides=()) -> (CoverageVerdict, spans)` — the live
-  entry called by `handlers/done.py`. One adjudication call yields both the verdict
-  and the narrative spans map.
+  *, course_evidence=None, hoot_asides=(), tally_context=None) ->
+  (CoverageVerdict, spans)` — the live entry called by `handlers/done.py`. One
+  adjudication call yields both the verdict and the narrative spans map.
 - `compute_transcript_coverage(...)` — verdict only (byte-identical verdict;
   spans are deliberately not a coverage key). Same `course_evidence` /
-  `hoot_asides` kwargs.
+  `tally_context` kwargs.
 - `narrative_evidence_spans(verdicts, transcript) -> {node_id: span}` — the
   per-attempt quote gate for the narrative.
-- `validate_span`, `build_transcript_grader_schema(include_hoot_assisted=False)`,
-  `build_system_prompt(problem, *, course_evidence=None, hoot_asides=())`,
-  `build_user_message(..., *, course_evidence=None, hoot_asides=())`, `NodeVerdict`
-  (with additive `hoot_assisted: bool = False`).
+- `validate_span`, `build_transcript_grader_schema(include_hoot_assisted=False,
+  *, credit_enum=True)`, `build_system_prompt(problem, *, course_evidence=None,
+  hoot_asides=(), tally_context=None)`, `build_user_message(..., *,
+  course_evidence=None, hoot_asides=(), tally_context=None)`, `NodeVerdict`
+  (with additive `hoot_assisted: bool = False`), `CREDIT_ANCHORS`,
+  `TallyContextEntry`.
+- **`CREDIT_ANCHORS = (0.0, 0.6, 0.85, 1.0)`** — the four-point credit scale
+  (2026-08-07 bimodal-fix P1.1). Declared in the structured-output schema AND
+  enforced in code; see the invariants below.
+- **`tally_context` (P1.3) is the cross-slice argument shape**
+  `list[{node_id: str, state: str, times_asked: int, student_quote: str|null}]`
+  — `TallyContextEntry` is the TypedDict for it, but a plain `list[dict]` is the
+  contract (`done.py` builds it from the `QuestionOpportunity` rows it already
+  loaded). Every field except `node_id` is optional and defensively normalized
+  here (`state` outside the tally's own four states → `"missing"`, non-int or
+  negative `times_asked` → `0`, non-string/blank `student_quote` → `null`, rows
+  that are not mappings or name a non-rubric node → dropped). This module NEVER
+  reads the DB.
 - From `coverage_contract.py`: `CoverageVerdict` / `NegotiationCounts` TypedDicts
   + `validate_coverage_verdict` (the frozen verdict schema both this module and
   the dormant `coverage.py` must satisfy). `CoverageVerdict` gains one OPTIONAL,
@@ -47,18 +61,62 @@ frozen KG, so a Neo4j-degraded Done still grades.
 
 ## Data flow
 
-`done.py` passes the full `(role, content)` transcript + the reference `KGGraph`.
-Only `_GRADED_NODE_TYPES` reference nodes become rubric items. One `MAIN_MODEL`
-structured call (temperature 0), made via `bounded_client()` (`agent/llm-client`,
-2026-08-04 — was a bare `OpenAI()`), returns per-node verdicts (covered / credit /
-confidence / evidence_span / basis). `_to_coverage_verdict` reduces them to
+`done.py` passes the full `(role, content)` transcript + the reference `KGGraph`
+(+ optionally the live `tally_context`). Only `_GRADED_NODE_TYPES` reference
+nodes become rubric items. One `MAIN_MODEL` structured call (temperature 0),
+made via `bounded_client()` (`agent/llm-client`, 2026-08-04 — was a bare
+`OpenAI()`), returns per-node verdicts (covered / credit / confidence /
+evidence_span / basis). Each parsed `credit` is snapped onto `CREDIT_ANCHORS`
+BEFORE any consumer sees it. `_to_coverage_verdict` reduces the verdicts to
 `per_step` + `procedure_scores` + `confidences` + zeroed `negotiation_counts`,
-validated before return. `procedure_scores` (continuous credit) flow unchanged
+validated before return. `procedure_scores` (anchored credit) flow unchanged
 into the [topic score](topic-score.md); `per_step` feeds the [rubric](rubric.md)
 axes.
 
+The adjudication user message is `PROBLEM → RUBRIC ITEMS → [COURSE EVIDENCE] →
+[HOOT LOOKUP ANSWERS] → [LIVE TUTOR TALLY] → DIALOGUE`; every optional block is
+inserted before the dialogue so the transcript — the only thing that earns
+credit — is always last. The system prompt appends the matching frames in the
+same order.
+
 ## Invariants & gotchas
 
+- **Credit is a FOUR-POINT SCALE, not a continuum (2026-08-07 P1.1).**
+  `CREDIT_ANCHORS = (0.0, 0.6, 0.85, 1.0)` is declared in the structured-output
+  schema (`credit: {type: number, enum: [...]}`) AND enforced in code by
+  `_snap_credit`, which quantizes any off-anchor verdict to the nearest anchor
+  and logs `transcript_coverage_credit_snapped`. Ties snap DOWN (distances are
+  rounded to 9 dp first so an exact midpoint such as 0.925 is recognised as a
+  tie despite binary float error) — the grader never manufactures credit the
+  model did not judge. This REVERSES the earlier "continuous credit passes
+  through untouched" rule: under `gpt-5.1` the free scale collapsed to the
+  extremes (129 of 259 prod topic credits exactly 0, 114 ≥ 0.9, 8 mid), which
+  with 1–3 graded nodes per problem made a B unreachable. The prompt carries
+  2–3 calibration exemplars per anchor, drawn from the Week-4 transcripts.
+  Because the snap happens at parse time, BOTH downstream credit consumers
+  ([topic score](topic-score.md), axis [rubric](rubric.md)) only ever see
+  anchors; the one deliberate non-anchor value in the chain is produced later by
+  the [aside-penalty](aside-penalty.md) flat cap (0.5), which is a penalty, not
+  an adjudication, and is not re-anchored. (This invariant would normally live
+  in the domain `_index`, but that router is at its hard 60-line size cap.)
+- **The credit enum can never be a new failure mode.** The two provider attempts
+  are deliberately asymmetric: attempt 1 sends the enum, attempt 2 rebuilds the
+  schema with `credit_enum=False` (byte-identical to the pre-P1.1 build) and logs
+  `transcript_coverage_credit_enum_downgraded`. A provider that rejects a numeric
+  enum degrades to today's behaviour, and `_snap_credit` still anchors the
+  result. That kwarg is the fallback, not a caller-facing option.
+- **The live tally is prior context, never a rail (2026-08-07 P1.3, defect
+  U1).** `tally_context` adds ONE data block + ONE prompt rule: a node the tally
+  marked `understood` WITH a student quote needs an explicit, dialogue-cited
+  reason to score below 0.85. Every other state (`tentative` / `missing` /
+  `conflicting` / no row) carries no presumption and never caps credit. There is
+  no code-level floor, cap, or credit — the burden of proof lives entirely in
+  the prompt, so the adjudicator stays the grader of record. `tally_context=None`
+  (every caller until `done.py` wires it) reproduces both prompts BYTE FOR BYTE.
+  Rows are filtered to the rubric ids ONCE in `_adjudicate_verdicts`, so the
+  system prompt's rule and the user message's block can never disagree about
+  whether there is a tally to reason about; the re-adjudication retry re-sends
+  the same context.
 - **`per_step["covered"]` needs `verdict.covered` AND `credit >= 0.5`** — matches
   the graph lane's scored threshold so a deliberate partial (e.g. 0.7) is not
   zeroed for binary axis consumers; the continuous `credit` is never promoted to
