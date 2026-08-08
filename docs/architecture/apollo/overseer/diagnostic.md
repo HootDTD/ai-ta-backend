@@ -12,7 +12,7 @@ related:
   - apollo/overseer/aside-penalty
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-08-07
+last_verified: 2026-08-08
 stub: false
 ---
 
@@ -34,7 +34,8 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
   decoration for at most three `partial`/`missing` topics.
 - `narrative_consistency.enforce_narrative_consistency(feedback, *, topics)
   -> feedback` — pure, total, idempotent verdict-consistency gate (P2.1);
-  `PRAISE_FLOOR = 0.6` and `FALLBACK_HEADLINE` are its public constants.
+  `PRAISE_FLOOR = 0.6`, `FALLBACK_HEADLINE` and `MAX_REFERENCE_NAME_QUOTES`
+  (imported from [topic-score](topic-score.md)) are its public constants.
 
 ## Data flow
 
@@ -116,9 +117,20 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
   a topic display name reaches the student as authored, and never a snake_case
   key (`humanize_key` is the no-display-name fallback). The quoted span is
   bracket-balanced (a clip landing inside a parenthetical drops it) and embedded
-  double quotes become single ones, and it is quoted at most ONCE per payload:
-  a next step that falls back for a topic whose note already quotes it uses the
-  no-quote variant.
+  double quotes become single ones, and each topic is quoted at most ONCE per
+  payload: a next step that falls back for a topic whose note already quotes it
+  uses the no-quote variant.
+- **Its quotes share D2's reveal budget.** A topic name IS the reference
+  solution's wording, so a gap sentence quoting it is the same reveal channel as
+  `topics[].reference_text`. At most `MAX_REFERENCE_NAME_QUOTES`
+  (== `topic_score.MAX_REFERENCE_TEXT_REVEALS`) topic names are quoted per
+  payload — chosen by the SAME ordering key as the scorer's reveal, so both
+  surfaces name the same nodes — and the next-step fallback spends from that
+  same budget. Past it the gap is still NAMED, with a wording-free sentence (the
+  note hangs off its own `canonical_key`, so the topic is still identifiable).
+  Uncapped, a wholly-failed attempt appended one quoted reference clause per
+  zeroed node and the narrative handed back the whole graded reference solution
+  while `topics[]` was capped at two.
 - **Headline/next-step praise is deleted only on strong evidence.** Emptying a
   one-sentence headline replaces the whole thing, so the sentence must share at
   least two topic-name words that appear in NO credited topic (one of them 6+

@@ -24,10 +24,11 @@ import pytest
 
 from apollo.overseer.narrative_consistency import (
     FALLBACK_HEADLINE,
+    MAX_REFERENCE_NAME_QUOTES,
     PRAISE_FLOOR,
     enforce_narrative_consistency,
 )
-from apollo.overseer.topic_score import TopicCredit
+from apollo.overseer.topic_score import MAX_REFERENCE_TEXT_REVEALS, TopicCredit
 
 pytestmark = pytest.mark.unit
 
@@ -366,6 +367,114 @@ def test_hoot_assisted_topic_at_zero_is_still_uncredited() -> None:
     note = _note(result)
     assert "clearly explained" not in note
     assert "apply continuity" in note
+
+
+# --------------------------------------------------------------------------
+# Reference-wording budget. The gate's own gap sentences quote the topic's
+# display name — the reference solution's own wording — so they are the same
+# reveal channel as D2's `topics[].reference_text` and share its per-attempt
+# cap. Without it a wholly-failed attempt got one quoted clause per zeroed node
+# in the narrative while `topics[]` was capped at two: one payload, two answers
+# to "how much of the reference may this student see", and (restart_problem is
+# reachable from REPORT, browse is best-grade-wins) a recitable A+.
+# --------------------------------------------------------------------------
+
+
+def _multi_topic_feedback(keys: list[str]) -> dict[str, Any]:
+    return {
+        "headline": "Here is the summary.",
+        "topic_feedback": [
+            {"canonical_key": key, "note": "You clearly nailed it.", "quote": None} for key in keys
+        ],
+        "recap": [],
+        "next_step": "Keep going.",
+    }
+
+
+def _notes(result: dict[str, Any]) -> list[str]:
+    return [item["note"] for item in result["topic_feedback"]]
+
+
+def test_the_narrative_quote_budget_is_the_scorers_reveal_cap() -> None:
+    """One constant, imported — the two surfaces cannot drift apart."""
+    assert MAX_REFERENCE_NAME_QUOTES == MAX_REFERENCE_TEXT_REVEALS
+
+
+def test_a_wholly_failed_attempt_quotes_at_most_two_reference_statements() -> None:
+    """The prod shape (attempts 154/75/79/151/177): pure praise per zeroed
+    topic, all five stripped, all five needing a gap sentence."""
+    keys = [f"t{index}" for index in range(5)]
+    topics = [_topic(key=key, credit=0.0, display_name=f"reference clause {key}") for key in keys]
+
+    result = enforce_narrative_consistency(_multi_topic_feedback(keys), topics=topics)
+
+    quoted = [note for note in _notes(result) if "reference clause" in note]
+    assert len(quoted) == MAX_REFERENCE_NAME_QUOTES
+    # Every zeroed topic still gets its gap named — only the wording is budgeted.
+    assert all("next time" in note for note in _notes(result))
+    assert sum(note.count("reference clause") for note in _notes(result)) == 2
+
+
+def test_budgeted_out_topics_still_name_the_gap_without_the_wording() -> None:
+    keys = [f"t{index}" for index in range(3)]
+    topics = [_topic(key=key, credit=0.0, display_name=f"secret wording {key}") for key in keys]
+
+    notes = _notes(enforce_narrative_consistency(_multi_topic_feedback(keys), topics=topics))
+
+    unquoted = [note for note in notes if "secret wording" not in note]
+    assert len(unquoted) == 1
+    assert unquoted[0] == (
+        "Apollo never got this idea from your teaching — walk through it explicitly next time."
+    )
+
+
+def test_the_quote_budget_goes_to_the_lowest_credit_topics_first() -> None:
+    """Same ordering key as `topic_score._reveal_reference_text`, so the
+    narrative names the same nodes `reference_text` reveals."""
+    topics = [
+        _topic(key="t_mid", credit=0.4, display_name="wording mid"),
+        _topic(key="t_low", credit=0.0, display_name="wording low"),
+        _topic(key="t_high", credit=0.5, display_name="wording high"),
+    ]
+
+    notes = " ".join(
+        _notes(
+            enforce_narrative_consistency(
+                _multi_topic_feedback(["t_mid", "t_low", "t_high"]), topics=topics
+            )
+        )
+    )
+
+    assert "wording low" in notes and "wording mid" in notes
+    assert "wording high" not in notes
+
+
+def test_a_partial_topic_past_the_budget_uses_the_partial_wordless_line() -> None:
+    topics = [
+        _topic(key="t0", credit=0.0, display_name="wording zero"),
+        _topic(key="t1", credit=0.1, display_name="wording one"),
+        _topic(key="t2", credit=0.5, display_name="wording two"),
+    ]
+
+    notes = _notes(
+        enforce_narrative_consistency(_multi_topic_feedback(["t0", "t1", "t2"]), topics=topics)
+    )
+
+    assert notes[2] == "Only part of this landed — make the rest explicit next time."
+
+
+def test_the_next_step_never_spends_a_quote_the_budget_did_not_grant() -> None:
+    """The next-step fallback quotes the subject's wording, so it obeys the same
+    budget: with three zeroed topics the two notes exhaust it and the next step
+    falls back to the wording-free move."""
+    keys = [f"t{index}" for index in range(3)]
+    topics = [_topic(key=key, credit=0.0, display_name=f"clause {key}") for key in keys]
+    feedback = {**_multi_topic_feedback(keys), "next_step": "You clearly nailed clause t2."}
+
+    result = enforce_narrative_consistency(feedback, topics=topics)
+
+    assert "clause" not in result["next_step"]
+    assert result["next_step"]
 
 
 # --------------------------------------------------------------------------

@@ -14,7 +14,10 @@ Contract enforced here, per topic the ledger did not credit:
    from that topic's note, and from the headline/next step when the sentence is
    demonstrably ABOUT that topic (see :func:`_names_uncredited_topic`);
 2. a topic that counted toward the grade always ends up with its gap named — a
-   deterministic sentence is appended when nothing the model wrote names one;
+   deterministic sentence is appended when nothing the model wrote names one.
+   That sentence quotes the topic's reference wording for at most
+   :data:`MAX_REFERENCE_NAME_QUOTES` topics per payload (D2's budget, imported
+   from the scorer); past it the gap is named without the wording;
 3. nothing else changes: with every topic credited the payload is returned
    byte-identical.
 
@@ -48,7 +51,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from apollo.overseer.topic_narrative import humanize_key
-from apollo.overseer.topic_score import TopicCredit
+from apollo.overseer.topic_score import MAX_REFERENCE_TEXT_REVEALS, TopicCredit
 
 _LOG = logging.getLogger(__name__)
 
@@ -56,6 +59,18 @@ _LOG = logging.getLogger(__name__)
 # may not credit the student for it. Mirrors the adjudication anchor set
 # {0, 0.6, 0.85, 1.0} (P1.1): 0.6 is the lowest anchor that means "landed".
 PRAISE_FLOOR = 0.6
+
+# The gate's own sentences quote the topic's display name — which IS the
+# reference solution's wording — so they are a reveal channel exactly like D2's
+# `TopicCredit.reference_text`, and they must obey the SAME per-attempt budget.
+# Imported, not re-declared: on a wholly-failed attempt every graded topic is
+# uncredited, so an uncapped gate would append one quoted reference clause per
+# node and hand back the whole graded reference solution in the narrative while
+# `topics[]` was carefully capped at two — one payload, two answers to "how much
+# of the reference may this student see". `restart_problem` is still reachable
+# from REPORT and browse is best-grade-wins, so that union is recitable back
+# into a grade. Past the budget the gap is still named, without the wording.
+MAX_REFERENCE_NAME_QUOTES = MAX_REFERENCE_TEXT_REVEALS
 
 FALLBACK_HEADLINE = "Here is what Apollo did not get from your teaching yet."
 # Topic names are the reference solution's own wording (prod median 220 chars,
@@ -66,6 +81,13 @@ _ZERO_GAP = (
     'Apollo never got this from your teaching: "{name}" — walk through it explicitly next time.'
 )
 _PARTIAL_GAP = 'Only part of this landed: "{name}" — make the rest explicit next time.'
+# Past MAX_REFERENCE_NAME_QUOTES the gap is still named — the note is attached to
+# its own topic, so the student still knows WHICH one — just without quoting more
+# of the reference wording back at them.
+_ZERO_GAP_NO_NAME = (
+    "Apollo never got this idea from your teaching — walk through it explicitly next time."
+)
+_PARTIAL_GAP_NO_NAME = "Only part of this landed — make the rest explicit next time."
 _NEXT_STEP = 'Walk Apollo through this in your own words: "{name}".'
 # Used instead of _NEXT_STEP when that same topic's note already quotes the
 # reference wording, so the student never reads the identical clipped clause
@@ -162,6 +184,7 @@ def enforce_narrative_consistency(
     if not uncredited:
         return dict(feedback)
     credited = [t for t in topics if t.canonical_key not in uncredited]
+    quotable = _quotable_keys(topics, uncredited)
 
     items = feedback.get("topic_feedback")
     repaired_items: Any = items
@@ -169,7 +192,7 @@ def enforce_narrative_consistency(
     if isinstance(items, list):
         repaired_items = []
         for item in items:
-            repaired, quoted_key = _repair_item(item, uncredited)
+            repaired, quoted_key = _repair_item(item, uncredited, quotable)
             repaired_items.append(repaired)
             if quoted_key is not None:
                 quoted_gap_keys.add(quoted_key)
@@ -179,9 +202,9 @@ def enforce_narrative_consistency(
     scored = {k: t for k, t in uncredited.items() if t.weight > 0.0}
     subject = min((scored or uncredited).values(), key=lambda t: (t.credit, t.canonical_key))
     next_step_fallback = (
-        _NEXT_STEP_NO_QUOTE
-        if subject.canonical_key in quoted_gap_keys
-        else _NEXT_STEP.format(name=_quotable_name(subject))
+        _NEXT_STEP.format(name=_quotable_name(subject))
+        if subject.canonical_key in quotable and subject.canonical_key not in quoted_gap_keys
+        else _NEXT_STEP_NO_QUOTE
     )
     return {
         **feedback,
@@ -219,7 +242,29 @@ def _is_uncredited(topic: TopicCredit) -> bool:
     return True
 
 
-def _repair_item(item: Any, uncredited: dict[str, TopicCredit]) -> tuple[Any, str | None]:
+def _quotable_keys(
+    topics: Sequence[TopicCredit], uncredited: dict[str, TopicCredit]
+) -> frozenset[str]:
+    """The ≤ :data:`MAX_REFERENCE_NAME_QUOTES` topics whose reference wording the
+    gate may quote in this payload.
+
+    Selection deliberately reuses D2's ordering key from
+    ``topic_score._reveal_reference_text`` — lowest credit first, then most
+    central (highest weight), then reference order — so the narrative names the
+    same nodes ``topics[].reference_text`` reveals instead of widening the
+    reveal to a different subset. Topics that counted toward the grade come
+    first; an all-zero-weight ledger (every graded node excluded) falls back to
+    the excluded ones, matching how the next-step subject is chosen.
+    """
+    rank = {topic.canonical_key: index for index, topic in enumerate(topics)}
+    scored = [t for t in uncredited.values() if t.weight > 0.0] or list(uncredited.values())
+    ordered = sorted(scored, key=lambda t: (t.credit, -t.weight, rank[t.canonical_key]))
+    return frozenset(t.canonical_key for t in ordered[:MAX_REFERENCE_NAME_QUOTES])
+
+
+def _repair_item(
+    item: Any, uncredited: dict[str, TopicCredit], quotable: frozenset[str]
+) -> tuple[Any, str | None]:
     """Rewrite one topic note; report whether its reference wording got quoted."""
     if not isinstance(item, dict):
         return item, None
@@ -228,12 +273,18 @@ def _repair_item(item: Any, uncredited: dict[str, TopicCredit]) -> tuple[Any, st
     note = item.get("note")
     if topic is None or not isinstance(note, str):
         return dict(item), None
-    repaired, quoted = _repair_note(note, topic)
+    repaired, quoted = _repair_note(note, topic, may_quote=topic.canonical_key in quotable)
     return {**item, "note": repaired}, (topic.canonical_key if quoted else None)
 
 
-def _repair_note(note: str, topic: TopicCredit) -> tuple[str, bool]:
-    """Strip pure praise, then guarantee the gap is named when it was graded."""
+def _repair_note(note: str, topic: TopicCredit, *, may_quote: bool) -> tuple[str, bool]:
+    """Strip pure praise, then guarantee the gap is named when it was graded.
+
+    ``may_quote`` is this topic's share of the per-attempt reference-wording
+    budget (:data:`MAX_REFERENCE_NAME_QUOTES`). Past the budget the gap is still
+    named — the note hangs off its own ``canonical_key``, so the student still
+    knows which topic it is about — using the name-free template.
+    """
     sentences = _split_sentences(note)
     kept = [s for s in sentences if not _is_pure_praise(s)]
     stripped = len(sentences) - len(kept)
@@ -252,13 +303,18 @@ def _repair_note(note: str, topic: TopicCredit) -> tuple[str, bool]:
         )
     quoted = False
     if needs_gap:
-        template = _ZERO_GAP if topic.credit <= 0.0 else _PARTIAL_GAP
-        kept.append(template.format(name=_quotable_name(topic)))
-        quoted = True
+        zeroed = topic.credit <= 0.0
+        if may_quote:
+            template = _ZERO_GAP if zeroed else _PARTIAL_GAP
+            kept.append(template.format(name=_quotable_name(topic)))
+            quoted = True
+        else:
+            kept.append(_ZERO_GAP_NO_NAME if zeroed else _PARTIAL_GAP_NO_NAME)
         _LOG.info(
-            "apollo_narrative_gap_named canonical_key=%s credit=%.2f",
+            "apollo_narrative_gap_named canonical_key=%s credit=%.2f quoted=%s",
             topic.canonical_key,
             topic.credit,
+            quoted,
         )
     if not kept:
         kept.append(_UNSCORED_NOTE)
@@ -403,4 +459,9 @@ def _names_uncredited_topic(
     return False
 
 
-__all__ = ["FALLBACK_HEADLINE", "PRAISE_FLOOR", "enforce_narrative_consistency"]
+__all__ = [
+    "FALLBACK_HEADLINE",
+    "MAX_REFERENCE_NAME_QUOTES",
+    "PRAISE_FLOOR",
+    "enforce_narrative_consistency",
+]
