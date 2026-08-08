@@ -9,9 +9,8 @@ stub: false
 
 # Apollo overseer — grading, scoring & selection
 
-The graders, the score→letter→narrative chain, XP, and problem selection. The
-live Done grade is assembled by
-[conversation/handlers/done.md](../conversation/handlers/done.md) — recipe below.
+The graders, the score→letter→narrative chain, XP, and problem selection. The live
+Done grade is assembled by [done.md](../conversation/handlers/done.md) — recipe below.
 
 ## Leaves
 
@@ -21,7 +20,7 @@ live Done grade is assembled by
 | [topic-score](topic-score.md) | LIVE grade of record: coverage-weighted topic score + the one serializer | `apollo/overseer/topic_score.py`, `apollo/overseer/topic_score_serialize.py` |
 | [rubric](rubric.md) | Axis-weighted grade + `score_to_letter` + misconception value objects | `apollo/overseer/rubric.py`, `apollo/overseer/misconception.py` |
 | [topic-narrative](topic-narrative.md) | Ledger-grounded narrative prompt + output sanitizer | `apollo/overseer/topic_narrative.py` |
-| [diagnostic](diagnostic.md) | Explains the grade (never decides) + optional remediation pointers; delegates to the topic narrative | `apollo/overseer/diagnostic.py`, `apollo/overseer/remediation.py` |
+| [diagnostic](diagnostic.md) | Explains the grade (never decides) + verdict-consistency gate + optional remediation pointers | `apollo/overseer/diagnostic.py`, `apollo/overseer/remediation.py`, `apollo/overseer/narrative_consistency.py` |
 | [aside-penalty](aside-penalty.md) | INTERACTION5: pure flat credit-cap for Hoot-assisted rubric nodes | `apollo/overseer/aside_penalty.py` |
 | [grounding](grounding.md) | INTERACTION2: session bundle → one capped, student-safe course-evidence block | `apollo/overseer/grounding.py` |
 | [xp](xp.md) | XP formula + 5-tier level table + progress envelope | `apollo/overseer/xp.py` |
@@ -40,7 +39,8 @@ live Done grade is assembled by
 - **Misconceptions retired.** Every topic carries an empty `misconceptions`
   tuple; the detector is gone, the shape kept for UI back-compat.
 - **Flow:** transcript coverage → rubric + topic score → diagnostic/topic
-  narrative → optional remediation decoration → XP.
+  narrative → consistency gate (P2.1: prose never praises an uncredited topic;
+  every zeroed topic that COUNTED names its gap) → remediation → XP.
 - **Per-node credit is a FOUR-POINT SCALE (2026-08-07 P1.1).** Every credit
   leaving [transcript-coverage](transcript-coverage.md) is exactly one of
   `CREDIT_ANCHORS = (0, 0.6, 0.85, 1.0)` (schema enum + code snap, ties down), so
@@ -61,8 +61,8 @@ live Done grade is assembled by
 
 ## Grading-path recipe (to change the grade, also touch)
 
-`done.py` orchestrates: transcript-coverage → rubric → topic-score →
-(diagnostic / topic-narrative, xp) → grading-artifact-writer → scorecard →
-mastery. A grader change reconciles [done.md](../conversation/handlers/done.md)
-plus the directional `related:` chain transcript-coverage ↔ rubric ↔ topic-score
-↔ done ↔ grading-artifact-writer ↔ scorecard ↔ mastery.
+`done.py` orchestrates: transcript-coverage → rubric → topic-score → (diagnostic /
+topic-narrative / narrative-consistency, xp) → grading-artifact-writer → scorecard
+→ mastery. A grader change reconciles [done.md](../conversation/handlers/done.md)
+plus the directional `related:` chain transcript-coverage ↔ rubric ↔ topic-score ↔
+done ↔ grading-artifact-writer ↔ scorecard ↔ mastery.

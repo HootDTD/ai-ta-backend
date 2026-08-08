@@ -99,6 +99,18 @@ def test_system_prompt_forbids_third_person_audit_feedback():
     assert "say nothing at all about misconceptions" in lowered
 
 
+# ── 2026-08-07 P2.1: the narrative is written FROM the per-node verdicts ──
+
+
+def test_system_prompt_bans_praise_below_the_credit_floor():
+    """A topic under 60% must not be credited in prose (defect U2)."""
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    lowered = " ".join(system.lower().split())
+    assert "score consistency" in lowered
+    assert "below 60%" in lowered
+    assert "at 0%" in lowered
+
+
 # ── 2026-07-14 narrative grounding: verbatim student transcript in the prompt ──
 
 

@@ -65,6 +65,14 @@ EVIDENCE AND ACCURACY:
 - Use inline math delimited ONLY as `$...$` — never `\\( \\)`, never `\\[ \\]`, and never a
   bare LaTeX command outside a `$...$` span.
 
+SCORE CONSISTENCY — every sentence must match the topic percentages supplied below:
+- A topic below 60% was NOT credited. Never praise it, and never say you explained, showed,
+  covered, connected, contrasted, or captured it. Say plainly what Apollo did not get from the
+  teaching and what to add next time.
+- A topic at 0% must have the missing idea named explicitly in that topic's note.
+- Keep credit statements for topics at 60% or above. The headline and the next step follow the
+  same rule: neither may celebrate a topic that scored below 60%.
+
 RESPONSE SHAPE:
 - Return valid JSON only, with exactly these fields:
   {"headline": "...", "topic_feedback": [
@@ -123,11 +131,14 @@ def _status_label(status: str) -> str:
     )
 
 
-def _humanize_key(key: str) -> str:
+def humanize_key(key: str) -> str:
     """Presentation fallback when a topic has no display_name.
 
     The narrator quotes whatever it sees, so the raw snake_case key must
-    never reach the prompt — degrade to a readable phrase instead.
+    never reach the prompt — degrade to a readable phrase instead. Public
+    since 2026-08-07: the P2.1 consistency gate
+    (``narrative_consistency.py``) needs the same student-facing name when it
+    writes a deterministic gap sentence.
     """
     tail = key.rsplit(".", 1)[-1]
     for prefix in ("def_", "proc_", "eq_", "cond_"):
@@ -138,7 +149,7 @@ def _humanize_key(key: str) -> str:
 
 
 def _format_topic_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid import cycle noise
-    name = topic.display_name or _humanize_key(topic.canonical_key)
+    name = topic.display_name or humanize_key(topic.canonical_key)
     pct = round(topic.credit * 100)
     line = (
         f'- Topic canonical_key="{topic.canonical_key}", name="{name}": '
@@ -160,9 +171,9 @@ def _format_assisted_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid im
     Mirrors ``_format_topic_line``'s ``canonical_key`` + ``name`` shape so the
     narrator can join the note back to the right topic (canonical keys are
     stripped from the prose output by ``sanitize_narrative``). The raw
-    snake_case key never reaches prose — ``_humanize_key`` is the display
+    snake_case key never reaches prose — ``humanize_key`` is the display
     fallback when the topic has no ``display_name``."""
-    name = topic.display_name or _humanize_key(topic.canonical_key)
+    name = topic.display_name or humanize_key(topic.canonical_key)
     return f'- Topic canonical_key="{topic.canonical_key}", name="{name}"'
 
 
@@ -300,4 +311,4 @@ def sanitize_narrative(text: str, canonical_keys: Sequence[str] = ()) -> str:
     return cleaned.strip()
 
 
-__all__ = ["build_topic_narrative_prompt", "sanitize_narrative"]
+__all__ = ["build_topic_narrative_prompt", "humanize_key", "sanitize_narrative"]
