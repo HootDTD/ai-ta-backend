@@ -8,15 +8,33 @@ clearly contrasted democratization and centralization… gave concrete examples"
 for a node graded ``missing``. Prompt rules alone cannot make that impossible,
 so the served prose passes one CODE gate after generation.
 
-Contract enforced here, per topic whose credit is below :data:`PRAISE_FLOOR`:
+Contract enforced here, per topic the ledger did not credit:
 
 1. a sentence that claims credit and names no gap ("pure praise") is stripped —
-   from that topic's note, and from the headline/next step when the sentence
-   also names the topic;
-2. the topic always ends up with its gap named — a deterministic sentence is
-   appended when nothing the model wrote names one;
-3. nothing else changes: with every topic at or above the floor the payload is
-   returned byte-identical.
+   from that topic's note, and from the headline/next step when the sentence is
+   demonstrably ABOUT that topic (see :func:`_names_uncredited_topic`);
+2. a topic that counted toward the grade always ends up with its gap named — a
+   deterministic sentence is appended when nothing the model wrote names one;
+3. nothing else changes: with every topic credited the payload is returned
+   byte-identical.
+
+Three carve-outs keep the gate from punishing the student for something that is
+not a teaching gap:
+
+* **Hoot-assisted topics** (INTERACTION5) carry a flat POLICY cap of 0.5 —
+  unconditionally below :data:`PRAISE_FLOOR` — applied by
+  ``aside_penalty.apply_aside_caps`` on top of whatever the adjudicator found.
+  Sub-floor credit there is a penalty, not an absence of evidence, so an
+  assisted topic with ANY credit is exempt. Only ``credit == 0`` (which the cap
+  can produce only from a pre-cap 0) is treated as uncredited.
+* **Zero-weight topics** — a graded node excluded from the denominator (P1.2b
+  ``unprobed``: Apollo never asked about it this attempt) did not count toward
+  the grade, so it never receives a "you did not teach this" sentence. Praise of
+  it is still stripped (it was not credited either), and a note left empty by
+  that strip gets a neutral, blame-free replacement.
+* **Headline / next step** are only edited on strong evidence that the sentence
+  is about an uncredited topic; the topic-name overlap test is deliberately
+  strict, because emptying a one-sentence headline replaces it wholesale.
 
 Pure, total, and idempotent — string/structural only, no second LLM call, no
 IO. Runs AFTER ``sanitize_narrative`` so it sees exactly the served text.
@@ -26,7 +44,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from apollo.overseer.topic_narrative import humanize_key
@@ -49,6 +67,13 @@ _ZERO_GAP = (
 )
 _PARTIAL_GAP = 'Only part of this landed: "{name}" — make the rest explicit next time.'
 _NEXT_STEP = 'Walk Apollo through this in your own words: "{name}".'
+# Used instead of _NEXT_STEP when that same topic's note already quotes the
+# reference wording, so the student never reads the identical clipped clause
+# twice in one card.
+_NEXT_STEP_NO_QUOTE = "Teach the idea Apollo did not get back in your own words, start to finish."
+# A zero-weight topic was removed from the grade, so its note may not blame the
+# student; this replaces a note that pure-praise stripping emptied.
+_UNSCORED_NOTE = "Apollo did not ask about this one, so it did not count toward your grade."
 _NAME_QUOTE_CHARS = 90
 
 # A credit claim is second person + an accomplishment verb ("you clearly
@@ -98,10 +123,26 @@ _NAME_STOPWORDS = frozenset(
     {"that", "this", "with", "from", "into", "then", "than", "them", "they", "when", "what",
      "which", "your", "here", "there", "about", "these", "those", "does", "also", "between"}
 )  # fmt: skip
-# One long shared word (or two short ones) means the sentence is talking about
-# that topic. Conservative on purpose: a miss leaves prose untouched.
 _DISTINCTIVE_LEN = 6
 _SIGNIFICANT_LEN = 4
+# How many topic-name words a headline must share with an uncredited topic — and
+# with NO credited topic — before its praise is deleted. One shared domain word
+# is not evidence when the name is a whole reference sentence: prod graded
+# display names run 4-29 distinctive words (median 15, 199 chars), so a single
+# 6+ char word like "information" or "privacy" fires on any sentence in the same
+# subject area, including accurate praise of a FULLY credited node. Measured
+# over the 14 exported prod problems with 2+ graded nodes (240 ledger-supported
+# praise headlines, one node credited 1.0 and the rest 0): the single-word rule
+# false-stripped 139/240 = 57.9%; the rule below false-stripped 0/240 while
+# still catching 252/252 of the attempt-154 defect shape (praise aimed at an
+# uncredited node). A name with only one or two distinctive words (the
+# `humanize_key` fallback, a terse label) carries no such dilution, so the
+# requirement scales down to its half-length — a no-op on real prod names, none
+# of which has fewer than four.
+_MIN_EXCLUSIVE_HITS = 2
+# Openers whose partner may be lost when a long reference name is clipped.
+_BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
+_QUOTE_CHARS = str.maketrans({'"': "'", "“": "'", "”": "'"})
 
 
 def enforce_narrative_consistency(
@@ -112,84 +153,134 @@ def enforce_narrative_consistency(
     """Return a NEW feedback payload whose prose matches the per-node verdicts.
 
     ``topics`` are the ledger's final credits (``TopicScoreResult.topics``).
-    Topics at or above :data:`PRAISE_FLOOR`, unknown canonical keys, and
-    non-string prose fields are passed through untouched, so a fully credited
-    attempt is returned equal to its input. The input is never mutated.
+    Credited topics, Hoot-capped topics that still earned credit, unknown
+    canonical keys, and non-string prose fields are passed through untouched, so
+    a fully credited attempt is returned equal to its input. The input is never
+    mutated.
     """
-    uncredited = {t.canonical_key: t for t in topics if t.credit < PRAISE_FLOOR}
+    uncredited = {t.canonical_key: t for t in topics if _is_uncredited(t)}
     if not uncredited:
         return dict(feedback)
+    credited = [t for t in topics if t.canonical_key not in uncredited]
 
     items = feedback.get("topic_feedback")
-    repaired_items = (
-        [_repair_item(item, uncredited) for item in items] if isinstance(items, list) else items
+    repaired_items: Any = items
+    quoted_gap_keys: set[str] = set()
+    if isinstance(items, list):
+        repaired_items = []
+        for item in items:
+            repaired, quoted_key = _repair_item(item, uncredited)
+            repaired_items.append(repaired)
+            if quoted_key is not None:
+                quoted_gap_keys.add(quoted_key)
+
+    # Prefer a topic that actually counted against the grade as the next-step
+    # subject; only an all-zero-weight ledger falls back to the excluded ones.
+    scored = {k: t for k, t in uncredited.items() if t.weight > 0.0}
+    subject = min((scored or uncredited).values(), key=lambda t: (t.credit, t.canonical_key))
+    next_step_fallback = (
+        _NEXT_STEP_NO_QUOTE
+        if subject.canonical_key in quoted_gap_keys
+        else _NEXT_STEP.format(name=_quotable_name(subject))
     )
-    lowest = min(uncredited.values(), key=lambda t: (t.credit, t.canonical_key))
     return {
         **feedback,
         "headline": _repair_prose(
             feedback.get("headline"),
-            uncredited=uncredited,
+            uncredited=uncredited.values(),
+            credited=credited,
             fallback=FALLBACK_HEADLINE,
         ),
         "topic_feedback": repaired_items,
         "next_step": _repair_prose(
             feedback.get("next_step"),
-            uncredited=uncredited,
-            fallback=_NEXT_STEP.format(name=_quotable_name(lowest)),
+            uncredited=uncredited.values(),
+            credited=credited,
+            fallback=next_step_fallback,
         ),
     }
 
 
-def _repair_item(item: Any, uncredited: dict[str, TopicCredit]) -> Any:
-    """Rewrite one topic note when its own topic was not credited."""
+def _is_uncredited(topic: TopicCredit) -> bool:
+    """True when prose may not claim the student earned this topic.
+
+    INTERACTION5 carve-out: ``aside_penalty.apply_aside_caps`` caps a
+    Hoot-assisted node at a flat ``0.5`` — always below :data:`PRAISE_FLOOR` —
+    so reading its credit as "no evidence" would strip accurate praise from a
+    node the adjudicator scored ``covered`` and append a factually wrong gap
+    sentence. The cap is ``min(evidence, 0.5)``, so any credit above zero proves
+    the adjudicator found evidence; only exactly ``0`` (reachable solely from a
+    pre-cap ``0``) is a real absence.
+    """
+    if topic.credit >= PRAISE_FLOOR:
+        return False
+    if getattr(topic, "hoot_assisted", False) and topic.credit > 0.0:
+        return False
+    return True
+
+
+def _repair_item(item: Any, uncredited: dict[str, TopicCredit]) -> tuple[Any, str | None]:
+    """Rewrite one topic note; report whether its reference wording got quoted."""
     if not isinstance(item, dict):
-        return item
+        return item, None
     key = item.get("canonical_key")
     topic = uncredited.get(key) if isinstance(key, str) else None
     note = item.get("note")
     if topic is None or not isinstance(note, str):
-        return dict(item)
-    return {**item, "note": _repair_note(note, topic)}
+        return dict(item), None
+    repaired, quoted = _repair_note(note, topic)
+    return {**item, "note": repaired}, (topic.canonical_key if quoted else None)
 
 
-def _repair_note(note: str, topic: TopicCredit) -> str:
-    """Strip pure praise, then guarantee the gap is named."""
+def _repair_note(note: str, topic: TopicCredit) -> tuple[str, bool]:
+    """Strip pure praise, then guarantee the gap is named when it was graded."""
     sentences = _split_sentences(note)
     kept = [s for s in sentences if not _is_pure_praise(s)]
-    needs_gap = not any(_names_a_gap(s) for s in kept)
-    if len(kept) == len(sentences) and not needs_gap:
-        return note  # Nothing to repair — the note is served untouched.
-    if len(kept) != len(sentences):
+    stripped = len(sentences) - len(kept)
+    # A zero-weight topic left the denominator (P1.2b `unprobed`), so it is not
+    # a teaching gap and must never be narrated as one.
+    scored = topic.weight > 0.0
+    needs_gap = scored and not any(_names_a_gap(s) for s in kept)
+    if not stripped and not needs_gap and sentences:
+        return note, False  # Nothing to repair — the note is served untouched.
+    if stripped:
         _LOG.info(
             "apollo_narrative_praise_stripped canonical_key=%s credit=%.2f dropped=%d",
             topic.canonical_key,
             topic.credit,
-            len(sentences) - len(kept),
+            stripped,
         )
+    quoted = False
     if needs_gap:
         template = _ZERO_GAP if topic.credit <= 0.0 else _PARTIAL_GAP
         kept.append(template.format(name=_quotable_name(topic)))
+        quoted = True
         _LOG.info(
             "apollo_narrative_gap_named canonical_key=%s credit=%.2f",
             topic.canonical_key,
             topic.credit,
         )
-    return " ".join(kept)
+    if not kept:
+        kept.append(_UNSCORED_NOTE)
+    return " ".join(kept), quoted
 
 
 def _repair_prose(
     text: Any,
     *,
-    uncredited: dict[str, TopicCredit],
+    uncredited: Iterable[TopicCredit],
+    credited: Sequence[TopicCredit],
     fallback: str,
 ) -> Any:
-    """Drop pure-praise sentences that name an uncredited topic."""
+    """Drop pure-praise sentences that are demonstrably about an uncredited topic."""
     if not isinstance(text, str):
         return text
     sentences = _split_sentences(text)
+    uncredited = list(uncredited)
     kept = [
-        s for s in sentences if not (_is_pure_praise(s) and _names_a_topic(s, uncredited.values()))
+        s
+        for s in sentences
+        if not (_is_pure_praise(s) and _names_uncredited_topic(s, uncredited, credited))
     ]
     if not kept:
         return fallback
@@ -232,18 +323,41 @@ def _topic_name(topic: TopicCredit) -> str:
     return topic.display_name or humanize_key(topic.canonical_key)
 
 
+def _balanced(name: str) -> str:
+    """Truncate before any bracket the clipped name never closes.
+
+    Graded display names are reference sentences and 67% of the real prod ones
+    exceed the quote budget, so clipping routinely lands inside a parenthetical
+    ("…the growth of information technology (enhanced capacity for…"). The
+    student is meant to learn what full credit looks like from this span, so it
+    ends at the last clause that closes cleanly.
+    """
+    open_stack: list[tuple[str, int]] = []
+    for index, char in enumerate(name):
+        if char in _BRACKET_PAIRS:
+            open_stack.append((char, index))
+        elif open_stack and char == _BRACKET_PAIRS[open_stack[-1][0]]:
+            open_stack.pop()
+    if not open_stack:
+        return name
+    trimmed = name[: open_stack[0][1]].strip(" .;,:!?-–—")
+    return trimmed or name
+
+
 def _quotable_name(topic: TopicCredit) -> str:
     """The topic name as it can be quoted inside one sentence.
 
     Reference wording is sentence-shaped and long, so trailing punctuation is
-    dropped and anything past :data:`_NAME_QUOTE_CHARS` is cut at a word
-    boundary — a quoted reference clause, never a run-on second sentence.
+    dropped, embedded double quotes become single ones (the templates wrap the
+    name in double quotes), anything past :data:`_NAME_QUOTE_CHARS` is cut at a
+    word boundary, and an unclosed bracket left by that cut is removed — a
+    quoted reference clause, never a run-on or a dangling parenthesis.
     """
-    name = " ".join(_topic_name(topic).split()).strip(" .;,:!?")
+    name = " ".join(_topic_name(topic).translate(_QUOTE_CHARS).split()).strip(" .;,:!?")
     if len(name) <= _NAME_QUOTE_CHARS:
-        return name
+        return _balanced(name)
     head = name[:_NAME_QUOTE_CHARS].rsplit(" ", 1)[0].strip(" .;,:!?")
-    return f"{head}…"
+    return f"{_balanced(head)}…"
 
 
 def _name_tokens(topic: TopicCredit) -> set[str]:
@@ -251,11 +365,40 @@ def _name_tokens(topic: TopicCredit) -> set[str]:
     return {t for t in tokens if len(t) >= _SIGNIFICANT_LEN and t not in _NAME_STOPWORDS}
 
 
-def _names_a_topic(sentence: str, topics: Any) -> bool:
+def _names_uncredited_topic(
+    sentence: str,
+    uncredited: Sequence[TopicCredit],
+    credited: Sequence[TopicCredit],
+) -> bool:
+    """True only on strong evidence the sentence is about an uncredited topic.
+
+    Deleting a headline sentence usually replaces the WHOLE headline (the prompt
+    asks for one sentence), so the bar is high and asymmetric — a miss leaves
+    accurate-but-unpoliced praise standing, a false hit serves a canned line
+    instead of real feedback. Two independent guards:
+
+    1. the shared words must be EXCLUSIVE to the uncredited topic — a word that
+       also appears in a credited topic's reference wording is evidence for the
+       credited one, not against it — and there must be enough of them
+       (:data:`_MIN_EXCLUSIVE_HITS`, scaled down for a one- or two-word name),
+       one of them long;
+    2. the sentence must overlap this topic MORE than any credited topic, so a
+       sentence that is mostly about credited work is never deleted.
+    """
     words = set(_WORD_RE.findall(sentence.lower()))
-    for topic in topics:
-        overlap = _name_tokens(topic) & words
-        if any(len(t) >= _DISTINCTIVE_LEN for t in overlap) or len(overlap) >= 2:
+    credited_tokens = [_name_tokens(t) for t in credited]
+    credited_union: set[str] = set().union(*credited_tokens) if credited_tokens else set()
+    best_credited = max((len(t & words) for t in credited_tokens), default=0)
+    for topic in uncredited:
+        name_tokens = _name_tokens(topic)
+        own = name_tokens & words
+        exclusive = own - credited_union
+        required = min(_MIN_EXCLUSIVE_HITS, max(1, (len(name_tokens) + 1) // 2))
+        if (
+            len(exclusive) >= required
+            and any(len(t) >= _DISTINCTIVE_LEN for t in exclusive)
+            and len(own) > best_credited
+        ):
             return True
     return False
 

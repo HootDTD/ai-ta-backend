@@ -42,8 +42,8 @@ recipe below.
 - **Misconceptions retired.** Every topic carries an empty `misconceptions`
   tuple; the detector is gone, the shape kept for UI back-compat.
 - **Flow:** transcript coverage → rubric + topic score → diagnostic/topic
-  narrative → consistency gate (P2.1: served prose never praises a topic under
-  credit 0.6, every zeroed topic names its gap) → remediation decoration → XP.
+  narrative → consistency gate (P2.1: prose never praises an uncredited topic;
+  every zeroed topic that COUNTED names its gap) → remediation → XP.
 - **Course grounding is strictly additive (INTERACTION2, default OFF).**
   [grounding](grounding.md) reframes the adjudication + narrative prompts with one
   capped block; `None` — flag off, NULL/corrupt bundle, nothing student-safe —

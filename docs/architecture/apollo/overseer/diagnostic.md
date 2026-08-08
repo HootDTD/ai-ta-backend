@@ -9,6 +9,7 @@ related:
   - apollo/overseer/topic-narrative
   - apollo/overseer/grounding
   - apollo/overseer/topic-score
+  - apollo/overseer/aside-penalty
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
 last_verified: 2026-08-07
@@ -53,12 +54,22 @@ null feedback.
 `narrative_consistency` (P2.1, 2026-08-07) is the code half of "the narrative
 is written FROM the verdicts" — the prompt half lives in
 [topic-narrative](topic-narrative.md). It takes the sanitized payload plus
-`TopicScoreResult.topics` and, for every topic under `PRAISE_FLOOR`, strips
-each PURE-praise sentence (a credit claim or praise word with no gap named) and
-guarantees the gap is named, appending one deterministic quoted-reference
-sentence when the model named none. Headline and next step lose only
-pure-praise sentences that also NAME an uncredited topic (long-word overlap
-with its display name); emptied fields fall back to deterministic text.
+`TopicScoreResult.topics` and, for every UNCREDITED topic, strips each
+PURE-praise sentence (a credit claim or praise word with no gap named) and — when
+that topic counted toward the grade — guarantees the gap is named, appending one
+deterministic quoted-reference sentence if the model named none. Headline and
+next step lose only pure-praise sentences that are demonstrably ABOUT an
+uncredited topic; emptied fields fall back to deterministic text.
+
+"Uncredited" is `credit < PRAISE_FLOOR`, minus one carve-out: a **Hoot-assisted**
+topic (INTERACTION5) whose credit is above zero is exempt, because
+[aside-penalty](aside-penalty.md)'s flat `0.5` cap is unconditionally below the
+floor — its sub-floor credit is a policy penalty, not missing evidence, and
+`min(evidence, 0.5)` can only reach exactly `0` from a pre-cap `0`. A
+**zero-weight** topic (P1.2b `unprobed` — Apollo never asked, so it left the
+denominator) still loses praise but never receives a gap sentence; a note that
+stripping empties gets a neutral "did not count toward your grade" line instead,
+and such a topic is never chosen as the next-step subject.
 
 `course_evidence` (INTERACTION2, supplied by `handlers/done.py` from
 [grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY.
@@ -103,7 +114,20 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
 - **It runs on sanitized text and its own sentences are code-owned**, quoting a
   shortened (≤90 chars, word-boundary) reference name — never re-sanitized, so
   a topic display name reaches the student as authored, and never a snake_case
-  key (`humanize_key` is the no-display-name fallback).
+  key (`humanize_key` is the no-display-name fallback). The quoted span is
+  bracket-balanced (a clip landing inside a parenthetical drops it) and embedded
+  double quotes become single ones, and it is quoted at most ONCE per payload:
+  a next step that falls back for a topic whose note already quotes it uses the
+  no-quote variant.
+- **Headline/next-step praise is deleted only on strong evidence.** Emptying a
+  one-sentence headline replaces the whole thing, so the sentence must share at
+  least two topic-name words that appear in NO credited topic (one of them 6+
+  chars; scaled down for one/two-word names) AND overlap that topic more than any
+  credited one. Measured on the 14 exported prod problems with 2+ graded nodes —
+  240 ledger-supported praise headlines — the earlier one-shared-word rule
+  false-stripped 57.9%; this one strips 0% at unchanged recall. The trade is
+  deliberate: praise naming a credited AND an uncredited topic in one sentence
+  survives (the prompt half and the per-topic note repair still cover it).
 - **Remediation is copy-on-success and all-or-nothing:** empty/unsafe results or
   any failure publish no `review` key. Solution-bearing snippets use the same
   metadata filter as Interaction 1; snippet quotes never enter the payload.
