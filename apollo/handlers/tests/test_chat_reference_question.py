@@ -431,6 +431,9 @@ async def test_ask_hoot_flag_off_returns_normal_teaching_turn(monkeypatch):
         "kg_entries_added": 0,
         "kg": {"nodes": [], "edges": []},
         "covered_topics": [],
+        # P2.2 meter: this harness's problem double carries no reference steps.
+        "graded_topic_total": 0,
+        "open_graded_topics": 0,
         "question_target": None,
     }
     bridge.assert_not_awaited()
