@@ -32,9 +32,6 @@ is empty namespace glue riding here (§4.0.7).
   question_target?}`, an `intent_*` variant when the intent gate fires, or the
   `reference_aside` variant (see below) when the request explicitly sets
   `ask_hoot=true`.
-- `_graded_topic_counts(problem, covered_topics) -> (total, open)` — the P2.2
-  pre-Done coverage meter, derived from the problem's reference solution + the
-  tally snapshot the questioning controller already returned.
 
 ## Data flow
 
@@ -72,8 +69,7 @@ other in-flight Apollo request on that worker stalled until it returned.
    returns genuinely-new node count.
 6. **Questioning**: build the full transcript and call `plan_next_question`
    (`questioning/controller`), which produces Apollo's reply + `covered_topics`.
-   `_graded_topic_counts` then derives the P2.2 meter (`graded_topic_total` /
-   `open_graded_topics`) from that same snapshot.
+   `_graded_topic_counts` derives the P2.2 meter from that same snapshot.
    When it decides `done`, `handle_done` is dispatched with `auto_done=True`
    (2026-08-07 P0.4 — the engine, not the student, triggered grading; the
    stamp lands in `diagnostic_report` for grade forensics).
@@ -143,18 +139,13 @@ other in-flight Apollo request on that worker stalled until it returned.
   is deliberate — the transcript retains the student's words (grading-
   favorable) and the next turn's history simply includes them; never "clean
   up" the dangling row.
-- **The P2.2 meter counts GRADED node types only** (2026-08-07): `equation /
-  condition / simplification / procedure_step` (`_GRADED_NODE_TYPES`, imported
-  from `overseer/topic-score` — the single definition, never re-listed here).
-  `definition` / `variable_mapping` steps never enter the grade, so including
-  them would show the student a denominator unrelated to their score, and a
-  celebrated ungraded topic must never make the meter read "done".
-  `open_graded_topics` = graded ids minus the ids the tally marked
-  `understood`. Both keys ship on the ask branch AND the auto-done branch — the
-  student-UI types against them, so a branch that omits them is a contract
-  break. Derivation is display-only and soft-fails to `0/0`
-  (`apollo_graded_topic_counts_failed`); it must never break a teaching turn,
-  and it adds no query and no LLM call.
+- **The P2.2 meter counts GRADED node types only** (2026-08-07):
+  `_GRADED_NODE_TYPES` imported from `overseer/topic-score`, never re-listed
+  here. `definition` / `variable_mapping` never enter the grade, so a celebrated
+  ungraded topic must not make the meter read "done"; `open_graded_topics` =
+  graded ids minus the tally's `understood` ids. Both keys ship on the ask AND
+  the auto-done branch (the student-UI types against them). The derivation adds
+  no query and soft-fails to `0/0` (`apollo_graded_topic_counts_failed`).
 - The residual done-race window is the intent-classify call (~1-2s) before the
   early persist — accepted for P0; full elimination is the P3.4 concurrency
   review.
