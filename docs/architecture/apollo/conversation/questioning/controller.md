@@ -35,9 +35,10 @@ rows (`_new_opportunity_row` for a new node; evidence appended dedup'd).
 `_covered_topics` collects nodes whose merged state is `understood`, and
 `build_selection_policy` (`questioning/selection`) over the post-update rows yields
 the `graded_topic_total` / `open_graded_topics` counts the chat response serves to
-the student-ui coverage meter. On `ask`, the target row's
-`times_asked`/`last_asked_turn` are bumped. `_write_opportunity_audit` records
-`asked_turn`/`answered_turn` timing only.
+the student-ui coverage meter. On `ask`, the target row's `last_asked_turn` is
+stamped and `times_asked` is bumped **unless the engine flagged
+`fallback_served`**. `_write_opportunity_audit` records `asked_turn`/`answered_turn`
+timing only.
 
 ## Invariants & gotchas
 
@@ -45,7 +46,19 @@ the student-ui coverage meter. On `ask`, the target row's
   `course_id` + `session_id` + `attempt_id`. (The row's course/session scope keys
   are these columns — not `learning_activity_id`.)
 - `times_asked` is cumulative → **two asks per node max**, enforced in code by
-  `questioning/selection` (`MAX_ASKS_PER_NODE`), no longer prompt-only.
+  `questioning/selection` (`MAX_ASKS_PER_NODE`), no longer prompt-only. It also
+  drives `budget.questions_asked` (`sum(times_asked)`).
+- **A fallback reply costs no probe.** `UnifiedQuestionResult.fallback_served`
+  marks a `*_exhausted` turn, where the served text is a verbatim public clause
+  rather than a question about the target; `times_asked` is left alone so the node
+  stays askable next turn. Charging it exhausted thin rubrics' graded nodes into a
+  forced `done` → `handle_done(auto_done=True)` → topic scored 0 (the bimodal-F
+  mode). `last_asked_turn`, `question` and `asked_turn` are still recorded — the
+  student really did see that turn.
+- **`open_graded_topics` is "not yet `understood`", NOT "still askable".** A graded
+  node at `times_asked == MAX_ASKS_PER_NODE` and still `tentative` keeps counting,
+  and no further conversation can clear it. This is the cross-repo contract's pinned
+  definition; UI copy must not promise that Apollo will ask about those topics.
 - **One evidence validator (P2.4).** The raw case/punctuation-sensitive
   `_valid_update_evidence` re-check is DELETED: `unified._decode_updates` already
   rejects (and logs) a quote that is not a normalized verbatim match in the cited

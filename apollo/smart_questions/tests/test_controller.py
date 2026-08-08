@@ -213,7 +213,9 @@ async def test_two_probe_cap_preserves_per_node_state_count_and_evidence(monkeyp
 async def test_evidence_validated_upstream_is_persisted_verbatim(monkeypatch):
     """P2.4 (Q1): the engine's normalized matcher is the single validator — the
     controller no longer re-checks the quote against the raw transcript, so a
-    quote differing only in case or punctuation is no longer silently dropped."""
+    quote differing only in case or punctuation is no longer silently dropped.
+    What arrives is already the student's raw span (`unified._verbatim_span`),
+    so persisting it unchanged is what keeps "the student said" true."""
     row = SimpleNamespace(
         reference_node_id="def_x",
         state="tentative",
@@ -231,7 +233,7 @@ async def test_evidence_validated_upstream_is_persisted_verbatim(monkeypatch):
         "evaluate_and_ask",
         lambda **kwargs: _async_result(
             UnifiedQuestionResult(
-                (TallyUpdate("def_x", "understood", EvidenceQuote(0, "X Matters, really")),),
+                (TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters really")),),
                 "done",
                 None,
                 None,
@@ -252,8 +254,49 @@ async def test_evidence_validated_upstream_is_persisted_verbatim(monkeypatch):
     assert row.state == "understood"
     assert row.evidence == [
         {"turn_id": 0, "quote": "old quote"},
-        {"turn_id": 0, "quote": "X Matters, really"},
+        {"turn_id": 0, "quote": "x matters really"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_fallback_reply_does_not_spend_one_of_the_nodes_two_probes(monkeypatch):
+    """A `*_exhausted` fallback serves a verbatim public clause, not a question
+    the engine wrote about the target. Charging it as a probe used to exhaust a
+    thin rubric's only graded node, empty `askable_ids`, force `done` and
+    auto-grade a never-really-probed topic as 0."""
+    row = SimpleNamespace(
+        reference_node_id="def_x",
+        state="missing",
+        evidence=[],
+        times_asked=1,
+        last_asked_turn=1,
+        question="Prior question?",
+        asked_turn=1,
+        answered_turn=2,
+    )
+    db = _DB([row])
+
+    async def evaluate(**kwargs):
+        return UnifiedQuestionResult(
+            (), "ask", "def_x", "Explain x?", "Explain x?", fallback_served=True
+        )
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    result = await controller.plan_next_question(
+        db,
+        course_id=11,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x")],
+        turn_index=4,
+    )
+    assert result.action == "ask"
+    assert row.times_asked == 1
+    # The turn still happened, so the audit records it.
+    assert row.last_asked_turn == 5
+    assert row.question == "Explain x?"
+    assert row.asked_turn == 5
 
 
 @pytest.mark.asyncio

@@ -281,7 +281,13 @@ async def plan_next_question(
             )
             db.add(target_row)
             tally_by_id[result.target_node_id] = target_row
-        target_row.times_asked = int(target_row.times_asked) + 1
+        if not result.fallback_served:
+            # A degenerate fallback reply (a verbatim public clause, served when the
+            # engine burned its regenerate) never actually probed this node, so it
+            # must not spend one of its MAX_ASKS_PER_NODE probes: doing so used to
+            # exhaust a thin rubric's only graded node, empty `askable_ids`, force
+            # `done`, and auto-grade an unprobed topic as 0 (the bimodal-F mode).
+            target_row.times_asked = int(target_row.times_asked) + 1
         target_row.last_asked_turn = turn_index + 1
 
     _write_opportunity_audit(

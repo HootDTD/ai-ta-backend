@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apollo.ontology import Edge, EdgeType, KGGraph, build_node
+from apollo.ontology import KGGraph, build_node
 from apollo.smart_questions import unified
 
 
@@ -230,6 +230,38 @@ async def test_second_off_policy_draft_falls_back_to_the_public_clause(monkeypat
     assert result.target_node_id == "b"
     assert result.reply == "Why does pressure work?"
     assert "fallback_reason=off_policy_exhausted" in caplog.text
+    # The blunt clause is not a probe of node b — the caller must not charge one.
+    assert result.fallback_served is True
+
+
+@pytest.mark.asyncio
+async def test_a_draft_that_is_both_off_policy_and_malformed_gets_both_corrections(
+    monkeypatch, caplog
+):
+    """A single regenerate has to carry BOTH complaints: correcting only the
+    target left the malformed shape unfixed, so a repairable reply was thrown
+    away and the student got a raw restatement of the problem prompt."""
+    drafts = [
+        _draft(target="a", acknowledgement="Nice.", question="What is x? And why?"),
+        _draft(target="b", acknowledgement=None, question="What do you do with the area?"),
+    ]
+    calls = []
+
+    def fake_call(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(drafts[len(calls) - 1])
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    with caplog.at_level("INFO"):
+        result = await unified.evaluate_and_ask(**_kwargs(budget=unified.QuestionBudget(7, 8)))
+
+    feedback = calls[1]["messages"][3]["content"]
+    assert unified._off_policy_feedback(("b",)) in feedback
+    assert unified._MALFORMED_FEEDBACK in feedback
+    assert result.target_node_id == "b"
+    assert result.reply == "What do you do with the area?"
+    assert result.fallback_served is False
+    assert "fallback_reason=off_policy_regenerated" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -274,85 +306,16 @@ async def test_no_probeable_node_forces_done_while_keeping_this_turn_updates(mon
     assert "fallback_reason=no_probeable_node" in caplog.text
 
 
-@pytest.mark.parametrize(
-    ("reply", "flagged"),
-    [
-        ("Did it begin in 1970?", True),
-        ("What did Toffler say?", True),
-        ("How does change over time happen?", True),
-        ("Does this change anything about how people live day to day?", False),
-    ],
-)
-def test_belt_three_atom_classes_and_ordinary_english(reply, flagged):
-    meaning = "change over time" if flagged else "decision paralysis from excess options"
-    graph = KGGraph(
-        nodes=[
-            build_node(
-                node_type="definition",
-                node_id="future",
-                attempt_id=1,
-                source="reference",
-                content={"concept": "Toffler", "meaning": meaning},
-            )
-        ],
-        edges=[],
+@pytest.mark.asyncio
+async def test_done_is_not_forced_while_any_node_is_still_probeable(monkeypatch):
+    """The code-enforced `done` (P2.4) fires ONLY on an empty askable set — one
+    capped node must never end the conversation while another node is open."""
+    monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: json.dumps(_draft(target="a")))
+    result = await unified.evaluate_and_ask(
+        **_kwargs(tally_state=_state(graded_status="tentative", graded_asked=2))
     )
-    assert (
-        unified._leaks_private_content(
-            reply,
-            reference_graph=graph,
-            public_text="Why does it occur?",
-            student_messages=[],
-        )
-        is flagged
-    )
-
-
-def test_student_said_private_atoms_and_faithful_ack_pass():
-    graph = KGGraph(
-        nodes=[
-            build_node(
-                node_type="definition",
-                node_id="private",
-                attempt_id=1,
-                source="reference",
-                content={"concept": "Toffler", "meaning": "change over time in 1970"},
-            )
-        ],
-        edges=[],
-    )
-    student = "I think Toffler described change over time in 1970"
-    verdict = unified._belt_verdict(
-        "So you think Toffler described change over time in 1970. What happens next?",
-        reference_graph=graph,
-        public_text="What happens?",
-        student_messages=[student],
-    )
-    assert not verdict.hit
-    assert not verdict.malformed
-
-
-def test_private_phrase_of_only_function_words_is_flagged():
-    graph = KGGraph(
-        nodes=[
-            build_node(
-                node_type="definition",
-                node_id="phrase",
-                attempt_id=1,
-                source="reference",
-                content={"concept": "private", "meaning": "after all"},
-            )
-        ],
-        edges=[],
-    )
-    verdict = unified._belt_verdict(
-        "What happens after all?",
-        reference_graph=graph,
-        public_text="What happens?",
-        student_messages=[],
-    )
-    assert verdict.private_vocabulary == ()
-    assert "after all" in verdict.private_phrases
+    assert result.action == "ask"
+    assert result.target_node_id == "a"
 
 
 @pytest.mark.asyncio
@@ -470,6 +433,13 @@ async def test_double_malformed_serves_verbatim_public_clause(monkeypatch, caplo
     assert result.reply == "Why does pressure work?"
     assert "fallback_reason=malformed_exhausted" in caplog.text
     assert "belt_hit_served=False" in caplog.text
+    assert result.fallback_served is True
+
+
+@pytest.mark.asyncio
+async def test_a_real_served_question_is_not_flagged_as_a_fallback(monkeypatch):
+    monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: json.dumps(_draft(target="b")))
+    assert (await unified.evaluate_and_ask(**_kwargs())).fallback_served is False
 
 
 @pytest.mark.asyncio
@@ -551,14 +521,16 @@ def test_rejected_evidence_is_logged_by_the_single_validator(caplog):
     assert "apollo_question_evidence_rejected" in caplog.text
 
 
-def test_normalized_matcher_accepts_case_and_punctuation_drift():
-    """Q1: the quote only has to match the student's words, not their typography."""
+def test_normalized_matcher_accepts_drift_but_persists_the_students_own_words():
+    """Q1: the quote only has to match the student's words, not their typography —
+    but what is STORED is the student's raw text, because `done.py` hands these
+    quotes to the transcript adjudicator as "the student said" (P1.3)."""
     decoded = _draft(
         updates=[
             {
                 "node_id": "a",
                 "status": "understood",
-                "evidence": {"turn_id": 0, "quote": "Pressure is force over area"},
+                "evidence": {"turn_id": 0, "quote": "Pressure IS, force over area"},
             }
         ]
     )
@@ -568,9 +540,21 @@ def test_normalized_matcher_accepts_case_and_punctuation_drift():
         transcript=[("student", "well, pressure is force over area!")],
     ) == (
         unified.TallyUpdate(
-            "a", "understood", unified.EvidenceQuote(0, "Pressure is force over area")
+            "a", "understood", unified.EvidenceQuote(0, "pressure is force over area")
         ),
     )
+
+
+def test_verbatim_span_returns_the_raw_slice_or_none():
+    assert unified._verbatim_span("HELLO there", "Well, hello there!") == "hello there"
+    # Punctuation INSIDE the student's span is preserved, not normalized away.
+    assert unified._verbatim_span("x matters really", "well x matters, really!") == (
+        "x matters, really"
+    )
+    assert unified._verbatim_span("never said", "something else") is None
+    assert unified._verbatim_span("...", "anything") is None
+    assert unified._verbatim_span(None, "anything") is None
+    assert unified._verbatim_span("quote", "") is None
 
 
 def test_question_cap_default_override_and_malformed(monkeypatch):
@@ -616,8 +600,6 @@ async def test_debug_log_flag_reports_belt_verdicts(monkeypatch, caplog):
 
 
 def test_private_helpers_and_invalid_updates():
-    assert unified._walk_strings({"a": [" x ", 2, {"b": ""}], "c": ("y",)}) == ["x", "y"]
-    assert unified._validated_evidence("HELLO there", ["Well, hello there!"]) == "HELLO there"
     assert unified._public_question_parts("First? And second? ") == ["First", "And second"]
     decoded = _draft(
         updates=[
@@ -633,6 +615,17 @@ def test_private_helpers_and_invalid_updates():
     assert (
         unified._decode_updates(decoded, valid_ids={"a"}, transcript=[("student", "hello")]) == ()
     )
+    # A `missing` update needs no evidence; a non-`missing` one with an unusable
+    # turn_id is dropped by the single validator.
+    unusable = _draft(
+        updates=[
+            {"node_id": "a", "status": "missing", "evidence": None},
+            {"node_id": "b", "status": "understood", "evidence": {"turn_id": "0", "quote": "hi"}},
+        ]
+    )
+    assert unified._decode_updates(
+        unusable, valid_ids={"a", "b"}, transcript=[("student", "hi")]
+    ) == (unified.TallyUpdate("a", "missing", None),)
     assert unified._decode("not json") == {}
     assert unified._decode_updates({"tally_updates": None}, valid_ids={"a"}, transcript=[]) == ()
     assert (
@@ -647,19 +640,3 @@ def test_private_helpers_and_invalid_updates():
         )
         == "Only one?"
     )
-
-
-def test_private_strings_include_edge_labels():
-    graph = _graph()
-    graph.edges.append(
-        Edge(
-            edge_type=EdgeType.DEPENDS_ON,
-            from_node_id="a",
-            to_node_id="b",
-            attempt_id=1,
-            source="reference",
-            from_node_type="definition",
-            to_node_type="procedure_step",
-        )
-    )
-    assert "DEPENDS_ON" in unified._private_strings(graph)

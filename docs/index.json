@@ -178,6 +178,7 @@
     "apollo/schemas/variable_map.py": "apollo/schemas/authoring-schemas",
     "apollo/smart_questions/__init__.py": "apollo/conversation/questioning/controller",
     "apollo/smart_questions/controller.py": "apollo/conversation/questioning/controller",
+    "apollo/smart_questions/leakage.py": "apollo/conversation/questioning/leakage",
     "apollo/smart_questions/selection.py": "apollo/conversation/questioning/selection",
     "apollo/smart_questions/unified.py": "apollo/conversation/questioning/unified",
     "apollo/solver/__init__.py": "apollo/solver/sympy-exec",
@@ -577,6 +578,14 @@
         "apollo/smart_questions/__init__.py"
       ]
     },
+    "apollo/conversation/questioning/leakage": {
+      "path": "docs/architecture/apollo/conversation/questioning/leakage.md",
+      "kind": "leaf",
+      "description": "Log-only private-atom leakage belt for the questioning reply, plus the loop's single text normalizer.",
+      "owns": [
+        "apollo/smart_questions/leakage.py"
+      ]
+    },
     "apollo/conversation/questioning/selection": {
       "path": "docs/architecture/apollo/conversation/questioning/selection.md",
       "kind": "leaf",
@@ -588,7 +597,7 @@
     "apollo/conversation/questioning/unified": {
       "path": "docs/architecture/apollo/conversation/questioning/unified.md",
       "kind": "leaf",
-      "description": "One-call engine that updates the per-node tally and generates Apollo's question, with log-only belt telemetry.",
+      "description": "One-call engine that updates the per-node tally and generates Apollo's question, under the code-enforced target policy.",
       "owns": [
         "apollo/smart_questions/unified.py"
       ]
@@ -2052,6 +2061,7 @@
         "apollo/conversation/parser/graph-context",
         "apollo/conversation/parser/parser-llm",
         "apollo/conversation/questioning/controller",
+        "apollo/conversation/questioning/leakage",
         "apollo/conversation/questioning/selection",
         "apollo/conversation/questioning/unified",
         "apollo/conversation/routing/auth-deps",

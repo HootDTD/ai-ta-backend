@@ -14,6 +14,7 @@ from typing import Any, Literal, cast
 
 from apollo.agent._llm import bounded_client
 from apollo.ontology import KGGraph
+from apollo.smart_questions.leakage import WORD_RE, BeltVerdict, belt_verdict, normalized
 from apollo.smart_questions.selection import (
     MAX_ASKS_PER_NODE,
     SelectionPolicy,
@@ -37,26 +38,6 @@ _DEFAULT_MODEL = "gpt-5.2"
 _DEFAULT_REASONING_EFFORT = "medium"
 _DEFAULT_QUESTION_CAP = 8
 _LOG = logging.getLogger(__name__)
-_WORD_RE = re.compile(r"[a-zA-Z0-9]+")
-
-# Deliberately small: function words and extremely common verbs, not a vocabulary allowlist.
-_FUNCTION_WORDS = frozenset(
-    """
-    a about above after again against all am an and any are as at be because been before
-    being below between both but by can cannot could did do does doing down during each few
-    for from further get gets getting got had has have having he her here hers herself him
-    himself his how i if in into is it its itself just make makes made making may me might
-    more most must my myself no nor not now of off on once only or other ought our ours
-    ourselves out over own same she should so some such than that the their theirs them
-    themselves then there these they this those through to too under until up very was we
-    were what when where which while who whom why will with would you your yours yourself
-    yourselves able actually also always another around ask asked asking back become becomes
-    became begin begins began bring brings brought call called calling come comes came day
-    days different done else end ends ended even ever every explain explained explaining
-    feel feels felt find finds found first give gives gave given go goes going gone good
-    happen happens happened happening help helps helped helping idea ideas
-    """.split()
-)
 
 
 @dataclass(frozen=True)
@@ -95,22 +76,10 @@ class UnifiedQuestionResult:
     target_node_id: str | None
     reply: str | None
     question: str | None
-
-
-@dataclass(frozen=True)
-class _BeltVerdict:
-    malformed: bool = False
-    digits: tuple[str, ...] = ()
-    private_vocabulary: tuple[str, ...] = ()
-    private_phrases: tuple[str, ...] = ()
-
-    @property
-    def hit(self) -> bool:
-        return bool(self.digits or self.private_vocabulary or self.private_phrases)
-
-    @property
-    def offending_atoms(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys((*self.digits, *self.private_vocabulary, *self.private_phrases)))
+    #: True when what is served is `_fallback_public_question` — a verbatim public
+    #: clause, not a question the engine wrote about the target. The caller must
+    #: NOT spend one of the node's `MAX_ASKS_PER_NODE` probes on it.
+    fallback_served: bool = False
 
 
 def _schema() -> dict[str, Any]:
@@ -163,7 +132,7 @@ def _schema() -> dict[str, Any]:
     }
 
 
-_SYSTEM_PROMPT = """You are Apollo, a curious and genuinely confused classmate learning from the user.
+_SYSTEM_PROMPT = f"""You are Apollo, a curious and genuinely confused classmate learning from the user.
 In one JSON response, update your durable private tally for this new turn and decide what to say.
 
 OBJECTIVE:
@@ -198,9 +167,9 @@ RE-ASKING (confirm once, then move on):
   knowledge, not repeating yourself: ask from a genuinely different angle and never reuse your
   earlier wording. Approach the same idea through a new consequence, situation, or next step so a
   good answer this time confirms real understanding rather than a lucky echo.
-- A node already probed twice, or already understood, is absent from askable_node_ids and cannot
-  be targeted again; you have confirmed as much as this conversation can. Leave its status as it
-  stands.
+- A node already probed {MAX_ASKS_PER_NODE} times, or already understood, is absent from
+  askable_node_ids and cannot be targeted again; you have confirmed as much as this conversation
+  can. Leave its status as it stands.
 - If a re-probe still draws uncertainty or a vague, hedging answer, do not keep pressing: leave
   the status as it stands and open new territory next.
 
@@ -248,38 +217,26 @@ def _base_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
-def _walk_strings(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value.strip()] if value.strip() else []
-    if isinstance(value, dict):
-        return [text for child in value.values() for text in _walk_strings(child)]
-    if isinstance(value, (list, tuple)):
-        return [text for child in value for text in _walk_strings(child)]
-    return []
+def _verbatim_span(value: Any, message: str) -> str | None:
+    """The STUDENT's own words for the model's quote `value`, sliced out of `message`.
 
-
-def _private_strings(reference_graph: KGGraph) -> list[str]:
-    values: list[str] = []
-    for node in reference_graph.nodes:
-        values.extend(_walk_strings(node.model_dump(mode="json")))
-    for edge in reference_graph.edges:
-        values.extend(_walk_strings(edge.model_dump(mode="json")))
-    return list(dict.fromkeys(values))
-
-
-def _normalized(text: str) -> str:
-    return " ".join(_WORD_RE.findall(text.casefold()))
-
-
-def _validated_evidence(value: Any, student_messages: Sequence[str]) -> str | None:
-    if not isinstance(value, str) or not value.strip():
+    The model's rendering only has to match word-for-word ignoring case and
+    punctuation (Q1 — a raw substring re-check silently dropped valid updates),
+    but what gets persisted is the student's raw text: `done.py` hands these
+    quotes to the transcript adjudicator as "the student said", and a cleaned-up
+    rendering there would attribute words the student never typed (P1.3).
+    Returns None when the quote is not the student's, which drops the update.
+    """
+    if not isinstance(value, str):
         return None
-    evidence = re.sub(r"\s+", " ", value).strip()
-    normalized_evidence = _normalized(evidence)
-    if not normalized_evidence:
+    wanted = [token.casefold() for token in WORD_RE.findall(value)]
+    if not wanted:
         return None
-    if any(normalized_evidence in _normalized(message) for message in student_messages):
-        return evidence
+    spans = list(WORD_RE.finditer(message))
+    tokens = [span.group(0).casefold() for span in spans]
+    for start in range(len(tokens) - len(wanted) + 1):
+        if tokens[start : start + len(wanted)] == wanted:
+            return message[spans[start].start() : spans[start + len(wanted) - 1].end()]
     return None
 
 
@@ -319,7 +276,6 @@ def _decode_updates(
     student_by_turn = {
         turn_id: content for turn_id, (role, content) in enumerate(transcript) if role == "student"
     }
-    student_messages = list(student_by_turn.values())
     updates: list[TallyUpdate] = []
     items = decoded.get("tally_updates", [])
     if not isinstance(items, list):
@@ -335,15 +291,10 @@ def _decode_updates(
         raw_evidence = item.get("evidence")
         if isinstance(raw_evidence, dict):
             turn_id = raw_evidence.get("turn_id")
-            quote = _validated_evidence(raw_evidence.get("quote"), student_messages)
-            if (
-                isinstance(turn_id, int)
-                and not isinstance(turn_id, bool)
-                and quote is not None
-                and turn_id in student_by_turn
-                and _normalized(quote) in _normalized(student_by_turn[turn_id])
-            ):
-                evidence = EvidenceQuote(turn_id=turn_id, quote=quote)
+            if isinstance(turn_id, int) and not isinstance(turn_id, bool):
+                quote = _verbatim_span(raw_evidence.get("quote"), student_by_turn.get(turn_id, ""))
+                if quote is not None:
+                    evidence = EvidenceQuote(turn_id=turn_id, quote=quote)
         if status != "missing" and evidence is None:
             # P2.4: this normalized check is the SINGLE evidence validator — the
             # controller no longer re-checks raw substrings. Log the drop so a
@@ -365,92 +316,6 @@ def _decode_updates(
             )
         )
     return tuple(updates)
-
-
-def _belt_verdict(
-    reply: str,
-    *,
-    reference_graph: KGGraph,
-    public_text: str,
-    student_messages: Sequence[str],
-) -> _BeltVerdict:
-    cleaned = re.sub(r"\s+", " ", reply).strip()
-    malformed = not cleaned.endswith("?") or cleaned.count("?") != 1
-    normalized_reply = _normalized(cleaned)
-    public_and_student = _normalized(f"{public_text} {' '.join(student_messages)}")
-    safe_tokens = set(_WORD_RE.findall(public_and_student))
-    reply_tokens = _WORD_RE.findall(normalized_reply)
-
-    digits = tuple(
-        dict.fromkeys(
-            token
-            for token in reply_tokens
-            if any(char.isdigit() for char in token) and token not in safe_tokens
-        )
-    )
-    private_strings = _private_strings(reference_graph)
-    private_tokens = {
-        token
-        for value in private_strings
-        for token in _WORD_RE.findall(_normalized(value))
-        if len(token) >= 3
-    }
-    private_vocabulary = tuple(
-        dict.fromkeys(
-            token
-            for token in reply_tokens
-            if len(token) >= 3
-            and token in private_tokens
-            and token not in safe_tokens
-            and token not in _FUNCTION_WORDS
-        )
-    )
-    private_phrases = tuple(
-        dict.fromkeys(
-            normalized_private
-            for value in private_strings
-            if len(normalized_private := _normalized(value)) >= 4
-            and normalized_private in normalized_reply
-            and normalized_private not in public_and_student
-        )
-    )
-    return _BeltVerdict(
-        malformed=malformed,
-        digits=digits,
-        private_vocabulary=private_vocabulary,
-        private_phrases=private_phrases,
-    )
-
-
-def _private_content_violations(
-    reply: str,
-    *,
-    reference_graph: KGGraph,
-    public_text: str,
-    student_messages: Sequence[str],
-) -> tuple[bool, tuple[str, ...]]:
-    verdict = _belt_verdict(
-        reply,
-        reference_graph=reference_graph,
-        public_text=public_text,
-        student_messages=student_messages,
-    )
-    return verdict.hit, verdict.offending_atoms
-
-
-def _leaks_private_content(
-    reply: str,
-    *,
-    reference_graph: KGGraph,
-    public_text: str,
-    student_messages: Sequence[str],
-) -> bool:
-    return _private_content_violations(
-        reply,
-        reference_graph=reference_graph,
-        public_text=public_text,
-        student_messages=student_messages,
-    )[0]
 
 
 def _student_reply(decoded: dict[str, Any]) -> tuple[str, str]:
@@ -557,9 +422,10 @@ class _ServedReply:
     target: str
     fallback_reason: FallbackReason | None
     belt_hit_served: bool
-    draft_verdict: _BeltVerdict
+    draft_verdict: BeltVerdict
     regenerate_decoded: dict[str, Any] | None = None
-    regenerate_verdict: _BeltVerdict | None = None
+    regenerate_verdict: BeltVerdict | None = None
+    fallback_served: bool = False
 
 
 async def _resolve_served_reply(
@@ -575,10 +441,10 @@ async def _resolve_served_reply(
     student_messages: Sequence[str],
     public_parts: Sequence[str],
 ) -> _ServedReply:
-    """One regenerate at most, for an off-policy target OR a malformed shape."""
+    """One regenerate at most, for an off-policy target and/or a malformed shape."""
 
-    def belt(text: str) -> _BeltVerdict:
-        return _belt_verdict(
+    def belt(text: str) -> BeltVerdict:
+        return belt_verdict(
             text,
             reference_graph=reference_graph,
             public_text=problem_text,
@@ -592,7 +458,16 @@ async def _resolve_served_reply(
         return _ServedReply(reply, question, target, None, verdict.hit, verdict)
 
     reason: FallbackReason = "off_policy_regenerated" if off_policy else "malformed_regenerated"
-    feedback = _off_policy_feedback(policy.askable_ids) if off_policy else _MALFORMED_FEEDBACK
+    # A draft can be BOTH off-policy and malformed — send both corrections, or the
+    # single regenerate is spent fixing one defect while the other still fails it.
+    feedback = " ".join(
+        text
+        for text in (
+            _off_policy_feedback(policy.askable_ids) if off_policy else "",
+            _MALFORMED_FEEDBACK if verdict.malformed else "",
+        )
+        if text
+    )
     regenerate_raw = await asyncio.to_thread(
         _call_unified,
         payload=payload,
@@ -624,6 +499,7 @@ async def _resolve_served_reply(
             verdict,
             regenerate_decoded,
             regenerate_verdict,
+            fallback_served=True,
         )
     return _ServedReply(
         reply,
@@ -722,7 +598,7 @@ async def evaluate_and_ask(
         student_messages=student_messages,
         public_parts=public_parts,
     )
-    prior_questions = {_normalized(item) for item in _transcript_questions(transcript)}
+    prior_questions = {normalized(item) for item in _transcript_questions(transcript)}
     _log_decision(
         tally_counts=_effective_counts(tally_state, updates),
         action="ask",
@@ -731,7 +607,7 @@ async def evaluate_and_ask(
         policy=policy,
         fallback_reason=served.fallback_reason,
         belt_hit_served=served.belt_hit_served,
-        repeated_question_served=_normalized(served.question) in prior_questions,
+        repeated_question_served=normalized(served.question) in prior_questions,
     )
     _log_debug_cycle(
         decoded,
@@ -740,7 +616,14 @@ async def evaluate_and_ask(
         served.regenerate_verdict,
         served.reply,
     )
-    return UnifiedQuestionResult(updates, "ask", served.target, served.reply, served.question)
+    return UnifiedQuestionResult(
+        updates,
+        "ask",
+        served.target,
+        served.reply,
+        served.question,
+        fallback_served=served.fallback_served,
+    )
 
 
 def _transcript_questions(transcript: Sequence[tuple[str, str]]) -> list[str]:
@@ -771,9 +654,9 @@ def _bounded_debug_text(value: Any) -> str | None:
 
 def _log_debug_cycle(
     draft: dict[str, Any],
-    draft_verdict: _BeltVerdict | None,
+    draft_verdict: BeltVerdict | None,
     regenerate: dict[str, Any] | None,
-    regenerate_verdict: _BeltVerdict | None,
+    regenerate_verdict: BeltVerdict | None,
     final: str | None,
 ) -> None:
     if not _debug_log_enabled():
@@ -824,14 +707,11 @@ def _log_decision(
 
 
 __all__ = [
-    "MAX_ASKS_PER_NODE",
     "EvidenceQuote",
     "QuestionBudget",
-    "SelectionPolicy",
     "TallyState",
     "TallyUpdate",
     "UnifiedQuestionResult",
-    "build_selection_policy",
     "evaluate_and_ask",
     "question_cap",
 ]

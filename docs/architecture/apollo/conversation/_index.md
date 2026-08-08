@@ -10,7 +10,6 @@ stub: false
 # Apollo conversation — the teaching-turn path
 
 Live path: `api.py` (routing/router) → session_init → chat (parser + questioning) → done (grade). Neo4j is optional; the transcript LLM grader is the sole grading lane. The questioning/ leaves own `apollo/smart_questions/` (renamed in the doc tree, not on disk).
-
 Grading-path recipe (D21): to change grading, start at handlers/done (the orchestrator) and follow its directional related chain; the full recipe + grading invariants live in [overseer/_index](../overseer/_index.md).
 
 ## Cross-cutting invariants
@@ -59,8 +58,9 @@ Grading-path recipe (D21): to change grading, start at handlers/done (the orches
 ## Questioning · curriculum · session entry
 | Leaf | Role · owns |
 |---|---|
-| [unified](questioning/unified.md) | evaluate_and_ask one-call engine + log-only belt · smart_questions/unified.py |
+| [unified](questioning/unified.md) | evaluate_and_ask one-call tally+question engine · smart_questions/unified.py |
 | [selection](questioning/selection.md) | graded-first target policy + 2-ask cap + graded budget reservation · smart_questions/selection.py |
+| [leakage](questioning/leakage.md) | log-only private-atom belt + shared text normalizer · smart_questions/leakage.py |
 | [controller](questioning/controller.md) | plan_next_question persistence orchestration · smart_questions/controller.py |
 | [registry](curriculum/registry.md) | filesystem authoring registry · apollo/subjects/__init__.py |
 | [db](curriculum/db.md) | live DB-backed concept loader · apollo/subjects/curriculum_db.py |

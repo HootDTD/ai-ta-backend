@@ -49,7 +49,16 @@ held for territory the grade is actually computed over.
 - **No lockout on a 0-graded problem.** With no graded nodes `reserved_for_graded`
   is 0, `graded_only` stays False and ungraded nodes stay askable.
 - **Empty `askable_ids` is the done condition** (`unified` forces `done` on it) —
-  not an error state.
+  not an error state. It is reachable only when every node is `understood` or out
+  of asks, and there is no legal target in it, so `askable_ids[0]` is safe
+  everywhere else.
+- **`open_graded_topics` ≠ "topics Apollo will still ask about".** `open_graded_ids`
+  filters on `status != 'understood'` ONLY — askability is deliberately not applied,
+  because the cross-repo contract pins the count as "graded nodes not yet
+  understood". A graded node capped at `MAX_ASKS_PER_NODE` while still `tentative`
+  therefore counts forever and cannot be cleared by talking longer. UI copy built on
+  this number must say "not yet marked understood", never "Apollo will ask about
+  these next".
 - The policy is pure: no DB, no LLM, no I/O. Both callers compute it twice per
   turn (before the call for the payload, after the call with this turn's updates
   for enforcement) and the two results may legitimately differ.
