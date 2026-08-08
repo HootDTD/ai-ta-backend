@@ -1,7 +1,7 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-08-07",
+  "generated_at": "2026-08-08",
   "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
@@ -948,7 +948,7 @@
     "apollo/projections/performance-problems": {
       "path": "docs/architecture/apollo/projections/performance-problems.md",
       "kind": "leaf",
-      "description": "performance_problems \u2014 the class-performance payload's per-problem problems[] block (best-wins letter distribution, full text, per-problem student list, and the per-reference-node right/wrong breakdown that reuses the served topic score's own credit helper).",
+      "description": "performance_problems \u2014 the class-performance payload's per-problem problems[] block (best-wins letter distribution, full text, per-problem student list, and the per-reference-node right/wrong/unprobed breakdown that reuses the served topic score's own credit helper).",
       "owns": [
         "apollo/projections/performance_problems.py"
       ]

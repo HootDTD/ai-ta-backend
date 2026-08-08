@@ -99,8 +99,13 @@ def test_usable_coverage(coverage, expected_usable):
 # --- aggregate_nodes --------------------------------------------------------
 
 
+def _attempts(*coverages: dict) -> list[pp.AttemptNodes]:
+    """Pre-P1.2b shape: coverage only, nothing excluded from any grade."""
+    return [pp.AttemptNodes(coverage=coverage) for coverage in coverages]
+
+
 def test_aggregate_nodes_tallies_each_status_over_best_attempts():
-    nodes = pp.aggregate_nodes([_eq(), _cond()], [_COV_COVERED, _COV_PARTIAL, _COV_MISSED])
+    nodes = pp.aggregate_nodes([_eq(), _cond()], _attempts(_COV_COVERED, _COV_PARTIAL, _COV_MISSED))
     by_id = {n["node_id"]: n for n in nodes}
     # display_name + node_type come from the reference node (scorer's own resolver).
     assert (by_id["eq1"]["display_name"], by_id["eq1"]["node_type"]) == ("Bernoulli", "equation")
@@ -113,6 +118,7 @@ def test_aggregate_nodes_tallies_each_status_over_best_attempts():
         "understood": 1,
         "partial": 1,
         "missed": 1,
+        "unprobed": 0,
         "graded": 3,
     }
     # c1: covered in all three.
@@ -121,7 +127,7 @@ def test_aggregate_nodes_tallies_each_status_over_best_attempts():
 
 
 def test_aggregate_nodes_no_graded_nodes_is_empty():
-    assert pp.aggregate_nodes([], [_COV_COVERED]) == []
+    assert pp.aggregate_nodes([], _attempts(_COV_COVERED)) == []
 
 
 def test_aggregate_nodes_no_attempts_reports_zeroed_nodes():
@@ -134,9 +140,69 @@ def test_aggregate_nodes_no_attempts_reports_zeroed_nodes():
             "understood": 0,
             "partial": 0,
             "missed": 0,
+            "unprobed": 0,
             "graded": 0,
         }
     ]
+
+
+# --- unprobed nodes (review finding 1) --------------------------------------
+
+
+def test_a_node_excluded_from_an_attempts_grade_is_never_counted_missed():
+    """The defect: `_credit_for_node` can only say covered/partial/missing, so a
+    node P1.2b dropped from that student's grade — never asked, "not part of
+    this grade" in their own payload — was reported to the teacher as a class
+    failure on a topic nobody was asked about."""
+    nodes = pp.aggregate_nodes(
+        [_eq()],
+        [
+            pp.AttemptNodes(coverage=_COV_MISSED, unprobed=frozenset({"eq1"})),
+            pp.AttemptNodes(coverage=_COV_MISSED, unprobed=frozenset({"eq1"})),
+        ],
+    )
+
+    assert nodes[0]["missed"] == 0
+    assert nodes[0]["unprobed"] == 2
+    # Nothing counted, so nothing is averaged over it either.
+    assert nodes[0]["graded"] == 0
+
+
+def test_graded_counts_only_the_attempts_where_the_node_counted():
+    """The stacked bar must reconcile: understood+partial+missed == graded, with
+    the excluded attempts accounted for separately."""
+    nodes = pp.aggregate_nodes(
+        [_eq()],
+        [
+            pp.AttemptNodes(coverage=_COV_COVERED),
+            pp.AttemptNodes(coverage=_COV_MISSED, unprobed=frozenset({"eq1"})),
+        ],
+    )
+
+    node = nodes[0]
+    assert (node["understood"], node["partial"], node["missed"], node["unprobed"]) == (1, 0, 0, 1)
+    assert node["graded"] == node["understood"] + node["partial"] + node["missed"] == 1
+
+
+def test_exclusion_is_per_node_not_per_attempt():
+    """The same attempt still contributes a real verdict for its other nodes."""
+    nodes = pp.aggregate_nodes(
+        [_eq(), _cond()],
+        [pp.AttemptNodes(coverage=_COV_COVERED, unprobed=frozenset({"eq1"}))],
+    )
+
+    by_id = {n["node_id"]: n for n in nodes}
+    assert (by_id["eq1"]["unprobed"], by_id["eq1"]["graded"]) == (1, 0)
+    assert (by_id["c1"]["understood"], by_id["c1"]["graded"]) == (1, 1)
+
+
+@pytest.mark.parametrize("raw", [None, "not a list", {"eq1": True}, 7, ["eq1", 5, None], []])
+def test_unprobed_ids_degrades_to_empty_on_anything_unusable(raw):
+    """Pre-P1.2b rows carry no snapshot at all, and the column is free-form
+    JSON — the teacher panel must degrade to the coverage-only tally, never
+    raise. A well-formed list keeps only its string members."""
+    resolved = pp._unprobed_ids(raw)
+    assert resolved == (frozenset({"eq1"}) if raw == ["eq1", 5, None] else frozenset())
 
 
 # --- students_for -----------------------------------------------------------
@@ -180,6 +246,8 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
         {"user_id": "u3", "problem_id": 1, "score": 30.0, "letter": "F", "coverage": {}},
         {"user_id": "u1", "problem_id": 2, "score": 55.0, "letter": "D", "coverage": None},
     ]
+    # u1's own grade excluded c1 (P1.2b) — never asked, so never a class failure.
+    best_rows[0]["unprobed_node_ids"] = ["c1"]
     meta = {
         1: {
             "problem_code": "pb",
@@ -224,7 +292,10 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
         beta_nodes["eq1"]["partial"],
         beta_nodes["eq1"]["missed"],
     ) == (1, 1, 0)
-    assert (beta_nodes["c1"]["understood"], beta_nodes["c1"]["graded"]) == (2, 2)
+    # c1 left u1's own grade, so it counted for u2 only — and is reported as
+    # excluded, not as a miss.
+    assert (beta_nodes["c1"]["understood"], beta_nodes["c1"]["graded"]) == (1, 1)
+    assert beta_nodes["c1"]["unprobed"] == 1
 
 
 def test_build_problems_empty():

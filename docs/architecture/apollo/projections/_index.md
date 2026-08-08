@@ -24,7 +24,7 @@ artifact row is durable.
 | [classroom](classroom.md) | `mastery_heatmap` / `struggle_signals` — teacher-facing SQL aggregations | `apollo/projections/classroom.py` |
 | [performance](performance.md) | `class_performance` — teacher class-performance payload over served grade snapshots | `apollo/projections/performance.py` |
 | [performance-insights](performance-insights.md) | Algorithmic engagement / retry / correlation / quartile / flag helpers behind the performance payload | `apollo/projections/performance_insights.py` |
-| [performance-problems](performance-problems.md) | Per-problem `problems[]` block — best-wins distribution, full text, student list, and the served-grade-faithful per-node right/wrong breakdown | `apollo/projections/performance_problems.py` |
+| [performance-problems](performance-problems.md) | Per-problem `problems[]` block — best-wins distribution, full text, student list, and the served-grade-faithful per-node right/wrong/unprobed breakdown | `apollo/projections/performance_problems.py` |
 
 ## Cross-cutting invariants
 
