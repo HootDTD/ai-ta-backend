@@ -7,7 +7,7 @@ related:
   - apollo/projections/mastery
   - apollo/grading/artifact-build
   - apollo/conversation/routing/router
-last_verified: 2026-07-25
+last_verified: 2026-08-08
 stub: false
 ---
 
@@ -22,7 +22,8 @@ LLM, or Neo4j.
 - `mastery_heatmap(db, *, search_space_id) -> list[dict]` — roster × concept
   mastery grid.
 - `struggle_signals(db, *, search_space_id, window_days=14) -> dict` — windowed
-  abstention/fallback counts, lowest-coverage nodes, top misconceptions.
+  abstention/fallback counts, lowest-coverage nodes
+  (`{key, mean_coverage, n, n_unprobed}`), top misconceptions.
 
 ## Data flow
 
@@ -40,6 +41,14 @@ over `internal.grading_runs` for the course window: `FILTER`ed counts plus
 - **Coverage attribution excludes student-id-keyed `unresolved` rows**; a
   never-taught concept (`unresolved` with `evidence_span IS NULL`) still counts as
   a 0.0-coverage contribution.
+- **`unprobed` rows stay in the lowest-coverage signal** (2026-08-08 review fix).
+  P1.2b re-filed "a graded node the questioning loop never raised" from that
+  `unresolved` + NULL-span branch onto its own ledger status
+  ([artifact-build](../grading/artifact-build.md)); dropping it here would have
+  silently deleted the exact worst-offender signal the branch exists for. The
+  status is matched explicitly (constant IMPORTED, never re-spelled) and still
+  contributes 0.0, with an additive per-key `n_unprobed` count so the teacher can
+  read "the class got this wrong" apart from "Apollo never asked".
 - **Dual-grader SQL, LLM-only reality.** The `abstention_count` /`fallback_count`
   filters model a graph/shadow grader (`grader_used='graph'`, `role='pair'`) and
   the docstrings reference `build_graph_artifact` / ledger helpers that no longer

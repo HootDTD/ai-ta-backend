@@ -29,9 +29,16 @@ def _unprobed_keys(topic_score: TopicScoreResult | None) -> frozenset[str]:
     as `unresolved` and render into the scorecard's *missing or unclear* list as
     "Next time, explain X", while the very same payload's `topics[]` says X was
     not part of this grade. They keep a ledger row (the record must stay
-    complete) under their own status instead, which every status-filtered
-    consumer (`projections/scorecard`, `projections/mastery`,
-    `projections/classroom`) already ignores by construction.
+    complete) under their own status instead.
+
+    Downstream, "a new status" is NOT automatically "safely ignored": the
+    student-facing `projections/scorecard` and `projections/mastery` do want it
+    gone and drop it by construction, but `projections/classroom`'s
+    lowest-coverage query used to catch these very nodes through its
+    `unresolved` + NULL-span branch — a never-taught concept surfacing as a
+    worst offender is the signal the teacher needs. It matches
+    `LEDGER_STATUS_UNPROBED` explicitly so that signal survives the rename
+    (review fix, 2026-08-08).
     """
     if topic_score is None:
         return frozenset()
@@ -65,11 +72,7 @@ def build_llm_artifact(
     total = len(covered) + len(missing)
     node_coverage = (len(covered) / total) if total else 0.0
     overall_score = (rubric or {}).get("overall", {}).get("score")
-    score = (
-        _normalized_score(float(overall_score) / 100.0)
-        if overall_score is not None
-        else 0.0
-    )
+    score = _normalized_score(float(overall_score) / 100.0) if overall_score is not None else 0.0
     node_ledger = [
         {
             "canonical_key": key,

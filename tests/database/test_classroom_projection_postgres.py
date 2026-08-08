@@ -104,7 +104,9 @@ async def _seed_problem(db, *, search_space_id: int) -> int:
         concept_slug=f"pconcept-{uuid.uuid4().hex[:8]}",
     )
     code = f"p-{uuid.uuid4().hex[:8]}"
-    await seed_problems(db, concept_id=problem_concept_id, payloads=[minimal_problem_payload(code=code)])
+    await seed_problems(
+        db, concept_id=problem_concept_id, payloads=[minimal_problem_payload(code=code)]
+    )
     return await problem_database_id(db, concept_id=problem_concept_id, problem_code=code)
 
 
@@ -513,6 +515,39 @@ async def test_struggle_signals_missing_node_rows_surface_as_zero_coverage(db_se
     assert coverage_by_key["eq.never-taught"]["n"] == 1
     assert coverage_by_key["eq.a"]["mean_coverage"] == pytest.approx(1.0)
     assert [row["key"] for row in result["lowest_coverage_nodes"]][0] == "eq.never-taught"
+
+
+async def test_struggle_signals_unprobed_rows_stay_in_the_worst_offender_list(db_session):
+    """Review fix (2026-08-07). P1.2b re-files "a graded node nobody ever raised
+    with the student" from `unresolved` + NULL span to its OWN `unprobed`
+    status. Those rows are the whole point of the NULL-span branch — a graded
+    node of the teacher's own course that is never being taught or asked about —
+    so they must keep contributing 0.0 here, with `n_unprobed` telling the
+    teacher WHY the coverage is zero."""
+    sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
+    attempt, problem_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    artifact = _artifact(
+        attempt_id=attempt,
+        problem_id=problem_id,
+        search_space_id=sid,
+        concept_id=cid_1,
+        grader_used="llm_fallback",
+        abstained=False,
+        node_ledger=[
+            {"canonical_key": "eq.a", "status": "credited", "evidence_span": None},
+            {"canonical_key": "eq.never-asked", "status": "unprobed", "evidence_span": None},
+        ],
+    )
+    db_session.add(artifact)
+    await db_session.commit()
+
+    result = await struggle_signals(db_session, search_space_id=sid)
+    coverage_by_key = {row["key"]: row for row in result["lowest_coverage_nodes"]}
+    assert coverage_by_key["eq.never-asked"]["mean_coverage"] == pytest.approx(0.0)
+    assert coverage_by_key["eq.never-asked"]["n"] == 1
+    assert coverage_by_key["eq.never-asked"]["n_unprobed"] == 1
+    # A credited node is graded, so it is never counted as unprobed.
+    assert coverage_by_key["eq.a"]["n_unprobed"] == 0
 
 
 async def test_struggle_signals_respects_window(db_session):

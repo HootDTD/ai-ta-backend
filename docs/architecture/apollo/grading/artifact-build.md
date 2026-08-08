@@ -9,7 +9,7 @@ related:
   - apollo/projections/scorecard
   - apollo/grading/event-model
   - apollo/conversation/handlers/grading-artifact-writer
-last_verified: 2026-08-07
+last_verified: 2026-08-08
 stub: false
 ---
 
@@ -60,11 +60,16 @@ serialize_topic_score(topic_score)` (the single serializer). The dict also carri
   same payload's `topics[]` says X was not part of this grade — so those keys
   (read off `topic_score.topics`) get their own status instead. It keeps a row
   (the record stays complete) and leaves BOTH sides of the `node_coverage`
-  ratio. Every status-filtered consumer already ignores it by construction:
-  [scorecard](../projections/scorecard.md) matches `credited`/`unresolved`,
-  [mastery](../projections/mastery.md) `credited`/`misconception`,
-  [classroom](../projections/classroom.md) an explicit status list.
-  `topic_score=None` (soft-failed scoring) yields no `unprobed` rows at all —
-  byte-identical to the pre-fix payload.
+  ratio. `topic_score=None` (soft-failed scoring) yields no `unprobed` rows at
+  all — byte-identical to the pre-fix payload.
+- **A new status is not automatically "safely ignored" downstream.** The
+  student-facing [scorecard](../projections/scorecard.md) (`credited`/
+  `unresolved`) and [mastery](../projections/mastery.md)
+  (`credited`/`misconception`) do want it gone and drop it by construction. But
+  [classroom](../projections/classroom.md)'s lowest-coverage query used to catch
+  these exact nodes through its `unresolved` + NULL-span branch — "a graded node
+  of this course is never taught or asked about" is the signal that branch
+  exists for — so it matches `LEDGER_STATUS_UNPROBED` explicitly and reports
+  `n_unprobed` alongside `mean_coverage` (review fix, 2026-08-08).
 - `misconceptions` / `edge_ledger` are always empty; `abstention.abstained` is
   `None` (an LLM-only concept, lifted to `false` by the writer).
