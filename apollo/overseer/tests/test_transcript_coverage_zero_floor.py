@@ -167,11 +167,18 @@ def test_floor_does_not_contradict_the_tally_burden_of_proof_rule():
 
 
 def test_prompt_paraphrases_the_real_transcripts_and_quotes_no_student_verbatim():
-    """The exemplars are drawn from real prod attempts (173, 174, 35, 189) but
-    must never carry a student's actual words into every future grading call."""
-    prompt = build_system_prompt(_problem())
-    for verbatim in ("not sure", "the four ethical issues are", "who is picasso"):
-        assert verbatim not in prompt.lower(), verbatim
+    """The exemplars are drawn from real prod attempts (80, 158, 173, 174, 35,
+    189) but must never carry a student's actual words into every future grading
+    call. The last entry is attempt 158's clause, which the P1.1 build DID quote
+    verbatim until this rail was added."""
+    prompt = build_system_prompt(_problem()).lower()
+    for verbatim in (
+        "not sure",
+        "the four ethical issues are",
+        "who is picasso",
+        "the gap between the informed and uninformed widens",
+    ):
+        assert verbatim not in prompt, verbatim
 
 
 # --------------------------------------------------------------------------- #

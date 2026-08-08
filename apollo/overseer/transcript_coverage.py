@@ -352,13 +352,16 @@ _ZERO_FLOOR_RULE = (
 # than by adjectives alone (the pre-P1.1 prose anchors produced 129 zeros and 114
 # near-full credits across 259 prod topic verdicts, and 8 genuinely mid ones).
 # The patterns are taken from the exported Week-4 prod transcripts, not invented
-# — and PARAPHRASED, never quoted, so no real student's words ride along in every
-# future grading call. The 0.85 case is attempt 80 (student names three of a
-# four-item list in their own words); the first 0.6 case is attempt 158 (right
-# direction, none of the item's substance); the three added 0 cases are the
-# audit's over-credit patterns (attempts 173, 174, 35); and the added 0.6 case is
-# attempt 189, the under-credit direction, which stops the floor over-tightening
-# on a student who really did enumerate part of the item in their own words.
+# — and every one of them is PARAPHRASED, never quoted, so no pilot student's own
+# words ride along in every future grading call (the first 0.6 exemplar carried a
+# verbatim clause until 2026-08-08; `test_transcript_coverage_zero_floor.py` now
+# pins its absence along with the other three). The 0.85 case is attempt 80
+# (student names three of a four-item list in their own words); the first 0.6
+# case is attempt 158 (right direction, none of the item's substance); the three
+# added 0 cases are the audit's over-credit patterns (attempts 173, 174, 35); and
+# the added 0.6 case is attempt 189, the under-credit direction, which stops the
+# floor over-tightening on a student who really did enumerate part of the item in
+# their own words.
 _CALIBRATION_EXEMPLARS = (
     " CALIBRATION EXAMPLES (the wording is illustrative; the pattern is what matters)."
     " 1.0 — the student states the item's substance in their own words and, where the item calls "
@@ -371,9 +374,8 @@ _CALIBRATION_EXEMPLARS = (
     " 0.85 — the student never states the item outright, but their worked reasoning presupposes "
     "it and could not be correct without it."
     " 0.6 — the answer is directionally right but thin: the item asks what happens to the people "
-    'priced out of information access and the student says only that "the gap between the '
-    'informed and uninformed widens", never naming who they are or the consequence the item '
-    "states."
+    "priced out of information access and the student says only that inequality gets worse, never "
+    "naming who is affected or the consequence the item states."
     " 0.6 — the student gives a correct general principle but never connects it to this "
     "problem's specifics, or connects it only after Apollo supplies the connection."
     " 0.6 — the item asks the student to match each of five listed guarantees to the harm it "
