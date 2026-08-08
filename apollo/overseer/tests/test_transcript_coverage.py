@@ -100,6 +100,10 @@ def test_span_validation_is_student_only_and_normalizes_whitespace():
     assert validate_span("a  b\nc", ["a b c"])
     assert not validate_span("Apollo quote", ["student quote"])
     assert not validate_span(None, ["student quote"])
+    # A blank/whitespace-only span normalizes to "" and must NOT match by
+    # substring against every message — it proves the student said nothing.
+    assert not validate_span("   \n ", ["student quote"])
+    assert not validate_span("", ["student quote"])
 
 
 @pytest.mark.asyncio
