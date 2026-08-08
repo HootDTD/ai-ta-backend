@@ -29,7 +29,10 @@ def test_score_to_letter_boundaries():
     assert score_to_letter(85) == "A-"
     assert score_to_letter(84) == "B+"
     assert score_to_letter(80) == "B+"
-    assert score_to_letter(49) == "F"
+    # 2026-08-07 P1.5 band rescale (D1): F = [0, 30), D = [30, 50), C from 50.
+    # Live assertions live in test_rubric_letter_bands.py (this module is skipped).
+    assert score_to_letter(49) == "D"
+    assert score_to_letter(29) == "F"
     assert score_to_letter(0) == "F"
 
 
