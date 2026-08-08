@@ -46,8 +46,8 @@ misconception detector contributes nothing, so every topic carries an empty
   `MAX_REFERENCE_TEXT_REVEALS = 2` — the per-attempt cap.
 - `MIN_GRADED_DENOMINATOR = 2` — the absolute half of the P1.2b denominator
   floor; `UNPROBED_CREDIT_KEEP_THRESHOLD = 0.6` — the credit at which a
-  ledger-less node is graded anyway.
-- `TopicScoreResult`, `TopicCredit`, `TopicMisconception` value objects.
+  ledger-less node is graded anyway. Plus the `TopicScoreResult`, `TopicCredit`,
+  `TopicMisconception` value objects.
 - `_GRADED_NODE_TYPES` / `_display_name_for` — consumed by
   [transcript-coverage](transcript-coverage.md).
 - `serialize_topic_score` / `serialize_topics` (`topic_score_serialize.py`) —
@@ -83,9 +83,8 @@ flag, and its additive `reference_text` (string or null). INTERACTION5:
   (INTERACTION5) is additive and defaults `False`, `reference_text` (D2) is
   additive and defaults `None` — both absent-safe for old UI clients. Keep
   serialization separate from the pure `topic_score.py` computation module.
-- **Empty misconceptions.** `TopicCredit.misconceptions` is always `()` and
-  `TopicScoreResult.misconception_dock` is always `0.0`.
-- **No graded nodes → 0.** An all-ungraded reference returns a zero result.
+- **Empty misconceptions:** `TopicCredit.misconceptions` is always `()`,
+  `misconception_dock` always `0.0`. **No graded nodes → a zero result.**
 - **Only adjudicated nodes enter the denominator (2026-08-07 P0.5).** A graded
   node absent from BOTH `per_step` and `procedure_scores` was omitted by the
   adjudicator (abstain-not-zero, see `transcript-coverage`) — it is dropped and
@@ -122,8 +121,17 @@ flag, and its additive `reference_text` (string or null). INTERACTION5:
   (2 of 5 probed and both correct scored 40/D; it now scores 67). The floor
   still closes the exploit it was added for — 1 of 5 probed cannot renormalize
   to weight 1.0 and score A+ — and subsumes the zero-probed degenerate case, so
-  the safety net never makes a Done ungradeable. On the 135 Week-4 prod attempts
-  P1.2b changes the denominator on 16, 8 of them the single-probed case.
+  the safety net never makes a Done ungradeable.
+- **P1.2b is ONE-DIRECTIONAL and nearly inert on today's bank.** It drops a node
+  only when ledger-less AND under the keep threshold, and the floor re-admits
+  highest-credit first, so it can only raise a score (all 192 rows of the
+  2026-08-08 replay, zero exceptions). MEASURED: 2 of the 106 gradable Week-4
+  attempts have an excluded node; 1 changes score (+7). SUPERSEDES the earlier
+  "16 of 135, 8 single-probed" estimate — a static ledger count, never a replay
+  result. Against the 7 P1.4 re-authored problems it moves 23 of 86 rows (mean
+  +6.45, max +44), but that is a CEILING: that replay's ledger holds OLD node ids
+  so every re-authored node is unasked by construction, and the audit could only
+  bracket the re-authored median in [73, 86]. P1.2b's value is CONTINGENT on P1.4.
 - **`reference_text` is credit-gated AND capped (D2).** Per topic: `credit <
   REFERENCE_TEXT_CREDIT_THRESHOLD` (0.6) and not `unprobed` (a topic excluded
   from the grade gets no reveal — leakage with no diagnostic value). Per

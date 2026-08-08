@@ -58,9 +58,29 @@ UNPROBED_CREDIT_KEEP_THRESHOLD = 0.6
 # widened back only as far as the floor (highest-credit dropped node first), so
 # the budget-starved sessions P1.2b exists for still get most of the relief. The
 # first build restored the FULL denominator instead, which withheld relief
-# precisely from the population the spec named as P1.2b's target. Prod sizing
-# (135 Week-4 attempts): P1.2b changes the denominator on 16 of them, and 8 of
-# those 16 are the single-probed-node case this floor bounds.
+# precisely from the population the spec named as P1.2b's target.
+#
+# MEASURED SIZING (2026-08-08 replay of the 135 Week-4 prod artifacts, arms in
+# `replay/run-p1/`; supersedes the earlier estimate of "16 of 135, 8 of them
+# single-probed", which was a static count over the ledger and never a replay
+# result). On the 106 gradable attempts, run against the CURRENT rubric bank,
+# P1.2b touches the denominator of exactly 2 and changes the score of exactly 1
+# (+7 points). It is very nearly INERT today, and that is a rubric fact, not a
+# code fact: most prod problems expose 1-3 graded nodes, and the questioning loop
+# mints a ledger row for nearly all of them.
+#
+# Its value is therefore CONTINGENT on the P1.4 re-authored bank. Replayed
+# against the 7 re-authored problems (86 attempts), the exclusion moves 23 rows,
+# mean +6.45 and max +44. Read that as a CEILING, not a floor: that replay's
+# asked-node ledger stores the OLD node ids, so every re-authored node counts as
+# unasked by construction and every sub-threshold node is free to drop. The
+# adversarial audit (`replay/run-p1/report.md` §5) bracketed the re-authored
+# bank's true median in [73, 86] and could not locate it inside that interval.
+# The exclusion is also ONE-DIRECTIONAL — `_denominator` only ever drops nodes
+# credited below `UNPROBED_CREDIT_KEEP_THRESHOLD`, and the floor re-admits the
+# highest-credit dropped node first, so `new_score >= score_with_every_node` held
+# on all 192 replayed rows with zero exceptions. This floor is the only brake on
+# that, which is why it is a minimum WIDTH rather than a switch.
 MIN_GRADED_DENOMINATOR = 2
 
 # Ordered content fields rendered into a node's reference statement. Each node
