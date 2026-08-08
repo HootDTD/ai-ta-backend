@@ -44,7 +44,9 @@ FALLBACK_HEADLINE = "Here is what Apollo did not get from your teaching yet."
 # always sentence-shaped), so they are quoted and shortened rather than dropped
 # inline — the flattened back-compat narrative has no topic headings, so the
 # gap sentence has to say WHICH idea is missing on its own.
-_ZERO_GAP = 'Apollo never got this from your teaching: "{name}" — walk through it explicitly next time.'
+_ZERO_GAP = (
+    'Apollo never got this from your teaching: "{name}" — walk through it explicitly next time.'
+)
 _PARTIAL_GAP = 'Only part of this landed: "{name}" — make the rest explicit next time.'
 _NEXT_STEP = 'Walk Apollo through this in your own words: "{name}".'
 _NAME_QUOTE_CHARS = 90
@@ -187,9 +189,7 @@ def _repair_prose(
         return text
     sentences = _split_sentences(text)
     kept = [
-        s
-        for s in sentences
-        if not (_is_pure_praise(s) and _names_a_topic(s, uncredited.values()))
+        s for s in sentences if not (_is_pure_praise(s) and _names_a_topic(s, uncredited.values()))
     ]
     if not kept:
         return fallback
