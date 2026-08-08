@@ -19,17 +19,16 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-08-07
+last_verified: 2026-08-08
 stub: false
 ---
 
 # handlers/done — the grade-of-record ORCHESTRATOR
 
 `handle_done` is `POST /apollo/sessions/{id}/done`. It **assembles the whole
-grade path** — the grading-path recipe (D21) starts here. The cross-cutting
-grading invariants (grading-lane, misconceptions-empty, composite-retired,
-score→letter→narrative) live in `overseer/_index`; this doc links there rather
-than restating them.
+grade path** — the grading-path recipe (D21) starts here. Cross-cutting grading
+invariants (grading-lane, misconceptions-empty, composite-retired,
+score→letter→narrative) live in `overseer/_index`, not restated here.
 
 ## Interface
 
@@ -45,20 +44,23 @@ Ordered grade assembly (each step delegates to the owner doc):
 
 1. Load session + problem (`_find_problem`) + latest `ProblemAttempt`.
    **Empty-attempt guard** (2026-08-07, defect I1): zero persisted student
-   messages (`_student_message_count`) → `EmptyAttemptError` (409
-   `empty_attempt`, `routing/errors`) BEFORE any mutation — no freeze, no
-   phase change, no XP, no narrative, and the attempt row is left untouched
-   (marking it would flip `is_reattempt_in_session` and dock XP on the real
-   Done later). Then read the student graph (tolerating degraded Neo4j) and
+   messages (`_student_message_count`) → `EmptyAttemptError` (409 `empty_attempt`,
+   `routing/errors`) BEFORE any mutation — no freeze/phase change/XP/narrative,
+   attempt row untouched (marking it flips `is_reattempt_in_session` and docks XP
+   on the real Done). Then read the student graph (degraded Neo4j tolerated) and
    `store.freeze(session_id)`.
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
 2a. **Question ledger** (`_question_ledger`, 2026-08-07 P1.2b/P1.3): ONE read of
    this attempt's `QuestionOpportunity` rows (ordered by `id`), never a second,
    feeding the adjudicator's `tally_context` (step 3 — `_tally_context` shapes
    `[{node_id, state, times_asked, student_quote|null}]`, last usable `evidence`
-   quote) AND the scorer's `asked_node_ids` (step 5). Own failure domain: any
-   exception logs `apollo_question_ledger_fetch_failed` → `None` for both
-   (pre-fix grade, 503 untouched); an EMPTY ledger stays `frozenset()`.
+   quote) AND the scorer's `asked_node_ids` (step 5). The scorer gets
+   `_probed_node_ids(rows)`, NOT the raw row set: only rows showing real
+   ENGAGEMENT count (`times_asked > 0`, a state past bare `missing`, or a
+   verbatim quote), because a degenerate `fallback_served` turn mints a row
+   without probing anything and counting it re-created the false F. Own failure
+   domain: any exception logs `apollo_question_ledger_fetch_failed` → `None` for
+   both (pre-fix grade, 503 untouched); an EMPTY ledger stays `frozenset()`.
 3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans`
    (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated
    evidence spans. Just before it, `_course_evidence_safe` checks both
@@ -74,8 +76,7 @@ Ordered grade assembly (each step delegates to the owner doc):
    fetches the same aside rows `_full_transcript` EXCLUDES (its exact complement)
    and passes them to the adjudicator as `hoot_asides`; `apply_aside_caps`
    (cap 0.5) then flat-caps every flagged node in the coverage BEFORE rubric /
-   topic-score / diagnostic / artifacts, so all downstream consumers see the same
-   capped values.
+   topic-score / diagnostic / artifacts, so all consumers see the same values.
 4. `compute_rubric` (`overseer/rubric`) maps coverage into the axis rubric.
 5. **Topic score** (`_compute_topic_score_safe` wrapping `compute_topic_score` /
    `compute_centrality`, `overseer/topic-score`): best-effort, computed always,
@@ -87,12 +88,11 @@ Ordered grade assembly (each step delegates to the owner doc):
    verbatim utterances; the same `course_evidence` lets feedback cite the course.
    It is handed `graded_topics_only(topic_score)`, NOT the full result: an
    `unprobed` topic is excluded from the grade, so narrating it as a gap would
-   contradict the served `topics[]` in the same payload (P2.1/U2). The
-   remediation pass below gets that same view. With `INTERACTION3` enabled and
-   the problem concept allowed by `INTERACTION_CONCEPTS`, one best-effort pass
-   decorates at most three weak topics with citation-only review pointers. Run
-   via `asyncio.to_thread` (2026-08-04) so the narrative LLM's round trip never
-   blocks the event loop.
+   contradict the served `topics[]` (P2.1/U2). The remediation pass gets that
+   same view; with `INTERACTION3` on and the concept allowed by
+   `INTERACTION_CONCEPTS`, one best-effort pass decorates at most three weak
+   topics with citation-only review pointers. Run via `asyncio.to_thread`
+   (2026-08-04) so the narrative LLM never blocks the event loop.
 7. XP: `compute_xp_earned`/`compute_progress_envelope`/`apply_xp`
    (`overseer/xp` + `persistence/progress-repo`); reattempt detection via
    `has_prior_graded_attempt` (`persistence/done-write-linkage`).
@@ -113,10 +113,10 @@ Ordered grade assembly (each step delegates to the owner doc):
   back-compat surface (flattened structured output on success, legacy output on
   soft-fail).
 - **Remediation cannot affect grading:** one `try/except` encloses the complete
-  copy-on-success pass. Any retrieval/shape failure leaves feedback byte-
-  identical with no `review` keys; score, letter, narrative, XP, and persistence
-  remain unchanged. A non-matching concept skips the pass with the same untouched
-  payload. A non-null Interaction-1 bundle prevents fresh retrieval.
+  copy-on-success pass. Any retrieval/shape failure (or a non-matching concept)
+  leaves feedback byte-identical with no `review` keys, and score, letter,
+  narrative, XP and persistence unchanged. A non-null Interaction-1 bundle
+  prevents fresh retrieval.
 - **Artifact write + artifact-derived mastery are own-failure-domain telemetry** —
   each owns its commit and swallows exceptions; neither can void the served grade.
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
@@ -125,26 +125,28 @@ Ordered grade assembly (each step delegates to the owner doc):
   `_course_evidence_safe` runs AHEAD of the sole grading lane and is soft-fail
   by construction — flag off, concept not allowed, NULL/corrupt bundle, nothing
   student-safe, or ANY exception → `None` ⇒ both prompts byte-identical to
-  pre-feature. Additive, always-present `grading_provenance["grounding"]` is the
-  replay-diff hook.
+  pre-feature. Additive `grading_provenance["grounding"]` is the replay-diff hook.
 - **The Hoot-assist cap owns its failure domain** (`overseer/aside-penalty`):
   both the aside fetch and the `apply_aside_caps` pass are wrapped so ANY
   exception is logged and swallowed, leaving `coverage` the original UNCAPPED
-  verdict (the cap RHS binds atomically, so a raise never half-caps) and grading
-  proceeds. It runs AHEAD of the sole grading lane and NEVER touches the
-  `CoverageGradingError → 503` contract; the cap can only lower a grade. Additive
+  verdict (the cap RHS binds atomically, so a raise never half-caps). It runs
+  AHEAD of the sole grading lane and NEVER touches the `CoverageGradingError →
+  503` contract; the cap can only lower a grade. Additive
   `grading_provenance["aside_penalty"] = {enabled, cap: 0.5, assisted_node_ids}`
   is emitted ONLY when the gate was on AND asides were fetched (empty
-  `assisted_node_ids` if nothing matched or the cap pass soft-failed); off / no
-  aside → key absent, provenance byte-identical.
+  `assisted_node_ids` if nothing matched); off → key absent, byte-identical.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
-  coverage, served_overall}` plus `auto_done: true` iff the questioning engine
-  (not the student) triggered this Done (2026-08-07 P0.4 audit stamp; key absent
-  on a student Done, keeping those rows byte-identical). `served_overall`
-  (2026-07-26) snapshots `served_rubric["overall"]` — the grade actually shown.
-  Re-serving surfaces (`handlers/browse` cards, `handlers/progress` recents) read
-  the snapshot first, falling back to `rubric.overall` for pre-snapshot rows;
-  `rubric` stays the RAW axis rubric for rerun/janitor consumers.
+  coverage, served_overall}` plus two conditional keys, each absent when it does
+  not apply so those rows stay byte-identical: `auto_done: true` iff the
+  questioning engine (not the student) triggered this Done (P0.4 audit stamp),
+  and `unprobed_node_ids` — the graded nodes P1.2b dropped from THIS grade, read
+  by `projections/performance-problems`, whose node drill-down would otherwise
+  re-derive them from `coverage` alone and report a class-wide "missed" on a
+  topic no grade counted. `served_overall` (2026-07-26) snapshots
+  `served_rubric["overall"]` — the grade actually shown. Re-serving surfaces
+  (`handlers/browse` cards, `handlers/progress` recents) read the snapshot first,
+  falling back to `rubric.overall` for pre-snapshot rows; `rubric` stays the RAW
+  axis rubric for rerun/janitor consumers.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
 - **`grading_provenance.reference_question_asides_used`** (additive) reads
@@ -162,12 +164,11 @@ Ordered grade assembly (each step delegates to the owner doc):
 - `INTERACTION5` (`config.settings.interaction5_enabled`) — Hoot-assist grading
   cap; default OFF. Combined here with `interaction_allowed_for_concept`.
 - `INTERACTION_CONCEPTS` (`config.settings.interaction_allowed_for_concept`) —
-  optional comma-separated concept-slug scope for consuming course grounding
-  and the Hoot-assist cap; unset/empty means unrestricted.
+  optional concept-slug scope for course grounding and the Hoot-assist cap.
 
 ## Related
 
 See `overseer/_index` for the grading-path cross-cutting invariants and the full
 directional chain: `transcript-coverage ↔ rubric ↔ topic-score ↔ done ↔
-grading-artifact-writer ↔ scorecard ↔ mastery`. Hint-lane aside tagging/cap:
+grading-artifact-writer ↔ scorecard ↔ mastery`. Aside tagging/cap:
 `hoot-bridge-reference-answer`.

@@ -60,11 +60,16 @@ def _drop(patches, *attributes):
     return [p for p in patches if getattr(p, "attribute", None) not in attributes]
 
 
-async def _run() -> tuple[dict[str, Any], dict[str, Any]]:
-    db, _sess, _attempt, patches = _old_path_patches()
+async def _run(
+    result: TopicScoreResult | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], Any]:
+    db, _sess, attempt, patches = _old_path_patches()
     patches = _drop(patches, "compute_topic_score")
     patches.append(
-        patch("apollo.handlers.done.compute_topic_score", new=MagicMock(return_value=_result()))
+        patch(
+            "apollo.handlers.done.compute_topic_score",
+            new=MagicMock(return_value=result if result is not None else _result()),
+        )
     )
 
     from apollo.handlers.done import handle_done
@@ -74,11 +79,11 @@ async def _run() -> tuple[dict[str, Any], dict[str, Any]]:
         for p in patches:
             started[getattr(p, "attribute", repr(p))] = stack.enter_context(p)
         response = await handle_done(db=db, neo=MagicMock(), session_id=11)
-    return started, response
+    return started, response, attempt
 
 
 async def test_narrator_never_sees_a_topic_excluded_from_the_grade():
-    started, _response = await _run()
+    started, _response, _attempt = await _run()
 
     narrated = started["generate_diagnostic"].call_args.kwargs["topic_score"]
     assert [topic.canonical_key for topic in narrated.topics] == ["eq.taught"]
@@ -89,11 +94,37 @@ async def test_narrator_never_sees_a_topic_excluded_from_the_grade():
 async def test_the_served_topics_payload_still_carries_the_unprobed_row():
     """The UI needs it to say "not part of this grade" — filtering is a
     narrative-input concern only, never a truncation of the record."""
-    _started, response = await _run()
+    _started, response, _attempt = await _run()
 
     served = {topic["canonical_key"]: topic for topic in response["topics"]}
     assert served["eq.never"]["status"] == "unprobed"
     assert served["eq.never"]["weight"] == 0.0
+
+
+async def test_the_excluded_keys_are_snapshotted_for_the_teacher_panel():
+    """Review fix. The teacher's per-problem node drill-down re-derives status
+    from `diagnostic_report -> 'coverage'`, which can only say
+    covered/partial/missing — so without this snapshot it counts a node THIS
+    grade excluded as a class-wide "missed"."""
+    _started, _response, attempt = await _run()
+
+    assert attempt.diagnostic_report["unprobed_node_ids"] == ["eq.never"]
+
+
+async def test_no_excluded_topic_leaves_the_report_shape_untouched():
+    """Key absent, not empty: an attempt where every graded node counted keeps
+    the pre-fix `diagnostic_report` shape exactly."""
+    graded_only = TopicScoreResult(
+        score=100,
+        letter="A+",
+        coverage_component=1.0,
+        misconception_dock=0.0,
+        topics=(_topic("eq.taught", status="covered", weight=1.0, credit=1.0),),
+    )
+
+    _started, _response, attempt = await _run(graded_only)
+
+    assert "unprobed_node_ids" not in attempt.diagnostic_report
 
 
 # --- the artifact / scorecard surface --------------------------------------

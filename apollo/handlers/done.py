@@ -317,6 +317,36 @@ def _latest_student_quote(evidence: Any) -> str | None:
     return None
 
 
+def _probed_node_ids(rows: Any) -> frozenset[str]:
+    """The graded-node ids P1.2b treats as engaged this attempt.
+
+    A ``QuestionOpportunity`` row is NOT by itself proof that the questioning
+    loop engaged with a node. Two paths mint a row without any engagement: a
+    degenerate ``fallback_served`` turn (a verbatim public clause standing in
+    for a question, which deliberately spends no probe — see
+    ``smart_questions/controller``), and a tally update that merely restates
+    ``missing`` with no quote. Counting those as "probed" put the node straight
+    back in the denominator at credit 0 — the exact false F that P1.2b exists to
+    remove. A row therefore counts only when it records real engagement:
+
+    * ``times_asked > 0`` — Apollo actually put a question about it to the
+      student; or
+    * a tally state other than ``missing`` — the engine concluded something
+      about the student's teaching of it; or
+    * a verbatim evidence quote — the student demonstrably taught it.
+
+    Pure and total: unusable/NULL columns coerce rather than raise, because this
+    feeds the grade denominator and must never break a Done.
+    """
+    return frozenset(
+        str(row.reference_node_id)
+        for row in rows
+        if int(row.times_asked or 0) > 0
+        or str(row.state) != "missing"
+        or _latest_student_quote(row.evidence) is not None
+    )
+
+
 def _tally_context(rows: Any) -> list[dict[str, Any]]:
     """The adjudicator's per-node prior context (P1.3), shape pinned across
     slices: ``[{node_id, state, times_asked, student_quote|null}, ...]``.
@@ -556,14 +586,13 @@ async def handle_done(
     # grade exactly. An EMPTY ledger is deliberately NOT `None`: an attempt whose
     # questioning loop engaged no node at all is real signal (the auto-done /
     # restart-orphan pathologies), and the scorer's own degenerate-case guard
-    # keeps it gradeable.
+    # keeps it gradeable. `_probed_node_ids` — NOT the raw row set — is what the
+    # scorer gets: a row minted by a degenerate fallback turn or a bare `missing`
+    # tally update is not engagement, and counting it as probed would put the
+    # node back in the denominator at credit 0.
     ledger_rows = await _question_ledger(db, attempt_id=int(attempt.id))
     tally_context = None if ledger_rows is None else _tally_context(ledger_rows)
-    asked_node_ids = (
-        None
-        if ledger_rows is None
-        else frozenset(str(row.reference_node_id) for row in ledger_rows)
-    )
+    asked_node_ids = None if ledger_rows is None else _probed_node_ids(ledger_rows)
 
     # INTERACTION5 (default OFF) — the Hoot-assist grading cap. Gated on the flag
     # AND the problem concept passing the shared allowlist. Its own failure
@@ -745,6 +774,22 @@ async def handle_done(
         # must read this snapshot first and fall back to `rubric.overall`.
         "served_overall": dict(served_rubric["overall"]),
     }
+    # Teacher-surface consistency (2026-08-07 review fix). The per-problem node
+    # drill-down (`projections/performance_problems`) re-derives each node's
+    # status from `coverage` alone, and `coverage` can only ever say
+    # covered/partial/missing — it has no way to know P1.2b dropped a node from
+    # THIS student's grade, so it would report a class-wide "missed" on a topic
+    # nobody was asked about and that no grade counted. Snapshot the excluded
+    # keys beside `served_overall`, on the same principle: the teacher reads what
+    # the student was served, never a re-derivation. Omitted when nothing was
+    # excluded, so those rows keep the pre-fix shape exactly.
+    unprobed_node_ids = (
+        [topic.canonical_key for topic in topic_score.topics if topic.status == "unprobed"]
+        if topic_score is not None
+        else []
+    )
+    if unprobed_node_ids:
+        diagnostic_report = {**diagnostic_report, "unprobed_node_ids": unprobed_node_ids}
     # Audit stamp (2026-08-07 bimodal-fix P0.4): a Done triggered by budget
     # exhaustion — not by the student — is marked so grade forensics can
     # separate consented grades from auto-grades. Key absent on a student

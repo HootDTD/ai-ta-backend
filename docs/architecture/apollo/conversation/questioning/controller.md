@@ -10,7 +10,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/persistence/models
   - apollo/schemas/problem
-last_verified: 2026-08-07
+last_verified: 2026-08-08
 stub: false
 ---
 
@@ -36,9 +36,9 @@ rows (`_new_opportunity_row` for a new node; evidence appended dedup'd).
 `build_selection_policy` (`questioning/selection`) over the post-update rows yields
 the `graded_topic_total` / `open_graded_topics` counts the chat response serves to
 the student-ui coverage meter. On `ask`, the target row's `last_asked_turn` is
-stamped and `times_asked` is bumped **unless the engine flagged
-`fallback_served`**. `_write_opportunity_audit` records `asked_turn`/`answered_turn`
-timing only.
+stamped and `times_asked` is bumped **unless the engine flagged `fallback_served`
+AND this is the node's first serve** (`asked_turn` still NULL).
+`_write_opportunity_audit` records `asked_turn`/`answered_turn` timing only.
 
 ## Invariants & gotchas
 
@@ -48,13 +48,22 @@ timing only.
 - `times_asked` is cumulative → **two asks per node max**, enforced in code by
   `questioning/selection` (`MAX_ASKS_PER_NODE`), no longer prompt-only. It also
   drives `budget.questions_asked` (`sum(times_asked)`).
-- **A fallback reply costs no probe.** `UnifiedQuestionResult.fallback_served`
-  marks a `*_exhausted` turn, where the served text is a verbatim public clause
-  rather than a question about the target; `times_asked` is left alone so the node
-  stays askable next turn. Charging it exhausted thin rubrics' graded nodes into a
-  forced `done` → `handle_done(auto_done=True)` → topic scored 0 (the bimodal-F
-  mode). `last_asked_turn`, `question` and `asked_turn` are still recorded — the
-  student really did see that turn.
+- **A fallback reply costs no probe — ONCE per node.**
+  `UnifiedQuestionResult.fallback_served` marks a `*_exhausted` turn, where the
+  served text is a verbatim public clause rather than a question about the target.
+  On the node's FIRST serve `times_asked` is left alone so it stays askable:
+  charging it exhausted thin rubrics' graded nodes into a forced `done` →
+  `handle_done(auto_done=True)` → topic scored 0 (the bimodal-F mode). Every later
+  serve on the same node charges, degenerate or not — `budget.questions_asked` is
+  `sum(times_asked)`, so a permanently off-policy model would otherwise re-serve
+  the same clipped clause forever without `budget_exhausted` ever getting closer.
+  `last_asked_turn`, `question` and `asked_turn` are always recorded — the student
+  really did see that turn.
+- **A row is not evidence the node was probed.** A free fallback (and a bare
+  `missing` tally update) leaves a row with `times_asked = 0`, state `missing` and
+  no evidence. `handlers/done._probed_node_ids` is the reader that decides what
+  counts as engagement for the P1.2b denominator — never `SELECT reference_node_id`
+  over the whole ledger, which put the un-probed node straight back in at credit 0.
 - **`open_graded_topics` is "not yet `understood`", NOT "still askable".** A graded
   node at `times_asked == MAX_ASKS_PER_NODE` and still `tentative` keeps counting,
   and no further conversation can clear it. This is the cross-repo contract's pinned

@@ -259,20 +259,21 @@ async def test_evidence_validated_upstream_is_persisted_verbatim(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_fallback_reply_does_not_spend_one_of_the_nodes_two_probes(monkeypatch):
+async def test_a_first_fallback_reply_does_not_spend_one_of_the_nodes_two_probes(monkeypatch):
     """A `*_exhausted` fallback serves a verbatim public clause, not a question
-    the engine wrote about the target. Charging it as a probe used to exhaust a
+    the engine wrote about the target. Charging the FIRST one used to exhaust a
     thin rubric's only graded node, empty `askable_ids`, force `done` and
-    auto-grade a never-really-probed topic as 0."""
+    auto-grade a never-really-probed topic as 0. The node here has never been
+    served (`asked_turn is None`), so it keeps both probes."""
     row = SimpleNamespace(
         reference_node_id="def_x",
         state="missing",
         evidence=[],
-        times_asked=1,
-        last_asked_turn=1,
-        question="Prior question?",
-        asked_turn=1,
-        answered_turn=2,
+        times_asked=0,
+        last_asked_turn=None,
+        question="",
+        asked_turn=None,
+        answered_turn=None,
     )
     db = _DB([row])
 
@@ -292,11 +293,83 @@ async def test_a_fallback_reply_does_not_spend_one_of_the_nodes_two_probes(monke
         turn_index=4,
     )
     assert result.action == "ask"
-    assert row.times_asked == 1
+    assert row.times_asked == 0
     # The turn still happened, so the audit records it.
     assert row.last_asked_turn == 5
     assert row.question == "Explain x?"
     assert row.asked_turn == 5
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_fallback_on_an_already_served_node_does_spend_a_probe(monkeypatch):
+    """Review fix: `budget.questions_asked` is `sum(times_asked)`, so a free
+    fallback advances nothing. A model that keeps going off-policy on the same
+    node would re-serve the same clipped clause forever and never get closer to
+    `budget_exhausted`. The free pass is once per node — `asked_turn` already
+    stamped means Apollo has served this node before, so this one charges."""
+    row = SimpleNamespace(
+        reference_node_id="def_x",
+        state="missing",
+        evidence=[],
+        times_asked=0,
+        last_asked_turn=3,
+        question="What is x?",
+        asked_turn=3,
+        answered_turn=None,
+    )
+    db = _DB([row])
+
+    async def evaluate(**kwargs):
+        return UnifiedQuestionResult(
+            (), "ask", "def_x", "Explain x?", "Explain x?", fallback_served=True
+        )
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    await controller.plan_next_question(
+        db,
+        course_id=11,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x")],
+        turn_index=4,
+    )
+    assert row.times_asked == 1
+
+
+@pytest.mark.asyncio
+async def test_a_fallback_on_a_node_already_probed_for_real_spends_a_probe(monkeypatch):
+    """ "Never actually probed" is what buys the free pass, and it is false here:
+    the node carries a real earlier probe, so the degenerate turn is charged and
+    the global budget keeps advancing."""
+    row = SimpleNamespace(
+        reference_node_id="def_x",
+        state="missing",
+        evidence=[],
+        times_asked=1,
+        last_asked_turn=1,
+        question="Prior question?",
+        asked_turn=1,
+        answered_turn=2,
+    )
+    db = _DB([row])
+
+    async def evaluate(**kwargs):
+        return UnifiedQuestionResult(
+            (), "ask", "def_x", "Explain x?", "Explain x?", fallback_served=True
+        )
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    await controller.plan_next_question(
+        db,
+        course_id=11,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x")],
+        turn_index=4,
+    )
+    assert row.times_asked == 2
 
 
 @pytest.mark.asyncio

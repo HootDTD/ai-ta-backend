@@ -281,12 +281,21 @@ async def plan_next_question(
             )
             db.add(target_row)
             tally_by_id[result.target_node_id] = target_row
-        if not result.fallback_served:
+        if not result.fallback_served or target_row.asked_turn is not None:
             # A degenerate fallback reply (a verbatim public clause, served when the
-            # engine burned its regenerate) never actually probed this node, so it
-            # must not spend one of its MAX_ASKS_PER_NODE probes: doing so used to
-            # exhaust a thin rubric's only graded node, empty `askable_ids`, force
-            # `done`, and auto-grade an unprobed topic as 0 (the bimodal-F mode).
+            # engine burned its regenerate) never actually probed this node, so the
+            # FIRST time Apollo serves a node it must not spend one of its
+            # MAX_ASKS_PER_NODE probes: doing so used to exhaust a thin rubric's
+            # only graded node, empty `askable_ids`, force `done`, and auto-grade
+            # an unprobed topic as 0 (the bimodal-F mode).
+            #
+            # Every LATER serve on the same node (`asked_turn` already stamped)
+            # charges, degenerate or not. Without that the counter never moves:
+            # `budget.questions_asked` is `sum(times_asked)`, so a model that keeps
+            # going off-policy on the same node re-serves the same clipped clause
+            # forever and `budget_exhausted` never gets any closer. The free pass
+            # is per node and once, which is all the original harm needs — a node
+            # already probed once is not "never actually probed".
             target_row.times_asked = int(target_row.times_asked) + 1
         target_row.last_asked_turn = turn_index + 1
 

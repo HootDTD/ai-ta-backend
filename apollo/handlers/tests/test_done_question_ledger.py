@@ -30,7 +30,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
-from apollo.handlers.done import _question_ledger, _tally_context
+from apollo.handlers.done import _probed_node_ids, _question_ledger, _tally_context
 from apollo.handlers.tests._done_fixtures import _old_path_patches
 from apollo.persistence.models import (
     ProblemAttempt,
@@ -142,6 +142,50 @@ def test_tally_context_of_an_empty_ledger_is_empty():
     assert _tally_context([]) == []
 
 
+# --- _probed_node_ids: a row is not the same thing as engagement ------------
+
+
+def test_a_bare_row_with_no_engagement_is_not_probed():
+    """Review fix. Two paths mint a ledger row without engaging the node: a
+    degenerate ``fallback_served`` turn (a verbatim public clause served in
+    place of a question, which deliberately spends no probe) and a tally update
+    that merely restates ``missing``. Counting either as probed puts the node
+    straight back in the P1.2b denominator at credit 0 — the false F the fix
+    exists to remove."""
+    assert (
+        _probed_node_ids([_Row("q1", state="missing", times_asked=0, evidence=[])]) == frozenset()
+    )
+
+
+def test_a_genuine_ask_is_probed_even_with_no_answer():
+    """Apollo really put the question; the student ignoring it is a real 0."""
+    assert _probed_node_ids([_Row("q1", state="missing", times_asked=1, evidence=[])]) == frozenset(
+        {"q1"}
+    )
+
+
+def test_a_spontaneously_taught_node_is_probed_without_ever_being_asked():
+    """The tally concluded something about it, which is engagement."""
+    assert _probed_node_ids(
+        [_Row("q1", state="understood", times_asked=0, evidence=[])]
+    ) == frozenset({"q1"})
+
+
+def test_a_verbatim_quote_alone_is_engagement():
+    assert _probed_node_ids(
+        [_Row("q1", state="missing", times_asked=0, evidence=[{"turn_id": 2, "quote": "because"}])]
+    ) == frozenset({"q1"})
+
+
+@pytest.mark.parametrize("times_asked", [None, 0])
+def test_probed_set_coerces_a_null_times_asked(times_asked):
+    assert _probed_node_ids([_Row("q1", state="missing", times_asked=times_asked)]) == frozenset()
+
+
+def test_probed_set_of_an_empty_ledger_is_empty():
+    assert _probed_node_ids([]) == frozenset()
+
+
 # --- handle_done wiring ----------------------------------------------------
 
 
@@ -155,6 +199,19 @@ async def test_ledger_feeds_both_the_adjudicator_and_the_scorer():
     ]
     score_kwargs = started["compute_topic_score"].call_args.kwargs
     assert score_kwargs["asked_node_ids"] == frozenset({"q1", "q2"})
+
+
+async def test_a_row_with_no_engagement_is_kept_out_of_the_scorer_probe_set():
+    """Review fix, end to end: the adjudicator still sees the WHOLE ledger (the
+    tally context is the record), but the scorer's denominator only counts the
+    node Apollo actually engaged with."""
+    started = await _run(
+        ledger=(_Row("q1", times_asked=1), _Row("q2", state="missing", times_asked=0, evidence=[]))
+    )
+
+    assert started["compute_topic_score"].call_args.kwargs["asked_node_ids"] == frozenset({"q1"})
+    tally = started["compute_transcript_coverage_with_spans"].await_args.kwargs["tally_context"]
+    assert [entry["node_id"] for entry in tally] == ["q1", "q2"]
 
 
 async def test_empty_ledger_passes_an_empty_probe_set_not_none():
