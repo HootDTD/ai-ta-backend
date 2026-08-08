@@ -4,13 +4,14 @@ description: Generates the student-facing narrative that explains — never deci
 owns:
   - apollo/overseer/diagnostic.py
   - apollo/overseer/remediation.py
+  - apollo/overseer/narrative_consistency.py
 related:
   - apollo/overseer/topic-narrative
   - apollo/overseer/grounding
   - apollo/overseer/topic-score
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-08-04
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -30,6 +31,9 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
 - `add_remediation_reviews(*, db, search_space_id, topic_score, feedback,
   grounding_bundle) -> decorated_feedback_or_none` — copy-on-success citation
   decoration for at most three `partial`/`missing` topics.
+- `narrative_consistency.enforce_narrative_consistency(feedback, *, topics)
+  -> feedback` — pure, total, idempotent verdict-consistency gate (P2.1);
+  `PRAISE_FLOOR = 0.6` and `FALLBACK_HEADLINE` are its public constants.
 
 ## Data flow
 
@@ -41,9 +45,20 @@ now calls `generate_diagnostic` through `asyncio.to_thread` (see `handlers/done`
 so this narrative LLM call no longer blocks the event loop. Code validates topic
 keys/order, exact-gates each quote against that topic's `evidence_span`,
 sanitizes every prose field, appends deterministic misconception + negotiation
-entries in `recap[]`, then flattens headline → topic notes → recap → prefixed
-next step for back compatibility. Otherwise it uses the unchanged axis prompt
-and returns the legacy sanitized narrative plus null feedback.
+entries in `recap[]`, runs the consistency gate LAST, then flattens headline →
+topic notes → recap → prefixed next step for back compatibility. Otherwise it
+uses the unchanged axis prompt and returns the legacy sanitized narrative plus
+null feedback.
+
+`narrative_consistency` (P2.1, 2026-08-07) is the code half of "the narrative
+is written FROM the verdicts" — the prompt half lives in
+[topic-narrative](topic-narrative.md). It takes the sanitized payload plus
+`TopicScoreResult.topics` and, for every topic under `PRAISE_FLOOR`, strips
+each PURE-praise sentence (a credit claim or praise word with no gap named) and
+guarantees the gap is named, appending one deterministic quoted-reference
+sentence when the model named none. Headline and next step lose only
+pure-praise sentences that also NAME an uncredited topic (long-word overlap
+with its display name); emptied fields fall back to deterministic text.
 
 `course_evidence` (INTERACTION2, supplied by `handlers/done.py` from
 [grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY.
@@ -78,7 +93,17 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
 - **`course_evidence=None` (the default, and what an OFF flag or NULL bundle
   produces) keeps both prompt paths byte-identical to the pre-INTERACTION2
   build**, so grounding can never silently move a grade.
-  boundary.
+- **The consistency gate never decides anything and never raises.** It edits
+  prose only; credits, letters, quotes, `recap[]`, `hoot_assisted`, and every
+  other key pass through. With no topic under `PRAISE_FLOOR` — and for a topic
+  whose note needs no repair — the payload is returned unchanged, so a fully
+  credited attempt is byte-identical to the pre-P2.1 build. A defect inside it
+  is caught by the same structured-path `except` as a JSON failure: legacy
+  narrative, null feedback, no second completion.
+- **It runs on sanitized text and its own sentences are code-owned**, quoting a
+  shortened (≤90 chars, word-boundary) reference name — never re-sanitized, so
+  a topic display name reaches the student as authored, and never a snake_case
+  key (`humanize_key` is the no-display-name fallback).
 - **Remediation is copy-on-success and all-or-nothing:** empty/unsafe results or
   any failure publish no `review` key. Solution-bearing snippets use the same
   metadata filter as Interaction 1; snippet quotes never enter the payload.

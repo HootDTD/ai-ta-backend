@@ -28,6 +28,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from apollo.agent._llm import bounded_client
+from apollo.overseer.narrative_consistency import enforce_narrative_consistency
 from apollo.overseer.topic_narrative import build_topic_narrative_prompt, sanitize_narrative
 from apollo.overseer.topic_score import TopicScoreResult
 from config.models import MAIN_MODEL
@@ -307,12 +308,18 @@ def _parse_topic_feedback(
         rubric=rubric,
         canonical_keys=ledger_keys,
     )
-    return {
-        "headline": sanitize_narrative(payload["headline"], canonical_keys=ledger_keys),
-        "topic_feedback": feedback_items,
-        "recap": recap,
-        "next_step": sanitize_narrative(payload["next_step"], canonical_keys=ledger_keys),
-    }
+    # P2.1 (2026-08-07): the served prose may never praise a topic the ledger
+    # did not credit. Runs LAST — on sanitized text, before flattening — so the
+    # structured feedback and the flattened narrative carry the same repair.
+    return enforce_narrative_consistency(
+        {
+            "headline": sanitize_narrative(payload["headline"], canonical_keys=ledger_keys),
+            "topic_feedback": feedback_items,
+            "recap": recap,
+            "next_step": sanitize_narrative(payload["next_step"], canonical_keys=ledger_keys),
+        },
+        topics=topic_score.topics,
+    )
 
 
 def _gate_topic_quote(

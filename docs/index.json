@@ -1,8 +1,8 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-07-31",
-  "repo": "perf-v2",
+  "generated_at": "2026-08-07",
+  "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -92,6 +92,7 @@
     "apollo/overseer/diagnostic.py": "apollo/overseer/diagnostic",
     "apollo/overseer/grounding.py": "apollo/overseer/grounding",
     "apollo/overseer/misconception.py": "apollo/overseer/rubric",
+    "apollo/overseer/narrative_consistency.py": "apollo/overseer/diagnostic",
     "apollo/overseer/personalization_flag.py": "apollo/overseer/problem-selector",
     "apollo/overseer/problem_selector.py": "apollo/overseer/problem-selector",
     "apollo/overseer/remediation.py": "apollo/overseer/diagnostic",
@@ -773,7 +774,8 @@
       "description": "Generates the student-facing narrative that explains \u2014 never decides \u2014 the grade.",
       "owns": [
         "apollo/overseer/diagnostic.py",
-        "apollo/overseer/remediation.py"
+        "apollo/overseer/remediation.py",
+        "apollo/overseer/narrative_consistency.py"
       ]
     },
     "apollo/overseer/grounding": {
