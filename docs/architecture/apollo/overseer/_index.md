@@ -3,7 +3,7 @@ doc: apollo/overseer/_index
 description: Router for Apollo's grading, scoring, narrative, XP, and selection brains — home of the grading-path invariants.
 owns: []
 related: []
-last_verified: 2026-07-28
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -11,8 +11,7 @@ stub: false
 
 The graders, the score→letter→narrative chain, XP, and problem selection. The
 live Done grade is assembled by
-[conversation/handlers/done.md](../conversation/handlers/done.md) — see the
-recipe below.
+[conversation/handlers/done.md](../conversation/handlers/done.md) — recipe below.
 
 ## Leaves
 
@@ -35,33 +34,35 @@ recipe below.
 - **One live grading lane.** `transcript_coverage` is the sole live grader;
   `coverage.py` (V3 KG-vs-KG) has no runtime caller.
 - **Grade of record = the topic score.** `done.py` replaces `rubric["overall"]`
-  with the topic score/letter; XP and the served `topics` derive from it. The
-  axis `rubric` blend lives on only as the legacy `scores.composite` /
-  `GradingRun.composite_score` (scorecard band + mastery EWMA); it is never the
-  served grade, and the module `apollo.grading.composite` does not exist.
+  with the topic score/letter; XP and served `topics` derive from it. The axis
+  `rubric` blend survives only as legacy `scores.composite` /
+  `GradingRun.composite_score` (scorecard band + mastery EWMA), never as the served grade.
 - **Misconceptions retired.** Every topic carries an empty `misconceptions`
   tuple; the detector is gone, the shape kept for UI back-compat.
 - **Flow:** transcript coverage → rubric + topic score → diagnostic/topic
   narrative → optional remediation decoration → XP.
+- **Per-node credit is a FOUR-POINT SCALE (2026-08-07 P1.1).** Every credit
+  leaving [transcript-coverage](transcript-coverage.md) is exactly one of
+  `CREDIT_ANCHORS = (0, 0.6, 0.85, 1.0)` (schema enum + code snap, ties down), so
+  both consumers — [topic-score](topic-score.md), axis [rubric](rubric.md) — see
+  only anchors. The one non-anchor value is the later
+  [aside-penalty](aside-penalty.md) cap (0.5).
 - **Course grounding is strictly additive (INTERACTION2, default OFF).**
   [grounding](grounding.md) reframes the adjudication + narrative prompts with one
-  capped block; `None` — flag off, NULL/corrupt bundle, nothing student-safe —
-  reproduces both prompts BYTE FOR BYTE. It only truncates the pre-capped evidence
-  (never the transcript), never widens the span gate, never adds a hard failure.
+  capped block; `None` reproduces both prompts BYTE FOR BYTE. It truncates only the
+  pre-capped evidence (never the transcript) and never widens the span gate.
 - **Remediation never grades.** `INTERACTION3` only decorates successful
   structured feedback in one swallowed failure domain; it cannot change score,
   letter, narrative, XP, or grade persistence.
 - **Hoot-assist cap is strictly additive (INTERACTION5, default OFF).**
   [aside-penalty](aside-penalty.md) flat-caps every rubric node a Hoot lookup aside
   explained (credit ≤ 0.5, never `covered`) before the grade fans out, so rubric,
-  topic score, narrative, and served topics all surface `hoot_assisted` on the same
-  capped values. Own swallowed failure domain; `hoot_asides=()` is byte-identical.
+  topic score, narrative, and topics share the capped values; `hoot_asides=()` is byte-identical.
 
 ## Grading-path recipe (to change the grade, also touch)
 
 `done.py` orchestrates: transcript-coverage → rubric → topic-score →
 (diagnostic / topic-narrative, xp) → grading-artifact-writer → scorecard →
-mastery. A grader change reconciles
-[done.md](../conversation/handlers/done.md) plus the directional `related:`
-chain transcript-coverage ↔ rubric ↔ topic-score ↔ done ↔
-grading-artifact-writer ↔ scorecard ↔ mastery.
+mastery. A grader change reconciles [done.md](../conversation/handlers/done.md)
+plus the directional `related:` chain transcript-coverage ↔ rubric ↔ topic-score
+↔ done ↔ grading-artifact-writer ↔ scorecard ↔ mastery.
