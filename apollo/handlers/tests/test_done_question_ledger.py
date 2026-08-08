@@ -20,6 +20,7 @@ is exercised against SQLite.
 
 from __future__ import annotations
 
+import inspect
 from contextlib import ExitStack
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -175,6 +176,27 @@ async def test_failed_ledger_read_degrades_to_the_pre_fix_grade():
     assert (
         started["compute_transcript_coverage_with_spans"].await_args.kwargs["tally_context"] is None
     )
+
+
+# --- the S1/S3 merge seam --------------------------------------------------
+
+
+def test_coverage_entrypoint_really_accepts_tally_context():
+    """Contract test for the ONE cross-slice seam in this branch.
+
+    ``done.py`` passes ``tally_context=`` to the real
+    ``compute_transcript_coverage_with_spans``, but every wiring test above
+    mocks that callable — so a merge that renamed or dropped the parameter
+    (S1 owns ``transcript_coverage.py``; S3 owns this call site) would sail
+    through the suite and then raise ``TypeError`` inside the SOLE grading lane
+    on every Done, which surfaces as a 503, not a soft-fail. This asserts
+    against the unmocked signature so the failure lands in CI at merge time.
+    """
+    from apollo.overseer.transcript_coverage import compute_transcript_coverage_with_spans
+
+    parameters = inspect.signature(compute_transcript_coverage_with_spans).parameters
+    assert "tally_context" in parameters
+    assert parameters["tally_context"].default is None
 
 
 # --- the real query --------------------------------------------------------

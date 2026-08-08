@@ -102,14 +102,18 @@ def _graded_topic_counts(problem: Any, covered_topics: Any) -> tuple[int, int]:
     so a celebrated ungraded topic can never make the meter read "done".
 
     Derived from data this turn already holds — no extra query, no extra LLM
-    call. Display-only: any failure to walk the problem logs and degrades to
-    ``(0, 0)`` rather than breaking a teaching turn."""
+    call. Display-only: any failure to derive either side logs and degrades to
+    ``(0, 0)`` rather than breaking a teaching turn — the covered-topics walk is
+    inside the guard too, so a `QuestionDecision` shape change (rolling deploy,
+    test double, controller regression) can never 500 an ordinary turn for the
+    sake of a meter."""
     try:
         graded_ids = {
             str(step.id)
             for step in problem.reference_solution
             if step.entry_type in _GRADED_NODE_TYPES
         }
+        understood_ids = {topic.node_id for topic in covered_topics}
     except Exception:
         _LOG.warning(
             "apollo_graded_topic_counts_failed problem=%r",
@@ -117,7 +121,6 @@ def _graded_topic_counts(problem: Any, covered_topics: Any) -> tuple[int, int]:
             exc_info=True,
         )
         return 0, 0
-    understood_ids = {topic.node_id for topic in covered_topics}
     return len(graded_ids), len(graded_ids - understood_ids)
 
 

@@ -119,6 +119,18 @@ def test_malformed_reference_step_soft_fails_to_zero(caplog):
     assert "apollo_graded_topic_counts_failed" in caplog.text
 
 
+def test_malformed_covered_topic_soft_fails_to_zero(caplog):
+    """The covered-topics walk is inside the guard too. A `QuestionDecision`
+    carrying a topic without `node_id` (test double, rolling-deploy shape
+    change, controller regression) must degrade the meter, not 500 the turn."""
+    problem = _problem(_step("eq1", "equation"))
+
+    with caplog.at_level("WARNING"):
+        assert _graded_topic_counts(problem, (object(),)) == (0, 0)
+
+    assert "apollo_graded_topic_counts_failed" in caplog.text
+
+
 # --- the chat response -----------------------------------------------------
 
 

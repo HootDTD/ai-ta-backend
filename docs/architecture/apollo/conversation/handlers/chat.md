@@ -52,19 +52,17 @@ Ordered turn:
    classifies the utterance and, above threshold, persists a confirmation prompt
    and returns. The classifier never triggers the hint lane.
 4. **Teaching path**: FIRST persist the student message in its own commit
-   (`_persist_student_message`, 2026-08-07 P0.3 done-race fix — the turn's
-   LLM chain runs 10-17s and a Done clicked mid-turn used to grade a
-   transcript missing the student's last message; `history_pre` is loaded
-   before this persist so nothing double-counts). Then read the current
-   subgraph (`_read_graph_or_empty`), project it via `build_graph_context`
-   (`parser/graph-context`), then `parse_utterance` (`parser/parser-llm`) →
-   nodes/edges.
+   (`_persist_student_message`, 2026-08-07 P0.3 done-race fix — the turn's LLM
+   chain runs 10-17s and a Done clicked mid-turn used to grade a transcript
+   missing the student's last message; `history_pre` is loaded before this
+   persist so nothing double-counts). Then read the current subgraph
+   (`_read_graph_or_empty`), project it via `build_graph_context`
+   (`parser/graph-context`), then `parse_utterance` (`parser/parser-llm`).
 
 Both LLM calls on this path — `classify_intent` (step 3) and `parse_utterance`
-(step 4) — run via `await asyncio.to_thread(...)` (2026-08-04). Each was
-previously a synchronous OpenAI call made directly inside this `async def`
-handler, blocking the single uvicorn event loop for the call's duration; every
-other in-flight Apollo request on that worker stalled until it returned.
+(step 4) — run via `await asyncio.to_thread(...)` (2026-08-04); as direct sync
+calls inside this `async def` they blocked the uvicorn event loop, stalling
+every other in-flight Apollo request on that worker.
 5. **KG write** (`_write_kg_or_skip`): `write_nodes`/`write_edges` on `KGStore`;
    returns genuinely-new node count.
 6. **Questioning**: build the full transcript and call `plan_next_question`
@@ -102,13 +100,12 @@ other in-flight Apollo request on that worker stalled until it returned.
    0) at or above `MAX_ASIDES_PER_SESSION` (3) → a persona redirect turn, no
    bridge call.
 4. Otherwise calls `hoot_bridge.reference_answer.answer_reference_question`.
-   Any exception → logged, `db.rollback()` FIRST (the failure may have
-   aborted the transaction — persisting on it escaped as a 500 in the
-   2026-08-01 halfvec schema-drift incident), then the persona apology turn
-   persisted best-effort (its own failure is logged, never raised) —
-   **never a 5xx**. The brief's "failure ⇒ persona apology + fall through
-   as a teaching turn" contract lives here, not in the bridge (the bridge
-   raises on genuine failure by design).
+   Any exception → logged, `db.rollback()` FIRST (the failure may have aborted
+   the transaction — persisting on it escaped as a 500 in the 2026-08-01
+   halfvec schema-drift incident), then the persona apology turn persisted
+   best-effort (its own failure is logged, never raised) — **never a 5xx**. The
+   "failure ⇒ persona apology + fall through as a teaching turn" contract lives
+   here, not in the bridge (the bridge raises on genuine failure by design).
 5. On success: increments the session's aside counter, then persists via the
    shared `_persist_reference_aside_turn` helper — the student question
    (untagged — the adjudicator keeps it), the aside text tagged
@@ -121,10 +118,9 @@ other in-flight Apollo request on that worker stalled until it returned.
    (`_REFERENCE_QUESTION_RESUME_LINE`); `in_scope=False` (the bridge's
    out-of-scope refusal) redirects back to the teaching thread instead
    (`_REFERENCE_QUESTION_OUT_OF_SCOPE_RESUME_LINE`) — there is nothing to
-   "fit in". Returns
-   `message_kind: "reference_aside"` plus an `aside: {text, citations,
-   in_scope}` payload — the serializer shape the student-UI PR types against
-   (see `hoot-bridge-reference-answer`).
+   "fit in". Returns `message_kind: "reference_aside"` plus an
+   `aside: {text, citations, in_scope}` payload — the serializer shape the
+   student-UI types against (see `hoot-bridge-reference-answer`).
 
 ## Invariants & gotchas
 
@@ -135,17 +131,19 @@ other in-flight Apollo request on that worker stalled until it returned.
   turn contributes zero KG entries, and the conversational reply is generated
   anyway (no 422 card to the student).
 - **A failed teaching turn keeps the student row** (P0.3): a mid-chain raise
-  after the early persist leaves a student message with no Apollo reply. This
-  is deliberate — the transcript retains the student's words (grading-
-  favorable) and the next turn's history simply includes them; never "clean
-  up" the dangling row.
+  after the early persist leaves a student message with no Apollo reply. That is
+  deliberate — the transcript retains the student's words (grading-favorable)
+  and the next turn's history includes them; never "clean up" the dangling row.
 - **The P2.2 meter counts GRADED node types only** (2026-08-07):
   `_GRADED_NODE_TYPES` imported from `overseer/topic-score`, never re-listed
   here. `definition` / `variable_mapping` never enter the grade, so a celebrated
   ungraded topic must not make the meter read "done"; `open_graded_topics` =
   graded ids minus the tally's `understood` ids. Both keys ship on the ask AND
   the auto-done branch (the student-UI types against them). The derivation adds
-  no query and soft-fails to `0/0` (`apollo_graded_topic_counts_failed`).
+  no query, and BOTH halves — the reference-solution walk and the covered-topics
+  walk — sit inside one guard that soft-fails to `0/0`
+  (`apollo_graded_topic_counts_failed`): a display-only meter must never 500 a
+  teaching turn, including on a `QuestionDecision` shape change.
 - The residual done-race window is the intent-classify call (~1-2s) before the
   early persist — accepted for P0; full elimination is the P3.4 concurrency
   review.

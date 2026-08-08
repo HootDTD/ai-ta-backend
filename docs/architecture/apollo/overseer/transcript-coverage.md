@@ -34,10 +34,16 @@ frozen KG, so a Neo4j-degraded Done still grades.
   `handlers/done._tally_context` — this module NEVER reads the DB. It is prior
   context for the adjudication prompt (defect U1: the tally and the grader are
   two decoupled LLM systems), never a verdict; `None` reproduces today's prompt
-  and grade byte for byte. **Integration seam:** the signature accepts it today;
-  the prompt-side consumption ships with the adjudication-prompt change that owns
-  `build_system_prompt` / `build_user_message` / the verdict schema, so the value
-  is currently inert.
+  and grade byte for byte. **Integration seam (INTEGRATOR, read this):** the
+  signature accepts it today; the prompt-side consumption ships with the
+  adjudication-prompt change that owns `build_system_prompt` /
+  `build_user_message` / the verdict schema, so the value is currently inert.
+  The parameter NAME and default are load-bearing — `handlers/done.py` passes
+  `tally_context=` inside the sole grading lane, which is not soft-failed, so
+  dropping or renaming it turns every Done into a 503. Land the prompt-side body
+  and this call site together; `test_done_question_ledger.
+  test_coverage_entrypoint_really_accepts_tally_context` asserts the unmocked
+  signature so a bad merge reds CI instead of prod.
 - `compute_transcript_coverage(...)` — verdict only (byte-identical verdict;
   spans are deliberately not a coverage key). Same `course_evidence` /
   `hoot_asides` kwargs.
