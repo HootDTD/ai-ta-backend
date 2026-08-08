@@ -26,9 +26,18 @@ frozen KG, so a Neo4j-degraded Done still grades.
 ## Interface
 
 - `compute_transcript_coverage_with_spans(transcript, reference_graph, problem,
-  *, course_evidence=None, hoot_asides=()) -> (CoverageVerdict, spans)` — the live
-  entry called by `handlers/done.py`. One adjudication call yields both the verdict
-  and the narrative spans map.
+  *, course_evidence=None, hoot_asides=(), tally_context=None) ->
+  (CoverageVerdict, spans)` — the live entry called by `handlers/done.py`. One
+  adjudication call yields both the verdict and the narrative spans map.
+  `tally_context` (2026-08-07 P1.3) is the questioning engine's live per-node
+  tally, shape `[{node_id, state, times_asked, student_quote|null}]`, supplied by
+  `handlers/done._tally_context` — this module NEVER reads the DB. It is prior
+  context for the adjudication prompt (defect U1: the tally and the grader are
+  two decoupled LLM systems), never a verdict; `None` reproduces today's prompt
+  and grade byte for byte. **Integration seam:** the signature accepts it today;
+  the prompt-side consumption ships with the adjudication-prompt change that owns
+  `build_system_prompt` / `build_user_message` / the verdict schema, so the value
+  is currently inert.
 - `compute_transcript_coverage(...)` — verdict only (byte-identical verdict;
   spans are deliberately not a coverage key). Same `course_evidence` /
   `hoot_asides` kwargs.

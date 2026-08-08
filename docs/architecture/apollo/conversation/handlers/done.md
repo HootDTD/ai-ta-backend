@@ -52,6 +52,13 @@ Ordered grade assembly (each step delegates to the owner doc):
    Done later). Then read the student graph (tolerating degraded Neo4j) and
    `store.freeze(session_id)`.
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
+2a. **Question ledger** (`_question_ledger`, 2026-08-07 P1.2b/P1.3): ONE read of
+   this attempt's `QuestionOpportunity` rows, ordered by `id`, feeding BOTH
+   `tally_context` (step 3) and `asked_node_ids` (step 5). `_tally_context`
+   reduces the rows to the pinned cross-slice shape
+   `[{node_id, state, times_asked, student_quote|null}]`, taking the LAST usable
+   quote from the row's free-form `evidence` JSON (`_latest_student_quote`,
+   `None` on anything malformed).
 3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans`
    (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated
    evidence spans. Just before it, `_course_evidence_safe` checks both
@@ -72,8 +79,10 @@ Ordered grade assembly (each step delegates to the owner doc):
 4. `compute_rubric` (`overseer/rubric`) maps coverage into the axis rubric.
 5. **Topic score** (`_compute_topic_score_safe` wrapping `compute_topic_score` /
    `compute_centrality`, `overseer/topic-score`): best-effort, computed always.
-   On success `served_rubric` REPLACES `overall` with the topic score/letter
-   (new dict; `rubric` itself is never mutated).
+   It also receives `asked_node_ids` from step 2a, so graded nodes the
+   questioning loop never engaged leave the denominator (P1.2b). On success
+   `served_rubric` REPLACES `overall` with the topic score/letter (new dict;
+   `rubric` itself is never mutated).
 6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative plus, on
    topic-score JSON success, structured per-topic feedback from the student's
    verbatim utterances; the same `course_evidence` lets feedback cite the course.
@@ -112,6 +121,15 @@ Ordered grade assembly (each step delegates to the owner doc):
   each owns its commit and swallows exceptions; neither can void the served grade.
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
   dormant Bayesian path would double-apply evidence).
+- **The question-ledger read owns its failure domain** (P1.2b/P1.3): it runs
+  AHEAD of the sole grading lane and NEVER touches the `CoverageGradingError →
+  503` contract. Any exception logs `apollo_question_ledger_fetch_failed` and
+  yields `None`, which makes `tally_context` and `asked_node_ids` both `None` —
+  byte-identical to the pre-fix grade. An **empty** ledger is deliberately NOT
+  `None`: `asked_node_ids=frozenset()` reaches the scorer, whose own degenerate
+  guard keeps the attempt gradeable while logging that the questioning loop
+  engaged nothing (the auto-done / restart-orphan pathologies). Never widen this
+  to a second query — one read serves both consumers.
 - **Course grounding never adds a failure mode** (`overseer/grounding`):
   `_course_evidence_safe` runs AHEAD of the sole grading lane and is soft-fail
   by construction — flag off, concept not allowed, NULL/corrupt bundle, nothing

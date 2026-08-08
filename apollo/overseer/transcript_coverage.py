@@ -7,7 +7,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -538,6 +538,7 @@ async def compute_transcript_coverage_with_spans(
     *,
     course_evidence: str | None = None,
     hoot_asides: tuple[str, ...] = (),
+    tally_context: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[CoverageVerdict, dict[str, str]]:
     """One adjudication call -> ``(coverage, narrative_spans)``.
 
@@ -556,7 +557,22 @@ async def compute_transcript_coverage_with_spans(
     dict under the optional ``hoot_assisted`` key ( ``{node_id: bool}`` ), which a
     downstream cap pass reads. An empty tuple reproduces today's coverage dict —
     no ``hoot_assisted`` key — and today's prompts/schema exactly. It never widens
-    the span gate: a Hoot aside can never be quoted as student evidence."""
+    the span gate: a Hoot aside can never be quoted as student evidence.
+
+    ``tally_context`` (2026-08-07 bimodal-fix P1.3) is the questioning engine's
+    live per-node tally for this attempt, supplied BY THE CALLER
+    (``handlers/done._tally_context``) — this module never reads the DB. Shape:
+    ``[{node_id, state, times_asked, student_quote|null}, ...]``. It is PRIOR
+    context for the adjudication prompt, never a verdict: it exists to stop the
+    grader zeroing a node the tally recorded as understood WITH a student quote
+    (defect U1). ``None`` reproduces today's prompt and today's grade byte for
+    byte.
+
+    NOTE (integration seam): this signature accepts the argument; the prompt-side
+    consumption lands with the adjudication-prompt slice that owns
+    ``build_system_prompt`` / ``build_user_message`` / the verdict schema. Until
+    then the value is inert and the grade is unchanged.
+    """
     verdicts = await _adjudicate_all_graded(
         transcript,
         reference_graph,

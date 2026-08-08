@@ -54,6 +54,7 @@ from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
     GradingRun,
     ProblemAttempt,
+    QuestionOpportunity,
     SessionPhase,
     TutoringMessage,
     TutoringSession,
@@ -259,6 +260,80 @@ async def _full_transcript(
     return tuple((role, content) for role, content in rows)
 
 
+async def _question_ledger(
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+) -> tuple[Any, ...] | None:
+    """This attempt's ``QuestionOpportunity`` rows in insertion order, or
+    ``None`` when the read failed.
+
+    ONE read serving BOTH 2026-08-07 bimodal-fix consumers: the adjudicator's
+    ``tally_context`` (P1.3) and the scorer's ``asked_node_ids`` (P1.2b). Its own
+    failure domain — it runs AHEAD of the sole grading lane and must never touch
+    the ``CoverageGradingError -> 503`` contract, so ANY exception logs and
+    yields ``None``, which makes both consumers reproduce the pre-fix grade.
+    Ordered by ``id`` (never node id) so the tally block handed to the LLM is
+    reproducible across runs."""
+    try:
+        rows = (
+            (
+                await db.execute(
+                    select(QuestionOpportunity)
+                    .where(QuestionOpportunity.attempt_id == attempt_id)
+                    .order_by(QuestionOpportunity.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:
+        _LOG.exception("apollo_question_ledger_fetch_failed attempt_id=%s", attempt_id)
+        return None
+    return tuple(rows)
+
+
+def _latest_student_quote(evidence: Any) -> str | None:
+    """The most recent verbatim student quote in a ledger row's evidence list.
+
+    Evidence entries are ``{"turn_id": int, "quote": str}`` appended in turn
+    order by the questioning controller, so the LAST usable one is the student's
+    most recent demonstration of that node. Anything malformed (the column is
+    free-form JSON) yields ``None`` rather than raising — this feeds a prompt,
+    not the grade arithmetic."""
+    if not isinstance(evidence, list):
+        return None
+    for item in reversed(evidence):
+        if not isinstance(item, dict):
+            continue
+        quote = item.get("quote")
+        if isinstance(quote, str) and quote.strip():
+            return quote
+    return None
+
+
+def _tally_context(rows: Any) -> list[dict[str, Any]]:
+    """The adjudicator's per-node prior context (P1.3), shape pinned across
+    slices: ``[{node_id, state, times_asked, student_quote|null}, ...]``.
+
+    Defect U1: the live tally (questioning engine) and the grader are two
+    decoupled LLM systems, so identical tallies produced F(0) and A+(100) and a
+    node Apollo marked ``understood`` — celebrated in the UI — was routinely
+    zeroed by the grader. Handing the tally to the adjudicator as PRIOR context
+    (not as a verdict) is the cheap half of that fix; the prompt rule that a
+    quoted ``understood`` node needs a cited reason to score low lives in
+    ``overseer/transcript_coverage``."""
+    return [
+        {
+            "node_id": str(row.reference_node_id),
+            "state": str(row.state),
+            "times_asked": int(row.times_asked or 0),
+            "student_quote": _latest_student_quote(row.evidence),
+        }
+        for row in rows
+    ]
+
+
 async def _aside_texts(
     db: AsyncSession,
     *,
@@ -297,6 +372,7 @@ def _compute_topic_score_safe(
     reference_graph: KGGraph,
     attempt_id: int,
     evidence_spans: dict[str, str] | None = None,
+    asked_node_ids: frozenset[str] | None = None,
 ) -> TopicScoreResult | None:
     """Soft-failing wrapper around ``compute_topic_score`` (2026-07-10 spec
     §3): computed ALWAYS (flag-independent — the artifact gets telemetry
@@ -310,6 +386,7 @@ def _compute_topic_score_safe(
             reference_nodes=reference_graph.nodes,
             centrality=compute_centrality(reference_graph),
             evidence_spans=evidence_spans,
+            asked_node_ids=asked_node_ids,
         )
     except Exception:
         _LOG.exception("topic_score_computation_failed attempt_id=%s", attempt_id)
@@ -468,6 +545,21 @@ async def handle_done(
     course_evidence = _course_evidence_safe(sess, concept_slug=getattr(problem, "concept_id", None))
     transcript = await _full_transcript(db, attempt_id=int(attempt.id))
 
+    # The question ledger, read ONCE for both bimodal-fix consumers below
+    # (P1.3 `tally_context` for the adjudicator, P1.2b `asked_node_ids` for the
+    # scorer). A failed read is `None` for both, which reproduces the pre-fix
+    # grade exactly. An EMPTY ledger is deliberately NOT `None`: an attempt whose
+    # questioning loop engaged no node at all is real signal (the auto-done /
+    # restart-orphan pathologies), and the scorer's own degenerate-case guard
+    # keeps it gradeable.
+    ledger_rows = await _question_ledger(db, attempt_id=int(attempt.id))
+    tally_context = None if ledger_rows is None else _tally_context(ledger_rows)
+    asked_node_ids = (
+        None
+        if ledger_rows is None
+        else frozenset(str(row.reference_node_id) for row in ledger_rows)
+    )
+
     # INTERACTION5 (default OFF) — the Hoot-assist grading cap. Gated on the flag
     # AND the problem concept passing the shared allowlist. Its own failure
     # domain, mirroring the INTERACTION3 pattern: the aside fetch is wrapped so
@@ -493,6 +585,7 @@ async def handle_done(
         problem=problem,
         course_evidence=evidence_block(course_evidence),
         hoot_asides=hoot_asides,
+        tally_context=tally_context,
     )
 
     # Apply the flat cap to the coverage BEFORE rubric / topic-score / diagnostic
@@ -530,6 +623,7 @@ async def handle_done(
         reference_graph=reference_graph,
         attempt_id=int(attempt.id),
         evidence_spans=narrative_spans,
+        asked_node_ids=asked_node_ids,
     )
 
     # Serving (spec §3): `served_rubric` REPLACES `overall` with the topic
