@@ -309,15 +309,56 @@ def _build_rubric_items(reference_graph: KGGraph) -> list[dict]:
     ]
 
 
+# Bimodal-fix P1.1 hardening (2026-08-08, wave-3 replay + adversarial audit) —
+# appended to EVERY system prompt, BEFORE the exemplars, because the exemplars
+# calibrate a bar the prompt must first set.
+#
+# What the replay measured: P1.1 un-collapsed the distribution (mid-anchor share
+# 59.7% on the live calibration arm), but it bought 0.6 far too cheaply. ALL 25
+# of the replayed C(60) rows were one degenerate cell — every graded credit
+# exactly 0.6 — and every one of them came from a prod F. Reading those
+# transcripts, three shapes dominate: an attempt whose entire student
+# contribution was an eight-character admission of not knowing; one whose entire
+# contribution was a 27-character sentence opener announcing a list and naming
+# none of it (that fragment WAS the recorded evidence span); and one where the
+# student only asked Apollo questions and taught nothing.
+#
+# The correction is deliberately PROMPT-LEVEL. A character-count gate in code
+# would be crude and wrong in both directions — it would fail a terse-but-correct
+# "privacy, accuracy, property, access" and pass a long, empty paragraph — and it
+# would take the judgement away from the grader of record. The rail below states
+# the floor as a content test the adjudicator can actually apply, with the
+# evidence span as its operational check.
+_ZERO_FLOOR_RULE = (
+    " THE 0.6 FLOOR — read this before awarding any credit at all. 0.6 is not a participation "
+    "score and not a reward for staying on topic: it is the lowest credit that still asserts the "
+    "student taught something. Award 0.6 or more only when the student's OWN words carry at least "
+    "part of this item's mechanism, definition, or claim — content specific enough that a reader "
+    "could mark it right or wrong. Otherwise the credit is 0, however cooperative, engaged, or "
+    "on-topic the student sounds. Score 0 whenever the student's whole contribution to the item "
+    "is any of these: an admission that they do not know it; a fragment or sentence opener that "
+    "announces an answer and stops before delivering it; naming the item's category, title, or "
+    "label with none of its content; a question put to Apollo; or agreeing with, restating, or "
+    "asking Apollo to explain content Apollo supplied. The evidence_span is the test: if the best "
+    "span you can quote from the student is not itself a claim about this item's substance, the "
+    "credit is 0. This floor never lowers a credit the student earned — a thin but genuine "
+    "partial answer is still 0.6, and a correct answer stays 0.85 or 1.0 no matter how briefly "
+    "it is worded."
+)
+
+
 # Bimodal-fix P1.1 — appended to EVERY system prompt. Two to three worked
 # exemplars per anchor, so the four-point scale is calibrated by example rather
 # than by adjectives alone (the pre-P1.1 prose anchors produced 129 zeros and 114
 # near-full credits across 259 prod topic verdicts, and 8 genuinely mid ones).
-# The patterns are taken from the exported Week-4 prod transcripts, not invented:
-# the 0.85 case is attempt 80 (student names three of a four-item list in their
-# own words), the 0.6 case is attempt 158 ("the gap between the informed and
-# uninformed widens" — right direction, none of the item's substance), and the
-# last 0 case is the bare-agreement pattern the anti-gaming rail already forbids.
+# The patterns are taken from the exported Week-4 prod transcripts, not invented
+# — and PARAPHRASED, never quoted, so no real student's words ride along in every
+# future grading call. The 0.85 case is attempt 80 (student names three of a
+# four-item list in their own words); the first 0.6 case is attempt 158 (right
+# direction, none of the item's substance); the three added 0 cases are the
+# audit's over-credit patterns (attempts 173, 174, 35); and the added 0.6 case is
+# attempt 189, the under-credit direction, which stops the floor over-tightening
+# on a student who really did enumerate part of the item in their own words.
 _CALIBRATION_EXEMPLARS = (
     " CALIBRATION EXAMPLES (the wording is illustrative; the pattern is what matters)."
     " 1.0 — the student states the item's substance in their own words and, where the item calls "
@@ -335,10 +376,22 @@ _CALIBRATION_EXEMPLARS = (
     "states."
     " 0.6 — the student gives a correct general principle but never connects it to this "
     "problem's specifics, or connects it only after Apollo supplies the connection."
+    " 0.6 — the item asks the student to match each of five listed guarantees to the harm it "
+    "prevents, and the student, in their own words, matches three of them correctly, never "
+    "reaches the other two, and never mentions the named cases the item also asks for. Partial "
+    "enumeration in the student's own words is real content: that is 0.6, not 0."
     " 0 — nothing anywhere in the dialogue bears on the item."
     " 0 — the student asserts something that contradicts the item and never corrects it."
     ' 0 — Apollo states the item and the student only agrees with Apollo ("yes", "exactly") '
     "without adding any content of their own."
+    " 0 — the student's entire contribution is that they do not know: a few words conceding it, "
+    "and nothing else anywhere in the dialogue. There is no partial answer to credit, so that is "
+    "0, not 0.6."
+    " 0 — the student writes only the opening of a list, announcing that the item has four parts "
+    "and stopping before naming any of them. The only span you could quote states none of the "
+    "item's content, so that is 0, not 0.6."
+    " 0 — the student only asks Apollo about the item and never states anything themselves; being "
+    "told the answer is not teaching it, however well Apollo answered."
 )
 
 
@@ -434,8 +487,10 @@ def build_system_prompt(
         '(their reasoning presupposes it), or "absent". Credit is a four-point scale: set credit '
         "to exactly one of these four values — 0, 0.6, 0.85, or 1.0 — and never to a value in "
         "between. 1.0 means the student demonstrated the item; 0.85 means correct but one step "
-        "short of the item's full scope; 0.6 means on track but thin, ambiguous, or unconnected "
-        "to this problem; 0 means the dialogue shows nothing that bears on the item. Partial "
+        "short of the item's full scope; 0.6 means the student put part of the item's own "
+        "substance into their own words but thinly — incomplete, ambiguous, or never connected "
+        "to this problem; 0 means the student's own words carry none of the item's substance. "
+        "Partial "
         "credit is expected and normal — most sessions should contain a mix of these four "
         "values, so reach for 0.85 and 0.6 whenever the work is genuinely between the extremes "
         "rather than rounding everything to 1.0 or 0. Lean toward crediting genuine "
@@ -443,7 +498,7 @@ def build_system_prompt(
         "contradicts the item and is never corrected demonstrates nothing. Absence of evidence "
         "means missing with honest confidence, never fabricated certainty. When you give "
         "positive credit, quote in evidence_span the student words that best support it."
-    ) + _CALIBRATION_EXEMPLARS
+    ) + (_ZERO_FLOOR_RULE + _CALIBRATION_EXEMPLARS)
     prompt = base
     if course_evidence:
         prompt = prompt + _COURSE_EVIDENCE_INSTRUCTION
