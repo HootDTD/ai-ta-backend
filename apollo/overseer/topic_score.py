@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from apollo.ontology import EdgeType, KGGraph, Node
@@ -28,6 +28,26 @@ _GRADED_NODE_TYPES = frozenset(
 # student who already demonstrated the topic is never shown the answer, and the
 # reveal is per-node, never the full worked solution.
 REFERENCE_TEXT_CREDIT_THRESHOLD = 0.6
+
+# ...and never in aggregate either. A wholly-failed attempt has EVERY graded
+# topic below the threshold, so an unbounded per-topic reveal would return the
+# complete graded reference solution — which `restart_problem` (still reachable
+# from the REPORT phase, still best-grade-wins) turns into a recitable A+. At
+# most this many statements ship per attempt, lowest credit first, which also
+# matches the narrative's "name at most two gaps" convention so the two surfaces
+# talk about the same nodes.
+MAX_REFERENCE_TEXT_REVEALS = 2
+
+# P1.2b floor (2026-08-07). Renormalizing over the probed subset is a safety net
+# for budget-starved sessions, NOT a licence to grade a whole problem on one
+# node: a student who explains one of five graded topics and immediately clicks
+# Done (or whose auto-done fires before the loop mints another ledger row) would
+# otherwise renormalize that single node to weight 1.0 and score A+, making
+# bailing out early the highest-scoring strategy. Below the floor the FULL
+# adjudicated denominator is restored (pre-fix behaviour). Prod sizing (135
+# Week-4 attempts): P1.2b changes the denominator on 16 of them, and 8 of those
+# 16 are exactly the single-probed-node case this floor blocks.
+MIN_PROBED_GRADED_NODES = 2
 
 # Ordered content fields rendered into a node's reference statement. Each node
 # content model owns a disjoint subset (equation: label/symbolic, condition:
@@ -130,6 +150,76 @@ def reference_statement_for(node: Any) -> str | None:
     return " — ".join(parts) if parts else None
 
 
+def _probe_floor(graded_count: int) -> int:
+    """Minimum probed graded nodes required before P1.2b may shrink the
+    denominator: at least ``MIN_PROBED_GRADED_NODES`` AND at least half the
+    adjudicated graded nodes, but never more than there are graded nodes (a
+    1-node rubric must not be permanently blocked by an unreachable floor —
+    there the filter is a no-op anyway)."""
+    return min(max(MIN_PROBED_GRADED_NODES, math.ceil(graded_count / 2)), graded_count)
+
+
+def _reveal_reference_text(
+    topics: list[TopicCredit], nodes_by_id: dict[str, Any]
+) -> list[TopicCredit]:
+    """Attach ``reference_text`` to at most ``MAX_REFERENCE_TEXT_REVEALS`` topics.
+
+    Eligibility is per-topic (``credit < REFERENCE_TEXT_CREDIT_THRESHOLD`` and
+    the topic was actually graded — an ``unprobed`` topic is "not part of this
+    grade", so revealing its answer is leakage with no diagnostic value). The
+    CAP is per-attempt, and it is what keeps D2's "never the full worked
+    solution" true when every topic failed. Selection is deterministic: lowest
+    credit first, then most central (highest weight), then reference order.
+    Nodes that render no prose are skipped WITHOUT consuming a slot — the cap
+    counts statements, not candidates. Returns a new list; inputs are never
+    mutated. ``nodes_by_id`` is keyed by construction over the SAME node list
+    the topics were built from, so the lookup below cannot miss.
+    """
+    order = {topic.canonical_key: index for index, topic in enumerate(topics)}
+    eligible = sorted(
+        (
+            topic
+            for topic in topics
+            if topic.status != "unprobed" and topic.credit < REFERENCE_TEXT_CREDIT_THRESHOLD
+        ),
+        key=lambda topic: (topic.credit, -topic.weight, order[topic.canonical_key]),
+    )
+    revealed: dict[str, str] = {}
+    for topic in eligible:
+        if len(revealed) >= MAX_REFERENCE_TEXT_REVEALS:
+            break
+        statement = reference_statement_for(nodes_by_id[topic.canonical_key])
+        if statement:
+            revealed[topic.canonical_key] = statement
+    return [
+        replace(topic, reference_text=revealed[topic.canonical_key])
+        if topic.canonical_key in revealed
+        else topic
+        for topic in topics
+    ]
+
+
+def graded_topics_only(result: TopicScoreResult | None) -> TopicScoreResult | None:
+    """The narrative/feedback view of a result: ``unprobed`` topics removed.
+
+    P2.1 consistency (2026-08-07): an ``unprobed`` topic is excluded from the
+    grade and labelled "not part of this grade" in ``topics[]``, but it still
+    carries credit 0 — so any consumer that enumerates topics as gaps (the
+    narrative prompt, the structured topic feedback) would name it as something
+    the student missed, contradicting the very same payload. Callers that
+    narrate gaps pass this view instead; the SERVED ``topics[]`` and the
+    artifact keep the full list. Score, letter and components are the
+    already-computed grade, carried over untouched — this never re-scores.
+    ``None`` passes through so the caller's soft-fail contract is unchanged.
+    """
+    if result is None:
+        return None
+    kept = tuple(topic for topic in result.topics if topic.status != "unprobed")
+    if len(kept) == len(result.topics):
+        return result
+    return replace(result, topics=kept)
+
+
 def _credit_for_node(node_id: str, coverage: dict) -> tuple[float, TopicStatus]:
     per_step = coverage.get("per_step", {}) or {}
     procedure_scores = coverage.get("procedure_scores", {}) or {}
@@ -224,9 +314,14 @@ def compute_topic_score(
     set are excluded from the denominator (weight 0) and reported with status
     ``unprobed``: in the pilot 31% of graded nodes had no row at all and scored
     ``missing`` 85% of the time, so students were failing on topics nobody
-    raised. ``None`` (feature not wired / ledger read failed) reproduces the
-    pre-fix result byte for byte, and so does a set that happens to cover every
-    graded node.
+    raised. The exclusion is gated by ``_probe_floor`` so a collapsed ledger can
+    never renormalize one node into the whole grade.
+
+    ``None`` (feature not wired / ledger read failed) reproduces the pre-fix
+    GRADE ARITHMETIC exactly — score, letter, per-topic credit/weight/status —
+    and so does a set covering every graded node. It is NOT a byte-identical
+    payload: ``TopicCredit.reference_text`` (D2) is additive and is populated
+    from the credit alone, independently of ``asked_node_ids``.
     """
     graded_nodes = [node for node in reference_nodes if node.node_type in _GRADED_NODE_TYPES]
     if not graded_nodes:
@@ -257,22 +352,25 @@ def compute_topic_score(
     # P1.2b safety net (2026-08-07): the denominator is the PROBED subset — the
     # graded nodes the question ledger actually engaged with this attempt. The
     # rest stay in ``topics`` (so the artifact and the UI can say "not part of
-    # this grade") with weight 0 and status ``unprobed``. Degenerate case: a
-    # ledger naming none of the graded nodes would leave an empty denominator,
-    # so fall back to grading every adjudicated node — the safety net must never
-    # make a Done ungradeable.
+    # this grade") with weight 0 and status ``unprobed``.
+    #
+    # The shrink only happens ABOVE the floor (`_probe_floor`): too few probed
+    # nodes and the full adjudicated denominator is restored, so neither an
+    # empty denominator nor a one-node denominator can ever be served.
     # Kept as an ORDERED list (not a set) so weight normalization sums the same
     # floats in the same order on every run — the grade must be reproducible.
     probed_order = [node.node_id for node in graded_nodes]
     if asked_node_ids is not None:
         probed = [node_id for node_id in probed_order if node_id in asked_node_ids]
-        if probed:
+        required = _probe_floor(len(graded_nodes))
+        if len(probed) >= required:
             probed_order = probed
         else:
             _LOG.warning(
-                "apollo_topic_score_no_probed_graded_node graded=%d ledger_nodes=%d",
+                "apollo_topic_score_probe_floor_not_met graded=%d probed=%d required=%d",
                 len(graded_nodes),
-                len(asked_node_ids),
+                len(probed),
+                required,
             )
     probed_ids = frozenset(probed_order)
 
@@ -297,13 +395,12 @@ def compute_topic_score(
                 misconceptions=(),
                 evidence_span=(evidence_spans or {}).get(node.node_id),
                 hoot_assisted=bool(assist_map.get(node.node_id, False)),
-                reference_text=(
-                    reference_statement_for(node)
-                    if credit < REFERENCE_TEXT_CREDIT_THRESHOLD
-                    else None
-                ),
             )
         )
+
+    # D2 reveal LAST: eligibility is per-topic but the cap is per-attempt, so it
+    # can only be applied once every topic's credit and status is final.
+    topics = _reveal_reference_text(topics, {node.node_id: node for node in graded_nodes})
 
     score = int(round(_clamp01(coverage_component) * 100))
     return TopicScoreResult(
@@ -317,11 +414,14 @@ def compute_topic_score(
 
 __all__ = [
     "CENTRALITY_W_MIN",
+    "MAX_REFERENCE_TEXT_REVEALS",
+    "MIN_PROBED_GRADED_NODES",
     "REFERENCE_TEXT_CREDIT_THRESHOLD",
     "TopicCredit",
     "TopicMisconception",
     "TopicScoreResult",
     "compute_centrality",
     "compute_topic_score",
+    "graded_topics_only",
     "reference_statement_for",
 ]

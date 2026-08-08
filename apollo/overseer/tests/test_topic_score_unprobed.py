@@ -14,21 +14,29 @@
 * **reference_text** — post-grade closure (D2): a topic scoring below 0.6
   carries its reference statement so the UI can render "what full credit looks
   like". Never emitted for a topic that already earned ≥ 0.6, and never a full
-  worked solution — one node's statement only.
+  worked solution — one node's statement only, and at most
+  ``MAX_REFERENCE_TEXT_REVEALS`` statements per attempt.
 
-``asked_node_ids=None`` (the ledger fetch failed / feature not wired) must be
-byte-identical to the pre-fix result.
+``asked_node_ids=None`` (the ledger fetch failed / feature not wired) leaves the
+grade arithmetic byte-identical to the pre-fix result.
 """
 
 from __future__ import annotations
+
+import dataclasses
 
 import pytest
 
 from apollo.ontology import KGGraph, build_node
 from apollo.overseer.topic_score import (
+    MAX_REFERENCE_TEXT_REVEALS,
+    MIN_PROBED_GRADED_NODES,
     REFERENCE_TEXT_CREDIT_THRESHOLD,
+    TopicCredit,
+    _reveal_reference_text,
     compute_centrality,
     compute_topic_score,
+    graded_topics_only,
     reference_statement_for,
 )
 
@@ -96,46 +104,53 @@ def _coverage(*node_ids: str, scores: dict[str, float] | None = None) -> dict:
 
 
 def test_never_probed_node_is_weight_zero_and_marked_unprobed():
-    asked, never_asked = _equation("eq.asked"), _equation("eq.never")
-    nodes = [asked, never_asked]
-
+    """4 graded nodes, 3 probed — comfortably over the floor, so the never-probed
+    node leaves the denominator and the probed three renormalize to 1.0."""
+    nodes = [_equation(f"eq.{i}") for i in range(3)] + [_equation("eq.never")]
     result = compute_topic_score(
-        coverage=_coverage("eq.asked", "eq.never", scores={"eq.asked": 1.0, "eq.never": 0.0}),
+        coverage=_coverage(
+            "eq.0",
+            "eq.1",
+            "eq.2",
+            "eq.never",
+            scores={"eq.0": 1.0, "eq.1": 1.0, "eq.2": 1.0, "eq.never": 0.0},
+        ),
         reference_nodes=nodes,
         centrality=compute_centrality(KGGraph(nodes=nodes)),
-        asked_node_ids=frozenset({"eq.asked"}),
+        asked_node_ids=frozenset({"eq.0", "eq.1", "eq.2"}),
     )
 
     by_key = {topic.canonical_key: topic for topic in result.topics}
     assert by_key["eq.never"].weight == 0.0
     assert by_key["eq.never"].status == "unprobed"
-    # The probed node now carries the WHOLE denominator: 1.0 credit -> 100.
-    assert by_key["eq.asked"].weight == pytest.approx(1.0)
+    assert sum(topic.weight for topic in result.topics) == pytest.approx(1.0)
     assert result.score == 100
-    assert result.letter == "A+"
+    # Pre-fix the same attempt scored 75 (the never-raised node dragged it down).
 
 
 def test_unprobed_node_still_appears_in_topics_for_the_artifact():
-    nodes = [_equation("eq.asked"), _equation("eq.never")]
+    nodes = [_equation("eq.0"), _equation("eq.1"), _equation("eq.never")]
     result = compute_topic_score(
-        coverage=_coverage("eq.asked", "eq.never", scores={"eq.asked": 1.0}),
+        coverage=_coverage("eq.0", "eq.1", "eq.never", scores={"eq.0": 1.0, "eq.1": 1.0}),
         reference_nodes=nodes,
         centrality=compute_centrality(KGGraph(nodes=nodes)),
-        asked_node_ids=frozenset({"eq.asked"}),
+        asked_node_ids=frozenset({"eq.0", "eq.1"}),
     )
 
-    assert [topic.canonical_key for topic in result.topics] == ["eq.asked", "eq.never"]
+    assert [topic.canonical_key for topic in result.topics] == ["eq.0", "eq.1", "eq.never"]
 
 
 def test_unprobed_node_never_contributes_credit_even_when_adjudicated_positive():
     """A never-asked node cannot raise the grade either — the denominator is
     the probed set, so its credit is reported but unweighted."""
-    nodes = [_equation("eq.asked"), _equation("eq.never")]
+    nodes = [_equation("eq.0"), _equation("eq.1"), _equation("eq.never")]
     result = compute_topic_score(
-        coverage=_coverage("eq.asked", "eq.never", scores={"eq.asked": 0.0, "eq.never": 1.0}),
+        coverage=_coverage(
+            "eq.0", "eq.1", "eq.never", scores={"eq.0": 0.0, "eq.1": 0.0, "eq.never": 1.0}
+        ),
         reference_nodes=nodes,
         centrality=compute_centrality(KGGraph(nodes=nodes)),
-        asked_node_ids=frozenset({"eq.asked"}),
+        asked_node_ids=frozenset({"eq.0", "eq.1"}),
     )
 
     by_key = {topic.canonical_key: topic for topic in result.topics}
@@ -144,7 +159,15 @@ def test_unprobed_node_never_contributes_credit_even_when_adjudicated_positive()
     assert result.score == 0
 
 
-def test_asked_node_ids_none_is_byte_identical_to_the_pre_fix_result():
+def test_asked_node_ids_none_leaves_the_grade_arithmetic_unchanged():
+    """``None`` == omitted == the pre-fix denominator.
+
+    NOT a claim of byte-identical PAYLOAD: `TopicCredit` gained the additive
+    `reference_text`, which is populated from the credit alone and so appears in
+    both of these results. What is pinned here is the grade arithmetic — score,
+    letter, per-topic weight and status — plus the absence of any `unprobed`
+    row, which is what a replay diff against the pre-fix arm must match.
+    """
     nodes = [_equation("eq.one"), _equation("eq.two")]
     coverage = _coverage("eq.one", "eq.two", scores={"eq.one": 1.0, "eq.two": 0.0})
     centrality = compute_centrality(KGGraph(nodes=nodes))
@@ -160,6 +183,88 @@ def test_asked_node_ids_none_is_byte_identical_to_the_pre_fix_result():
     assert explicit_none == baseline
     assert baseline.score == 50
     assert all(topic.status != "unprobed" for topic in baseline.topics)
+    # The additive field IS present on the weak topic — the pre-fix payload had
+    # no such key at all, so "byte-identical" is true of the arithmetic only.
+    by_key = {topic.canonical_key: topic for topic in baseline.topics}
+    assert by_key["eq.two"].reference_text is not None
+    assert dataclasses.replace(by_key["eq.two"], reference_text=None).reference_text is None
+
+
+# --- P1.2b floor: a collapsed denominator is never a free A+ ----------------
+
+
+def test_single_probed_node_does_not_collapse_the_denominator(caplog):
+    """The exploit the floor exists to close.
+
+    A student who explains ONE of five graded nodes and stops (or whose
+    auto-done fires before the loop mints any other ledger row) must not be
+    graded on that one node alone — that would make bailing out early the
+    highest-scoring strategy. Below the floor the FULL adjudicated denominator
+    is restored, so the attempt scores 20 (F), not 100 (A+).
+    """
+    nodes = [_equation(f"eq.{i}") for i in range(5)]
+    with caplog.at_level("WARNING"):
+        result = compute_topic_score(
+            coverage=_coverage(
+                *[f"eq.{i}" for i in range(5)],
+                scores={"eq.0": 1.0, "eq.1": 0.0, "eq.2": 0.0, "eq.3": 0.0, "eq.4": 0.0},
+            ),
+            reference_nodes=nodes,
+            centrality=compute_centrality(KGGraph(nodes=nodes)),
+            asked_node_ids=frozenset({"eq.0"}),
+        )
+
+    assert result.score == 20
+    assert result.letter == "F"
+    assert all(topic.status != "unprobed" for topic in result.topics)
+    assert "apollo_topic_score_probe_floor_not_met" in caplog.text
+    assert "probed=1 required=3" in caplog.text
+
+
+def test_floor_is_half_the_graded_nodes_rounded_up():
+    """3 graded / 2 probed clears `ceil(3/2) == 2`, so P1.2b applies."""
+    nodes = [_equation("eq.0"), _equation("eq.1"), _equation("eq.never")]
+    result = compute_topic_score(
+        coverage=_coverage("eq.0", "eq.1", "eq.never", scores={"eq.0": 1.0, "eq.1": 1.0}),
+        reference_nodes=nodes,
+        centrality=compute_centrality(KGGraph(nodes=nodes)),
+        asked_node_ids=frozenset({"eq.0", "eq.1"}),
+    )
+
+    assert result.score == 100
+    assert {t.canonical_key for t in result.topics if t.status == "unprobed"} == {"eq.never"}
+
+
+def test_floor_never_drops_below_two_probed_nodes():
+    """2 graded / 1 probed fails the absolute floor even though it is half the
+    nodes: a single node is too thin a denominator to carry a whole grade."""
+    nodes = [_equation("eq.0"), _equation("eq.never")]
+    result = compute_topic_score(
+        coverage=_coverage("eq.0", "eq.never", scores={"eq.0": 1.0}),
+        reference_nodes=nodes,
+        centrality=compute_centrality(KGGraph(nodes=nodes)),
+        asked_node_ids=frozenset({"eq.0"}),
+    )
+
+    assert MIN_PROBED_GRADED_NODES == 2
+    assert result.score == 50
+    assert all(topic.status != "unprobed" for topic in result.topics)
+
+
+def test_a_one_graded_node_problem_is_never_blocked_by_the_absolute_floor():
+    """The floor is capped by the graded count, so a 1-node rubric whose single
+    node WAS probed still passes (the filter is a no-op there anyway)."""
+    nodes = [_equation("eq.only")]
+    result = compute_topic_score(
+        coverage=_coverage("eq.only", scores={"eq.only": 1.0}),
+        reference_nodes=nodes,
+        centrality=compute_centrality(KGGraph(nodes=nodes)),
+        asked_node_ids=frozenset({"eq.only"}),
+    )
+
+    assert result.score == 100
+    assert result.topics[0].weight == pytest.approx(1.0)
+    assert result.topics[0].status != "unprobed"
 
 
 def test_no_graded_node_probed_falls_back_to_grading_all_of_them(caplog):
@@ -178,7 +283,8 @@ def test_no_graded_node_probed_falls_back_to_grading_all_of_them(caplog):
 
     assert result.score == 50
     assert all(topic.status != "unprobed" for topic in result.topics)
-    assert "apollo_topic_score_no_probed_graded_node" in caplog.text
+    assert "apollo_topic_score_probe_floor_not_met" in caplog.text
+    assert "probed=0" in caplog.text
 
 
 def test_ungraded_types_are_untouched_by_the_probe_filter():
@@ -248,18 +354,121 @@ def test_reference_text_boundary_is_exclusive_at_the_threshold():
     assert by_key["eq.below"].reference_text is not None
 
 
-def test_unprobed_topic_also_exposes_its_reference_statement():
-    nodes = [_equation("eq.asked"), _procedure("p.never", action="Balance the two sides")]
+def test_unprobed_topic_does_not_expose_its_reference_statement():
+    """An `unprobed` topic is explicitly "not part of this grade", so revealing
+    its answer is pure leakage with no diagnostic value — and it would widen the
+    D2 reveal beyond the nodes the student was actually assessed on."""
+    nodes = [
+        _equation("eq.0"),
+        _equation("eq.1"),
+        _procedure("p.never", action="Balance the two sides"),
+    ]
     result = compute_topic_score(
-        coverage=_coverage("eq.asked", "p.never", scores={"eq.asked": 1.0}),
+        coverage=_coverage("eq.0", "eq.1", "p.never", scores={"eq.0": 1.0, "eq.1": 1.0}),
         reference_nodes=nodes,
         centrality=compute_centrality(KGGraph(nodes=nodes)),
-        asked_node_ids=frozenset({"eq.asked"}),
+        asked_node_ids=frozenset({"eq.0", "eq.1"}),
     )
 
     by_key = {topic.canonical_key: topic for topic in result.topics}
     assert by_key["p.never"].status == "unprobed"
-    assert by_key["p.never"].reference_text == "Balance the two sides"
+    assert by_key["p.never"].credit == 0.0
+    assert by_key["p.never"].reference_text is None
+
+
+def test_reveal_is_capped_so_the_union_is_never_the_worked_solution():
+    """On a wholly-failed attempt EVERY graded topic is below the threshold, so
+    an uncapped per-topic reveal would hand back the entire graded reference
+    solution — convertible into a grade via restart (best-grade-wins). At most
+    `MAX_REFERENCE_TEXT_REVEALS` statements ship, chosen lowest-credit first."""
+    nodes = [_equation(f"eq.{i}", label=f"L{i}") for i in range(5)]
+    result = compute_topic_score(
+        coverage=_coverage(
+            *[f"eq.{i}" for i in range(5)],
+            scores={"eq.0": 0.0, "eq.1": 0.1, "eq.2": 0.2, "eq.3": 0.3, "eq.4": 0.4},
+        ),
+        reference_nodes=nodes,
+        centrality=compute_centrality(KGGraph(nodes=nodes)),
+    )
+
+    revealed = [t.canonical_key for t in result.topics if t.reference_text is not None]
+    assert MAX_REFERENCE_TEXT_REVEALS == 2
+    assert len(revealed) == MAX_REFERENCE_TEXT_REVEALS
+    assert revealed == ["eq.0", "eq.1"]  # lowest credit first, reference order on ties
+
+
+def test_reveal_skips_nodes_that_render_no_statement_and_takes_the_next():
+    """The cap counts STATEMENTS, not candidates: a prose-less node must not
+    consume one of the two slots.
+
+    Every graded content model requires at least one non-empty prose field, so a
+    statement-less node is unreachable through `build_node` — the helper is
+    exercised directly with a stub to pin the defensive branch.
+    """
+
+    class _Blank:
+        class content:  # noqa: N801 - test stub
+            pass
+
+    def _topic(key: str, credit: float) -> TopicCredit:
+        return TopicCredit(
+            canonical_key=key,
+            display_name=key,
+            credit=credit,
+            status="missing",
+            weight=0.5,
+            misconceptions=(),
+        )
+
+    topics = [_topic("eq.blank", 0.0), _topic("eq.a", 0.1), _topic("eq.b", 0.2)]
+    nodes_by_id = {
+        "eq.blank": _Blank(),
+        "eq.a": _equation("eq.a", label="A"),
+        "eq.b": _equation("eq.b", label="B"),
+    }
+
+    revealed = [
+        topic.canonical_key
+        for topic in _reveal_reference_text(topics, nodes_by_id)
+        if topic.reference_text is not None
+    ]
+    assert revealed == ["eq.a", "eq.b"]
+
+
+# --- graded_topics_only: the narrative/feedback view ------------------------
+
+
+def test_graded_topics_only_drops_unprobed_rows():
+    """P2.1 consistency: the narrator and the structured feedback must never be
+    handed a topic the payload simultaneously labels "not part of this grade"."""
+    nodes = [_equation("eq.0"), _equation("eq.1"), _equation("eq.never")]
+    result = compute_topic_score(
+        coverage=_coverage("eq.0", "eq.1", "eq.never", scores={"eq.0": 1.0, "eq.1": 1.0}),
+        reference_nodes=nodes,
+        centrality=compute_centrality(KGGraph(nodes=nodes)),
+        asked_node_ids=frozenset({"eq.0", "eq.1"}),
+    )
+
+    narrated = graded_topics_only(result)
+    assert [t.canonical_key for t in narrated.topics] == ["eq.0", "eq.1"]
+    # Score/letter are the already-computed grade — never recomputed here.
+    assert (narrated.score, narrated.letter) == (result.score, result.letter)
+    assert result.topics[2].status == "unprobed"  # the input is not mutated
+
+
+def test_graded_topics_only_is_identity_without_unprobed_rows():
+    nodes = [_equation("eq.0"), _equation("eq.1")]
+    result = compute_topic_score(
+        coverage=_coverage("eq.0", "eq.1", scores={"eq.0": 1.0, "eq.1": 0.0}),
+        reference_nodes=nodes,
+        centrality=compute_centrality(KGGraph(nodes=nodes)),
+    )
+
+    assert graded_topics_only(result) == result
+
+
+def test_graded_topics_only_tolerates_a_none_result():
+    assert graded_topics_only(None) is None
 
 
 @pytest.mark.parametrize(

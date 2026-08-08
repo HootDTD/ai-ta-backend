@@ -26,14 +26,23 @@ misconception detector contributes nothing, so every topic carries an empty
 - `compute_topic_score(*, coverage, reference_nodes, centrality, evidence_spans=
   None, asked_node_ids=None) -> TopicScoreResult` — the live scorer.
   `asked_node_ids` (2026-08-07 P1.2b) is the `frozenset` of reference node ids
-  with a `QuestionOpportunity` row this attempt; `None` = feature not wired
-  (byte-identical to the pre-fix result).
+  with a `QuestionOpportunity` row this attempt; `None` = feature not wired,
+  which reproduces the pre-fix GRADE ARITHMETIC (score / letter / per-topic
+  credit, weight, status) exactly. It is not a byte-identical payload: the
+  additive `reference_text` is populated from the credit alone, independently
+  of `asked_node_ids`, so a replay diff sees it on any attempt with a weak
+  topic.
 - `compute_centrality(reference_graph) -> {node_id: weight}` — degree/position
   centrality over the reference `KGGraph` used to weight topics.
 - `reference_statement_for(node) -> str | None` — renders ONE node's reference
   statement (ordered content fields joined with an em dash). Never the problem's
   worked solution.
-- `REFERENCE_TEXT_CREDIT_THRESHOLD = 0.6` — the D2 reveal gate.
+- `graded_topics_only(result) -> result` — the narrative/feedback VIEW: the same
+  grade with `unprobed` topics removed (`None` passes through). Used by
+  `done.py` for `generate_diagnostic` + `add_remediation_reviews` only.
+- `REFERENCE_TEXT_CREDIT_THRESHOLD = 0.6` — the per-topic D2 reveal gate;
+  `MAX_REFERENCE_TEXT_REVEALS = 2` — the per-attempt cap.
+- `MIN_PROBED_GRADED_NODES = 2` — the absolute half of the P1.2b probe floor.
 - `TopicScoreResult`, `TopicCredit`, `TopicMisconception` value objects.
 - `_GRADED_NODE_TYPES` / `_display_name_for` — consumed by
   [transcript-coverage](transcript-coverage.md).
@@ -90,19 +99,39 @@ flag, and its additive `reference_text` (string or null). INTERACTION5:
   artifact and the UI need to say "not part of this grade"). It can neither
   lower nor raise the score. Ordering note: the probed list is kept in reference
   order, never a set, so weight normalization sums the same floats every run —
-  the grade must be reproducible. Degenerate case (the ledger names NO graded
-  node, e.g. every ask went to `definition` nodes): fall back to grading every
-  adjudicated node and log `apollo_topic_score_no_probed_graded_node` — the
-  safety net must never make a Done ungradeable. `asked_node_ids=None` is
-  byte-identical to the pre-fix result. P0.5's abstain filter runs FIRST, so an
+  the grade must be reproducible. P0.5's abstain filter runs FIRST, so an
   un-adjudicated node is dropped entirely rather than reported `unprobed`.
-- **`reference_text` is credit-gated, not caller-gated (D2).** A topic with
-  `credit < REFERENCE_TEXT_CREDIT_THRESHOLD` (0.6) carries
-  `reference_statement_for(node)`; at or above it the field is `None`. The gate
-  lives here (this module owns the credit) so the serializer stays a dumb shape
-  mapper and both surfaces can never disagree. The reveal is ONE node's
-  statement — the full worked solution is never exposed, and nothing is exposed
+- **…but only above the probe FLOOR (`_probe_floor`).** Shrinking the
+  denominator requires `>= MIN_PROBED_GRADED_NODES` AND `>= ceil(graded/2)`
+  probed nodes (capped by the graded count, so a 1-node rubric is never
+  blocked). Below it the FULL adjudicated denominator is restored and
+  `apollo_topic_score_probe_floor_not_met` is logged — this subsumes the
+  zero-probed degenerate case, so the safety net still never makes a Done
+  ungradeable. Without the floor, a student who explains 1 of 5 graded nodes
+  and stops renormalizes that node to weight 1.0 and scores A+, making bailing
+  out early the highest-scoring strategy; on the 135 Week-4 prod attempts
+  P1.2b changes the denominator on 16 and 8 of those are exactly that case.
+- **`reference_text` is credit-gated AND capped (D2).** Per topic: `credit <
+  REFERENCE_TEXT_CREDIT_THRESHOLD` (0.6) and not `unprobed` (a topic excluded
+  from the grade gets no reveal — leakage with no diagnostic value). Per
+  attempt: at most `MAX_REFERENCE_TEXT_REVEALS` (2) statements, lowest credit
+  first, then most central, then reference order; a node rendering no prose is
+  skipped without consuming a slot. The cap is what makes "never the full worked
+  solution" true on a wholly-failed attempt, where EVERY topic is below the
+  threshold and the union of an uncapped reveal would be the whole graded
+  reference solution (still convertible into a grade while `restart_problem`
+  is reachable from REPORT and browse is best-grade-wins — D3, deferred to P3).
+  The gate lives here (this module owns the credit) so the serializer stays a
+  dumb shape mapper and both surfaces can never disagree. Nothing is exposed
   pre-grade.
+- **`unprobed` topics are filtered OUT of narration, never out of the payload.**
+  They carry credit 0, so any consumer that enumerates topics as gaps would name
+  one as missed while the same payload calls it "not part of this grade" (defect
+  U2). `graded_topics_only` is the view `done.py` hands to `generate_diagnostic`
+  and `add_remediation_reviews`; the served `topics[]` and
+  `scores.topic_score.topics` stay complete. The artifact's `node_ledger` files
+  them under their own status — see
+  [artifact-build](../grading/artifact-build.md).
 - Centrality is cycle-safe: `DEPENDS_ON` out-degree + `PRECEDES` topological
   position, combined and rescaled into `[CENTRALITY_W_MIN, 1]`.
 
