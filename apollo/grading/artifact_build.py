@@ -14,8 +14,30 @@ GRADER_USED_LLM_TRANSCRIPT = "llm_transcript"
 _GRADER_VERSION_LLM_FALLBACK = "llm-fallback-v1"
 
 
+LEDGER_STATUS_UNPROBED = "unprobed"
+
+
 def _normalized_score(value: float) -> float:
     return round(max(0.0, min(1.0, value)), 6)
+
+
+def _unprobed_keys(topic_score: TopicScoreResult | None) -> frozenset[str]:
+    """Canonical keys P1.2b left out of the grade (2026-08-07 bimodal fix).
+
+    `coverage["per_step"]` still carries these nodes — the adjudicator DID
+    return verdicts for them — so without this they would land in `node_ledger`
+    as `unresolved` and render into the scorecard's *missing or unclear* list as
+    "Next time, explain X", while the very same payload's `topics[]` says X was
+    not part of this grade. They keep a ledger row (the record must stay
+    complete) under their own status instead, which every status-filtered
+    consumer (`projections/scorecard`, `projections/mastery`,
+    `projections/classroom`) already ignores by construction.
+    """
+    if topic_score is None:
+        return frozenset()
+    return frozenset(
+        topic.canonical_key for topic in topic_score.topics if topic.status == "unprobed"
+    )
 
 
 def build_llm_artifact(
@@ -29,9 +51,18 @@ def build_llm_artifact(
     """Build the canonical artifact from transcript coverage and topic scoring."""
     per_step: dict[str, str] = coverage.get("per_step") or {}
     confidences: dict[str, float] = coverage.get("confidences") or {}
-    covered = [key for key, status in per_step.items() if status == "covered"]
-    missing = [key for key, status in per_step.items() if status != "covered"]
-    total = len(per_step)
+    unprobed_keys = _unprobed_keys(topic_score)
+    covered = [
+        key for key, status in per_step.items() if status == "covered" and key not in unprobed_keys
+    ]
+    missing = [
+        key for key, status in per_step.items() if status != "covered" and key not in unprobed_keys
+    ]
+    unprobed = [key for key in per_step if key in unprobed_keys]
+    # `node_coverage` is a ratio over the nodes that were actually graded, so an
+    # unprobed node must leave BOTH sides of it — otherwise excluding a node
+    # from the grade would still depress the artifact's coverage number.
+    total = len(covered) + len(missing)
     node_coverage = (len(covered) / total) if total else 0.0
     overall_score = (rubric or {}).get("overall", {}).get("score")
     score = (
@@ -47,13 +78,18 @@ def build_llm_artifact(
             "confidence": confidences.get(key),
             "evidence_span": None,
         }
-        for status, keys in (("credited", covered), ("unresolved", missing))
+        for status, keys in (
+            ("credited", covered),
+            ("unresolved", missing),
+            (LEDGER_STATUS_UNPROBED, unprobed),
+        )
         for key in keys
     ]
     _LOG.debug(
-        "build_llm_artifact node_ledger: %d credited, %d unresolved",
+        "build_llm_artifact node_ledger: %d credited, %d unresolved, %d unprobed",
         len(covered),
         len(missing),
+        len(unprobed),
     )
     artifact = {
         "grader_used": GRADER_USED_LLM_FALLBACK,

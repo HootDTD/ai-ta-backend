@@ -85,12 +85,14 @@ Ordered grade assembly (each step delegates to the owner doc):
 6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative plus, on
    topic-score JSON success, structured per-topic feedback from the student's
    verbatim utterances; the same `course_evidence` lets feedback cite the course.
-   With `INTERACTION3` enabled and the problem concept
-   allowed by `INTERACTION_CONCEPTS`, one best-effort remediation pass decorates
-   at most three weak topics with citation-only review pointers. Called via
-   `await asyncio.to_thread(generate_diagnostic, ...)` (2026-08-04) — previously
-   a synchronous call inside this `async def` handler that blocked the event loop
-   for the narrative LLM's full round trip.
+   It is handed `graded_topics_only(topic_score)`, NOT the full result: an
+   `unprobed` topic is excluded from the grade, so narrating it as a gap would
+   contradict the served `topics[]` in the same payload (P2.1/U2). The
+   remediation pass below gets that same view. With `INTERACTION3` enabled and
+   the problem concept allowed by `INTERACTION_CONCEPTS`, one best-effort pass
+   decorates at most three weak topics with citation-only review pointers. Run
+   via `asyncio.to_thread` (2026-08-04) so the narrative LLM's round trip never
+   blocks the event loop.
 7. XP: `compute_xp_earned`/`compute_progress_envelope`/`apply_xp`
    (`overseer/xp` + `persistence/progress-repo`); reattempt detection via
    `has_prior_graded_attempt` (`persistence/done-write-linkage`).
@@ -101,9 +103,8 @@ Ordered grade assembly (each step delegates to the owner doc):
 ## Invariants & gotchas
 
 - **The transcript adjudicator is THE only grading lane.** A `CoverageGradingError`
-  is NOT caught — it propagates to the retryable 503 handler; grading never falls
-  back to an empty-graph or legacy-coverage grade. A degraded KG never yields a
-  false F (grading reads the transcript, not the frozen graph).
+  propagates to the retryable 503 handler — never a fallback to an empty-graph or
+  legacy grade. A degraded KG never yields a false F (grading reads the transcript).
 - **`_compute_topic_score_safe` is soft-fail**: any exception → `topic_score=None`,
   `served_rubric is rubric` (byte-identical), and `topics` is absent (not null).
 - **Structured feedback is additive and topic-only:** successful topic JSON is
@@ -138,19 +139,17 @@ Ordered grade assembly (each step delegates to the owner doc):
   aside → key absent, provenance byte-identical.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
   coverage, served_overall}` plus `auto_done: true` iff the questioning engine
-  (not the student) triggered this Done (2026-08-07 P0.4 audit stamp; key
-  absent on a student Done, keeping those rows byte-identical). `served_overall` (2026-07-26) is a snapshot of
-  `served_rubric["overall"]` — the grade the student was actually shown (topic
-  score when it computed). Re-serving surfaces (`handlers/browse` grade cards,
-  `handlers/progress` recents) read the snapshot first and fall back to
-  `rubric.overall` for pre-snapshot rows; `rubric` itself deliberately stays
-  the RAW axis rubric for rerun/janitor consumers.
+  (not the student) triggered this Done (2026-08-07 P0.4 audit stamp; key absent
+  on a student Done, keeping those rows byte-identical). `served_overall`
+  (2026-07-26) snapshots `served_rubric["overall"]` — the grade actually shown.
+  Re-serving surfaces (`handlers/browse` cards, `handlers/progress` recents) read
+  the snapshot first, falling back to `rubric.overall` for pre-snapshot rows;
+  `rubric` stays the RAW axis rubric for rerun/janitor consumers.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
-- **`grading_provenance.reference_question_asides_used`** (additive; brief:
-  "Hint usage count lands in grading_provenance") reads
+- **`grading_provenance.reference_question_asides_used`** (additive) reads
   `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]`, defaulting to 0 — never
-  affects the score itself, just teacher-facing provenance.
+  affects the score, just teacher-facing provenance.
 
 ## Env flags
 

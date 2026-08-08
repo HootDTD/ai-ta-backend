@@ -46,7 +46,12 @@ from apollo.overseer.misconception import (
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.remediation import add_remediation_reviews
 from apollo.overseer.rubric import compute_rubric
-from apollo.overseer.topic_score import TopicScoreResult, compute_centrality, compute_topic_score
+from apollo.overseer.topic_score import (
+    TopicScoreResult,
+    compute_centrality,
+    compute_topic_score,
+    graded_topics_only,
+)
 from apollo.overseer.topic_score_serialize import serialize_topics
 from apollo.overseer.transcript_coverage import compute_transcript_coverage_with_spans
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
@@ -653,13 +658,20 @@ async def handle_done(
         _LOG.warning("apollo_narrative_utterances_fetch_failed attempt_id=%s", attempt.id)
         narrative_utterances = ()
 
+    # P2.1 consistency (2026-08-07): the narrator and the structured topic
+    # feedback see the GRADED topics only. An `unprobed` topic (P1.2b) carries
+    # credit 0 but is excluded from the grade and labelled "not part of this
+    # grade" in the served `topics[]` — narrating it as a gap would make one
+    # payload say both things at once. The served/artifact `topic_score` below
+    # is still the FULL result, so nothing is hidden from the UI or the record.
+    narrative_topic_score = graded_topics_only(topic_score)
     diagnostic_result = await asyncio.to_thread(
         generate_diagnostic,
         coverage=coverage,
         reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,
         rubric=rubric,
-        topic_score=topic_score,
+        topic_score=narrative_topic_score,
         student_utterances=narrative_utterances,
         course_evidence=evidence_block(course_evidence),
     )
@@ -679,14 +691,17 @@ async def handle_done(
     if (
         interaction3_enabled()
         and interaction_allowed_for_concept(problem.concept_id)
-        and topic_score is not None
+        and narrative_topic_score is not None
         and feedback is not None
     ):
         try:
             remediated_feedback = await add_remediation_reviews(
                 db=db,
                 search_space_id=sess.search_space_id,
-                topic_score=topic_score,
+                # Same graded-only view the feedback keys were generated from —
+                # a review pointer for an `unprobed` topic would point at
+                # something the grade explicitly excluded.
+                topic_score=narrative_topic_score,
                 feedback=feedback,
                 grounding_bundle=getattr(sess, "grounding_bundle", None),
             )
