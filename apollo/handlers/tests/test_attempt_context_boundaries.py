@@ -12,6 +12,7 @@ from apollo.handlers.next import handle_next
 from apollo.handlers.restart_problem import handle_restart_problem
 from apollo.persistence.models import (
     ProblemAttempt,
+    QuestionOpportunity,
     SessionPhase,
     SessionStatus,
     TutoringMessage,
@@ -34,6 +35,7 @@ async def db():
                     TutoringSession.__table__,
                     ProblemAttempt.__table__,
                     TutoringMessage.__table__,
+                    QuestionOpportunity.__table__,
                 ],
             )
         )

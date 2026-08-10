@@ -127,7 +127,13 @@ async def _persist_turn(
     student_msg: str,
     apollo_msg: str,
 ) -> None:
-    """Append the (student, apollo) turn pair atomically."""
+    """Append the (student, apollo) turn pair atomically.
+
+    Used by the SHORT lanes only (intent confirmations, aside cap/apology) —
+    the normal teaching path persists the student message up front instead
+    (`_persist_student_message`, bimodal-fix P0.3) because its LLM chain runs
+    10-17s and a Done clicked mid-turn would grade a transcript missing the
+    student's last message."""
     next_idx = await _next_turn_index(db, session_id)
     db.add(
         TutoringMessage(
@@ -147,6 +153,63 @@ async def _persist_turn(
             role="apollo",
             content=apollo_msg,
             turn_index=next_idx + 1,
+        )
+    )
+    await db.commit()
+
+
+async def _persist_student_message(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    course_id: int,
+    attempt_id: int,
+    content: str,
+) -> int:
+    """Persist the student's message in its own commit; returns its turn index.
+
+    Done-race fix (2026-08-07 bimodal-fix P0.3, defect I3): the teaching path
+    used to persist the (student, apollo) pair only at the END of the turn,
+    after 10-17s of LLM work — a Done clicked mid-turn graded a transcript
+    missing the student's last (usually best) message. Persisting the student
+    row BEFORE the parse/questioning chain closes that window. If the turn
+    later fails, the dangling student row is kept deliberately: the transcript
+    retains the student's words (grading-favorable), and the next turn's
+    history simply includes them."""
+    next_idx = await _next_turn_index(db, session_id)
+    db.add(
+        TutoringMessage(
+            session_id=session_id,
+            course_id=course_id,
+            attempt_id=attempt_id,
+            role="student",
+            content=content,
+            turn_index=next_idx,
+        )
+    )
+    await db.commit()
+    return next_idx
+
+
+async def _persist_apollo_reply(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    course_id: int,
+    attempt_id: int,
+    apollo_msg: str,
+) -> None:
+    """Append Apollo's reply for a teaching turn whose student message was
+    already persisted up front by `_persist_student_message` (P0.3)."""
+    next_idx = await _next_turn_index(db, session_id)
+    db.add(
+        TutoringMessage(
+            session_id=session_id,
+            course_id=course_id,
+            attempt_id=attempt_id,
+            role="apollo",
+            content=apollo_msg,
+            turn_index=next_idx,
         )
     )
     await db.commit()
@@ -628,6 +691,20 @@ async def handle_chat(
         return intent_response
 
     # ---- Normal teaching path -----------------------------------------
+    # Done-race fix (P0.3): persist the student message NOW, before the long
+    # parse + questioning LLM chain (10-17s), so a Done clicked mid-turn
+    # grades a transcript that already contains it. `history_pre` was loaded
+    # above, so the transcript handed to the question planner below does not
+    # double-count this message. Apollo's reply is appended at the end of the
+    # turn by `_persist_apollo_reply`.
+    student_turn_index = await _persist_student_message(
+        db,
+        session_id=session_id,
+        course_id=sess.course_id,
+        attempt_id=int(current_attempt.id),
+        content=message,
+    )
+
     # Cross-turn linking (WU-2B): read the CURRENT subgraph (everything taught
     # so far this attempt — the new turn's nodes aren't written until after
     # parsing) and project it into a GraphContext the parser threads in so it
@@ -674,7 +751,10 @@ async def handle_chat(
         attempt_id=current_attempt.id,
         stage="student_graph",
     )
-    next_idx = await _next_turn_index(db, session_id)
+    # The question ledger's turn bookkeeping keys off the STUDENT message's
+    # index — before P0.3 this was computed here (the index the pair-persist
+    # would assign); the early persist already fixed that same value.
+    next_idx = student_turn_index
 
     # One-call reference-driven question controller. The same model assesses
     # the full student transcript and writes Apollo's answer-safe next reply.
@@ -701,18 +781,20 @@ async def handle_chat(
     else:
         validated = "Thanks — I have enough to grade what you taught me."
 
-    await _persist_turn(
+    await _persist_apollo_reply(
         db,
         session_id=session_id,
         course_id=sess.course_id,
         attempt_id=int(current_attempt.id),
-        student_msg=message,
         apollo_msg=validated,
     )
     if decision.action == "done":
         from apollo.handlers.done import handle_done  # noqa: PLC0415
 
-        done_result = await handle_done(db=db, neo=neo, session_id=session_id)
+        # This Done was decided by the questioning engine (budget exhaustion /
+        # coverage-sufficient), not clicked by the student — stamp it for
+        # grade forensics (bimodal-fix P0.4).
+        done_result = await handle_done(db=db, neo=neo, session_id=session_id, auto_done=True)
         return {
             "apollo_reply": validated,
             "kg_entries_added": nodes_added,

@@ -13,7 +13,7 @@ related:
   - apollo/overseer/aside-penalty
   - apollo/ontology/graph
   - apollo/conversation/handlers/done
-last_verified: 2026-08-04
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -71,6 +71,17 @@ axes.
   Apollo-sourced, or cross-message-stitched spans are dropped.
 - **`_finite01` guards non-finite credits** — `json.loads` accepts `NaN`/`Infinity`
   literals; a non-finite value raises → `CoverageGradingError`.
+- **Omitted verdict = abstain, not zero (2026-08-07 P0.5, defect I5).**
+  `_adjudicate_all_graded` wraps the adjudication: a graded node missing from
+  `verdicts[]` triggers ONE semantic re-adjudication (first call's verdicts win
+  for nodes both returned; log key `transcript_coverage_missing_verdict`); a
+  node still missing is OMITTED from all coverage maps by
+  `_to_coverage_verdict` (the topic lane then drops it from the denominator —
+  see `topic-score`), never scored 0.0. No verdict for ANY graded node raises
+  `CoverageGradingError`; a retry that dies on provider errors degrades to
+  exclusion (partial verdicts are kept). The RAW legacy rubric reads an
+  omission as not-covered, acceptable because it is not served when the topic
+  score computes.
 - **No-fallback:** 2 provider attempts, then `CoverageGradingError(stage=
   "transcript_adjudication")` → the 503 retryable handler, never a fabricated
   grade. `negotiation_counts` are always zero (the transcript lane doesn't

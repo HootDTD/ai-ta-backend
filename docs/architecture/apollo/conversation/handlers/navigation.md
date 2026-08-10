@@ -9,7 +9,7 @@ related:
   - apollo/conversation/routing/errors
   - apollo/overseer/problem-selector
   - apollo/knowledge-graph/store
-last_verified: 2026-07-25
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -26,8 +26,11 @@ Two phase-transition handlers, both lazy-imported by `routing/router`.
   (`overseer/problem-selector`) and creates a new `ProblemAttempt`.
 - `handle_restart_problem(*, db, neo, session_id) -> dict` (`restart_problem.py`)
   — POST `/sessions/{id}/restart_problem`. Wipes the current attempt's KG
-  subgraph (`store.delete_subgraph`) + `TutoringMessage` rows but keeps the SAME
-  `ProblemAttempt` / problem / difficulty.
+  subgraph (`store.delete_subgraph`) + `TutoringMessage` rows + its
+  `QuestionOpportunity` ledger rows (2026-08-07, bimodal-fix defect I4: a
+  surviving ledger carried stale `times_asked` across the wipe, so a capped-out
+  pre-restart attempt auto-graded on its first post-restart message) but keeps
+  the SAME `ProblemAttempt` / problem / difficulty.
 
 ## Data flow
 
@@ -42,7 +45,7 @@ attempt `result="abandoned"` before selecting the next problem.
 - `handle_restart_problem` is **KG-native with no silent skip**: because the wipe
   targets the SAME `attempt_id`, a `KG_DEGRADED_ERRORS` is re-raised as
   `KGUnavailableError` (503) so stale nodes can't resurface — the Postgres
-  message-delete then never runs (nothing half-wiped).
+  message- and ledger-deletes then never run (nothing half-wiped).
 - Both reset `history_summary` / `history_summary_up_to_turn` to `None` (legacy
   columns only; never populated live).
 
