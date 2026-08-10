@@ -43,6 +43,7 @@ from apollo.hoot_bridge.reference_answer import (
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.problem_selector import list_problems_for_concept
+from apollo.overseer.topic_score import _GRADED_NODE_TYPES
 from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
 from apollo.persistence.models import ProblemAttempt, TutoringMessage, TutoringSession
@@ -86,6 +87,41 @@ async def _find_problem(
         if p.database_id == problem_id:
             return p
     raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
+
+
+def _graded_topic_counts(problem: Any, covered_topics: Any) -> tuple[int, int]:
+    """``(graded_topic_total, open_graded_topics)`` for the pre-Done coverage
+    meter (2026-08-07 bimodal-fix P2.2).
+
+    The student had no way to see how much of the problem was still unaddressed
+    before clicking Done. ``graded_topic_total`` counts only reference steps of a
+    GRADED type (`_GRADED_NODE_TYPES`) — `definition` / `variable_mapping` nodes
+    never enter the grade, so counting them would show a denominator unrelated to
+    the score. ``open_graded_topics`` subtracts the graded nodes the live tally
+    has marked ``understood`` (the same snapshot that drives `covered_topics`),
+    so a celebrated ungraded topic can never make the meter read "done".
+
+    Derived from data this turn already holds — no extra query, no extra LLM
+    call. Display-only: any failure to derive either side logs and degrades to
+    ``(0, 0)`` rather than breaking a teaching turn — the covered-topics walk is
+    inside the guard too, so a `QuestionDecision` shape change (rolling deploy,
+    test double, controller regression) can never 500 an ordinary turn for the
+    sake of a meter."""
+    try:
+        graded_ids = {
+            str(step.id)
+            for step in problem.reference_solution
+            if step.entry_type in _GRADED_NODE_TYPES
+        }
+        understood_ids = {topic.node_id for topic in covered_topics}
+    except Exception:
+        _LOG.warning(
+            "apollo_graded_topic_counts_failed problem=%r",
+            getattr(problem, "id", None),
+            exc_info=True,
+        )
+        return 0, 0
+    return len(graded_ids), len(graded_ids - understood_ids)
 
 
 async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
@@ -776,6 +812,7 @@ async def handle_chat(
         {"node_id": topic.node_id, "display_name": topic.display_name}
         for topic in decision.covered_topics
     ]
+    graded_topic_total, open_graded_topics = _graded_topic_counts(problem, decision.covered_topics)
     if decision.action == "ask":
         validated = decision.question or "Can you explain that part one more time?"
     else:
@@ -800,6 +837,8 @@ async def handle_chat(
             "kg_entries_added": nodes_added,
             "kg": student_graph.model_dump(mode="json"),
             "covered_topics": covered_topics,
+            "graded_topic_total": graded_topic_total,
+            "open_graded_topics": open_graded_topics,
             "intent_executed": {"intent": "done", "result": done_result},
         }
     return {
@@ -807,5 +846,7 @@ async def handle_chat(
         "kg_entries_added": nodes_added,
         "kg": student_graph.model_dump(mode="json"),
         "covered_topics": covered_topics,
+        "graded_topic_total": graded_topic_total,
+        "open_graded_topics": open_graded_topics,
         "question_target": decision.target_node_id,
     }

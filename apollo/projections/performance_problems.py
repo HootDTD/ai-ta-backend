@@ -12,6 +12,17 @@ function, never a copy, so the drill-down can never disagree with the grade the
 student was actually shown (this mirrors ``transcript_coverage.py``, which
 already imports the same private scorer helpers).
 
+``_credit_for_node`` alone is not the whole story, though: it can only return
+covered/partial/missing, and since P1.2b a graded node can also have been
+EXCLUDED from an attempt's own grade (``unprobed`` — Apollo never asked about
+it). Re-deriving from ``coverage`` alone therefore reported a class-wide
+"missed" on a topic no grade counted and nobody was asked, and the stacked bar
+stopped reconciling with the letter distribution beside it. Each attempt's own
+excluded key set is snapshotted by ``done.py`` into
+``diagnostic_report -> 'unprobed_node_ids'`` and threaded in here as
+:class:`AttemptNodes`, so the drill-down reports it as its own bucket instead of
+as failure.
+
 Everything but the two thin ``load_*`` coroutines is a **pure function on plain
 rows / prebuilt nodes**, so the projection tests exercise it with hand-computed
 fixtures and no database. ``performance.py``'s assembler composes this block and
@@ -22,6 +33,7 @@ two never disagree.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
@@ -47,6 +59,25 @@ _STATUS_TO_BUCKET: dict[str, str] = {
     "partial": "partial",
     "missing": "missed",
 }
+
+#: The bucket for a node P1.2b dropped from that attempt's own grade. It is not
+#: a verdict, so it is counted separately and left OUT of ``graded``.
+_UNPROBED_BUCKET = "unprobed"
+
+
+@dataclass(frozen=True)
+class AttemptNodes:
+    """One included attempt's per-node inputs for the drill-down.
+
+    ``coverage`` is that attempt's stored ``diagnostic_report -> 'coverage'``
+    (already checked usable); ``unprobed`` is the node ids that attempt's own
+    grade excluded (``diagnostic_report -> 'unprobed_node_ids'``, P1.2b). Empty
+    for every attempt graded before P1.2b existed, which reproduces the original
+    coverage-only tally exactly.
+    """
+
+    coverage: dict[str, Any]
+    unprobed: frozenset[str] = field(default_factory=frozenset)
 
 
 def _round1(value: Any) -> float:
@@ -78,19 +109,39 @@ def _usable_coverage(coverage: Any) -> dict[str, Any] | None:
     return None
 
 
-def aggregate_nodes(
-    graded_nodes: list[Node], coverages: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Per graded reference node, tally understood/partial/missed over each
-    included attempt's coverage using the SAME ``_credit_for_node`` the served
-    topic score uses. ``graded`` = number of included attempts (every coverage
-    here is already usable). Node order follows the reference graph exactly as
-    the scorer walks it; ``display_name`` is the scorer's own resolution."""
+def _unprobed_ids(value: Any) -> frozenset[str]:
+    """The node ids one attempt's OWN grade excluded, read off the snapshot
+    ``done.py`` writes to ``diagnostic_report -> 'unprobed_node_ids'``. Absent
+    (every attempt graded before P1.2b) or malformed degrades to empty — i.e.
+    the coverage-only tally, never an exception on the teacher's panel."""
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(item for item in value if isinstance(item, str))
+
+
+def aggregate_nodes(graded_nodes: list[Node], attempts: list[AttemptNodes]) -> list[dict[str, Any]]:
+    """Per graded reference node, tally understood/partial/missed/unprobed over
+    each included attempt using the SAME ``_credit_for_node`` the served topic
+    score uses.
+
+    An attempt whose own grade EXCLUDED this node (P1.2b ``unprobed``) is
+    counted in that bucket and nowhere else — the coverage map still holds the
+    adjudicator's verdict for it, but no grade was computed from that verdict,
+    so counting it as ``missed`` would tell the teacher the class failed a topic
+    it was never asked about. ``graded`` is therefore the attempts where the
+    node actually counted (understood + partial + missed), which keeps the
+    stacked bar reconciled with the letter distribution beside it; for pre-P1.2b
+    rows it equals the attempt count exactly as before. Node order follows the
+    reference graph exactly as the scorer walks it; ``display_name`` is the
+    scorer's own resolution."""
     result: list[dict[str, Any]] = []
     for node in graded_nodes:
-        counts = {"understood": 0, "partial": 0, "missed": 0}
-        for coverage in coverages:
-            _credit, status = _credit_for_node(node.node_id, coverage)
+        counts = {"understood": 0, "partial": 0, "missed": 0, _UNPROBED_BUCKET: 0}
+        for attempt in attempts:
+            if node.node_id in attempt.unprobed:
+                counts[_UNPROBED_BUCKET] += 1
+                continue
+            _credit, status = _credit_for_node(node.node_id, attempt.coverage)
             counts[_STATUS_TO_BUCKET[status]] += 1
         result.append(
             {
@@ -100,7 +151,8 @@ def aggregate_nodes(
                 "understood": counts["understood"],
                 "partial": counts["partial"],
                 "missed": counts["missed"],
-                "graded": len(coverages),
+                "unprobed": counts[_UNPROBED_BUCKET],
+                "graded": counts["understood"] + counts["partial"] + counts["missed"],
             }
         )
     return result
@@ -143,7 +195,11 @@ def build_problems(
         if meta is None:  # pragma: no cover - best_rows FK-guaranteed to a problem
             continue
         scores = [r["score"] for r in rows]
-        usable = [cov for r in rows if (cov := _usable_coverage(r.get("coverage"))) is not None]
+        usable = [
+            AttemptNodes(coverage=cov, unprobed=_unprobed_ids(r.get("unprobed_node_ids")))
+            for r in rows
+            if (cov := _usable_coverage(r.get("coverage"))) is not None
+        ]
         problems.append(
             {
                 "problem_id": problem_id,

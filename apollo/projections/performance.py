@@ -66,9 +66,11 @@ def _round1(value: Any) -> float:
 async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[dict[str, Any]]:
     """One row per (user_id, problem_id): the highest-scoring graded attempt,
     carrying that attempt's own served letter (never re-derived, so a teacher
-    cell always matches what the student was shown) and that attempt's stored
-    ``coverage`` (only the coverage sub-object of ``diagnostic_report``, not the
-    whole report — it powers the per-problem node drill-down and nothing else)."""
+    cell always matches what the student was shown), that attempt's stored
+    ``coverage``, and the node ids that attempt's own grade EXCLUDED
+    (``unprobed_node_ids``, P1.2b — absent on rows graded before it). Only those
+    sub-objects of ``diagnostic_report``, not the whole report: together they are
+    exactly what the per-problem node drill-down needs and nothing else."""
     rows = (
         (
             await db.execute(
@@ -79,7 +81,8 @@ async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[d
                     pa.problem_id AS problem_id,
                     {_SCORE_EXPR} AS score,
                     {_LETTER_EXPR} AS letter,
-                    pa.diagnostic_report #> '{{coverage}}' AS coverage
+                    pa.diagnostic_report #> '{{coverage}}' AS coverage,
+                    pa.diagnostic_report #> '{{unprobed_node_ids}}' AS unprobed_node_ids
                 FROM app.problem_attempts pa
                 WHERE pa.course_id = :search_space_id
                   AND pa.result = 'graded'
@@ -100,6 +103,7 @@ async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[d
             "score": _round1(row["score"]),
             "letter": row["letter"] or score_to_letter(round(float(row["score"]))),
             "coverage": row["coverage"],
+            "unprobed_node_ids": row["unprobed_node_ids"],
         }
         for row in rows
     ]

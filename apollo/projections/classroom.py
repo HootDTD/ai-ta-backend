@@ -15,6 +15,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.grading.artifact_build import LEDGER_STATUS_UNPROBED
+
 # Spec §5 "windowed" struggle signals: default lookback, overridable per call
 # (route reads it from a query param -- see api.py).
 DEFAULT_WINDOW_DAYS: int = 14
@@ -39,7 +41,15 @@ _TOP_MISCONCEPTIONS_LIMIT: int = 10
 # span string, even if empty -- ``None`` means "never attempted"). Those rows
 # are 0.0-coverage contributions in their own right (see the lowest-coverage
 # query below) so a never-taught concept can surface as a worst offender.
-_LEDGER_STATUSES_WITH_REFERENCE_KEY = ("credited", "misconception")
+#
+# 2026-08-07 P1.2b + review fix: a graded node the questioning loop never raised
+# now lands under its OWN ledger status (``unprobed``) instead of that
+# ``unresolved`` + NULL-span branch. Dropping it from the query would silently
+# delete the very signal the branch exists for — "a graded node of this course
+# is never being taught or asked about" — so it is matched explicitly and
+# contributes 0.0 exactly as it did before, with its own ``n_unprobed`` count so
+# the teacher can tell "the class got this wrong" from "Apollo never asked".
+_LEDGER_STATUSES_WITH_REFERENCE_KEY = ("credited", "misconception", LEDGER_STATUS_UNPROBED)
 
 
 async def mastery_heatmap(db: AsyncSession, *, search_space_id: int) -> list[dict[str, Any]]:
@@ -179,7 +189,10 @@ async def struggle_signals(
                     avg(
                         CASE WHEN node ->> 'status' = 'credited' THEN 1.0 ELSE 0.0 END
                     ) AS mean_coverage,
-                    count(*) AS n
+                    count(*) AS n,
+                    count(*) FILTER (
+                        WHERE node ->> 'status' = :unprobed_status
+                    ) AS n_unprobed
                 FROM internal.grading_runs a,
                      LATERAL jsonb_array_elements(a.node_ledger) AS node
                 WHERE a.course_id = :search_space_id
@@ -201,6 +214,7 @@ async def struggle_signals(
                 {
                     **params,
                     "statuses": list(_LEDGER_STATUSES_WITH_REFERENCE_KEY),
+                    "unprobed_status": LEDGER_STATUS_UNPROBED,
                     "limit": _LOWEST_COVERAGE_LIMIT,
                 },
             )
@@ -243,6 +257,11 @@ async def struggle_signals(
                 "key": row["key"],
                 "mean_coverage": float(row["mean_coverage"]),
                 "n": int(row["n"]),
+                # How many of those n were never raised with the student at all
+                # (P1.2b `unprobed`) — a low mean_coverage with a high
+                # n_unprobed is a broken rubric or ask budget, not a class that
+                # failed to learn the concept.
+                "n_unprobed": int(row["n_unprobed"]),
             }
             for row in lowest_coverage_rows
         ],

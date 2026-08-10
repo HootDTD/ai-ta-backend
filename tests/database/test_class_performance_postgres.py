@@ -641,6 +641,7 @@ async def test_problem_drilldown_text_students_and_node_breakdown(db_session):
         "understood": 1,
         "partial": 1,
         "missed": 1,
+        "unprobed": 0,
         "graded": 3,
     }
     assert (nodes["c1"]["display_name"], nodes["c1"]["node_type"]) == ("Steady", "condition")

@@ -7,7 +7,7 @@ related:
   - apollo/overseer/diagnostic
   - apollo/overseer/topic-score
   - apollo/overseer/grounding
-last_verified: 2026-07-28
+last_verified: 2026-08-07
 stub: false
 ---
 
@@ -26,6 +26,9 @@ structured-JSON completion.
   course_evidence=None) -> (system, user)` — the `(system, user)` message pair.
 - `sanitize_narrative(text, canonical_keys=()) -> str` — deterministic,
   idempotent output-side gate.
+- `humanize_key(key) -> str` — public since 2026-08-07: the same student-facing
+  display fallback the P2.1 consistency gate needs (see
+  [diagnostic](diagnostic.md)).
 
 ## Data flow
 
@@ -42,6 +45,12 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
 
 ## Invariants & gotchas
 
+- **`SCORE CONSISTENCY` is a base-prompt rule (P2.1, 2026-08-07), not a flag.**
+  A topic below 60% may not be praised, a topic at 0% must have the missing idea
+  named in its own note, and the headline/next step follow the same rule. This
+  deliberately re-froze `_TOPIC_SYSTEM_PROMPT` — the byte-identical contracts
+  below are relative to the flag-off build, not to the pre-P2.1 text. The prompt
+  is the soft half; [diagnostic](diagnostic.md)'s gate enforces it in code.
 - **Reference wording is never attributed to the student** unless it appears
   verbatim in a quoted `You said:` line; a topic with no gated span is credited
   in general terms only. Topic descriptions are the reference solution's wording,

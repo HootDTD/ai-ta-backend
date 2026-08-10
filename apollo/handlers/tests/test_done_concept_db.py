@@ -95,8 +95,16 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
 
     captured = {}
 
+    # `tally_context` (bimodal-fix P1.3) is passed by `done.py` on the sole
+    # grading lane, so a double that omits it fails every Done in this test.
     async def _coverage(
-        *, transcript, reference_graph, problem, course_evidence=None, hoot_asides=()
+        *,
+        transcript,
+        reference_graph,
+        problem,
+        course_evidence=None,
+        hoot_asides=(),
+        tally_context=None,
     ):
         captured["reference_nodes"] = list(reference_graph.nodes)
         return {}, {}

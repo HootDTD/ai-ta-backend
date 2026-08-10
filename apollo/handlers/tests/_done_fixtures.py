@@ -94,6 +94,10 @@ def _old_path_patches():
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
         # Transcript grader is the sole (unconditional) grading lane.
         patch("apollo.handlers.done._full_transcript", new=AsyncMock(return_value=())),
+        # Question ledger (P1.2b/P1.3): one read feeding the adjudicator's
+        # tally context and the scorer's probed-node set. The base golden is an
+        # empty ledger; test_done_question_ledger overrides it by attribute.
+        patch("apollo.handlers.done._question_ledger", new=AsyncMock(return_value=())),
         patch(
             "apollo.handlers.done.compute_transcript_coverage_with_spans",
             new=AsyncMock(return_value=({}, {})),

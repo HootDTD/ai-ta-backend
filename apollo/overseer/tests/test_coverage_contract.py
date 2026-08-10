@@ -109,7 +109,8 @@ def test_validator_rejects_non_dict_value():
 
 
 def test_validator_rejects_unknown_extra_key():
-    """``hoot_assisted`` is the ONLY permitted optional key; anything else is a
+    """``hoot_assisted`` and ``basis`` are the ONLY permitted optional keys (the
+    latter is covered in ``test_coverage_basis.py``); anything else is a
     contract violation."""
     value = _valid()
     value["surprise"] = {"n": True}

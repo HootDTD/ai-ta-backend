@@ -1,8 +1,8 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-07-31",
-  "repo": "perf-v2",
+  "generated_at": "2026-08-08",
+  "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -92,6 +92,7 @@
     "apollo/overseer/diagnostic.py": "apollo/overseer/diagnostic",
     "apollo/overseer/grounding.py": "apollo/overseer/grounding",
     "apollo/overseer/misconception.py": "apollo/overseer/rubric",
+    "apollo/overseer/narrative_consistency.py": "apollo/overseer/diagnostic",
     "apollo/overseer/personalization_flag.py": "apollo/overseer/problem-selector",
     "apollo/overseer/problem_selector.py": "apollo/overseer/problem-selector",
     "apollo/overseer/remediation.py": "apollo/overseer/diagnostic",
@@ -178,6 +179,8 @@
     "apollo/schemas/variable_map.py": "apollo/schemas/authoring-schemas",
     "apollo/smart_questions/__init__.py": "apollo/conversation/questioning/controller",
     "apollo/smart_questions/controller.py": "apollo/conversation/questioning/controller",
+    "apollo/smart_questions/leakage.py": "apollo/conversation/questioning/leakage",
+    "apollo/smart_questions/selection.py": "apollo/conversation/questioning/selection",
     "apollo/smart_questions/unified.py": "apollo/conversation/questioning/unified",
     "apollo/solver/__init__.py": "apollo/solver/sympy-exec",
     "apollo/solver/forward_chain.py": "apollo/solver/sufficiency",
@@ -576,10 +579,26 @@
         "apollo/smart_questions/__init__.py"
       ]
     },
+    "apollo/conversation/questioning/leakage": {
+      "path": "docs/architecture/apollo/conversation/questioning/leakage.md",
+      "kind": "leaf",
+      "description": "Log-only private-atom leakage belt for the questioning reply, plus the loop's single text normalizer.",
+      "owns": [
+        "apollo/smart_questions/leakage.py"
+      ]
+    },
+    "apollo/conversation/questioning/selection": {
+      "path": "docs/architecture/apollo/conversation/questioning/selection.md",
+      "kind": "leaf",
+      "description": "Deterministic question-target policy \u2014 graded-first ordering, the 2-asks-per-node cap, and the graded budget reservation.",
+      "owns": [
+        "apollo/smart_questions/selection.py"
+      ]
+    },
     "apollo/conversation/questioning/unified": {
       "path": "docs/architecture/apollo/conversation/questioning/unified.md",
       "kind": "leaf",
-      "description": "One-call engine that updates the per-node tally and generates Apollo's question, with log-only belt telemetry.",
+      "description": "One-call engine that updates the per-node tally and generates Apollo's question, under the code-enforced target policy.",
       "owns": [
         "apollo/smart_questions/unified.py"
       ]
@@ -773,7 +792,8 @@
       "description": "Generates the student-facing narrative that explains \u2014 never decides \u2014 the grade.",
       "owns": [
         "apollo/overseer/diagnostic.py",
-        "apollo/overseer/remediation.py"
+        "apollo/overseer/remediation.py",
+        "apollo/overseer/narrative_consistency.py"
       ]
     },
     "apollo/overseer/grounding": {
@@ -928,7 +948,7 @@
     "apollo/projections/performance-problems": {
       "path": "docs/architecture/apollo/projections/performance-problems.md",
       "kind": "leaf",
-      "description": "performance_problems \u2014 the class-performance payload's per-problem problems[] block (best-wins letter distribution, full text, per-problem student list, and the per-reference-node right/wrong breakdown that reuses the served topic score's own credit helper).",
+      "description": "performance_problems \u2014 the class-performance payload's per-problem problems[] block (best-wins letter distribution, full text, per-problem student list, and the per-reference-node right/wrong/unprobed breakdown that reuses the served topic score's own credit helper).",
       "owns": [
         "apollo/projections/performance_problems.py"
       ]
@@ -2043,6 +2063,8 @@
         "apollo/conversation/parser/graph-context",
         "apollo/conversation/parser/parser-llm",
         "apollo/conversation/questioning/controller",
+        "apollo/conversation/questioning/leakage",
+        "apollo/conversation/questioning/selection",
         "apollo/conversation/questioning/unified",
         "apollo/conversation/routing/auth-deps",
         "apollo/conversation/routing/errors",

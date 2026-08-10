@@ -23,11 +23,23 @@ class CoverageVerdict(TypedDict):
     # to the adjudicator. Absent, the verdict is byte-identical to the
     # pre-feature contract, so no existing consumer or grade is affected.
     hoot_assisted: NotRequired[dict[str, bool]]
+    # 2026-08-08: an OPTIONAL, additive per-node ``{node_id: basis}`` map, keyed
+    # exactly like ``procedure_scores``. ``basis`` is the adjudicator's own
+    # structured-output field — WHY it credited what it credited — and it used
+    # to exist only in a log line, which is why the replay could not size the
+    # ``absent``-yet-credited cell per attempt. It gates NOTHING; the dormant
+    # graph lane emits no basis at all, so every consumer must read it
+    # defensively.
+    basis: NotRequired[dict[str, str]]
 
 
 _KEYS = frozenset({"per_step", "procedure_scores", "confidences", "negotiation_counts"})
-_OPTIONAL_KEYS = frozenset({"hoot_assisted"})
+_OPTIONAL_KEYS = frozenset({"hoot_assisted", "basis"})
 _NEGOTIATION_KEYS = frozenset({"dual", "disputed", "paraphrased", "skipped"})
+# The adjudicator's own enum (``build_transcript_grader_schema``). Keeping the
+# contract's vocabulary identical to the schema's is the point: a fifth value
+# means the two have drifted, which is a defect, not data to pass downstream.
+BASIS_VALUES = ("stated", "used", "implied", "absent")
 
 
 def _validate_score_map(value: object, *, key: str) -> None:
@@ -58,12 +70,26 @@ def _validate_assist_map(value: object) -> None:
             raise ValueError("hoot_assisted must map string node ids to booleans")
 
 
+def _validate_basis_map(value: object) -> None:
+    """Validate the optional ``basis`` per-node map.
+
+    Values are restricted to :data:`BASIS_VALUES` — the adjudicator's structured
+    output already constrains them, so anything else means the schema and this
+    contract have drifted apart and the ledger would record a vocabulary no
+    consumer knows."""
+    if not isinstance(value, dict):
+        raise ValueError("basis must be a dict")
+    for node_id, basis in value.items():
+        if not isinstance(node_id, str) or basis not in BASIS_VALUES:
+            raise ValueError(f"basis must map string node ids to one of {list(BASIS_VALUES)}")
+
+
 def validate_coverage_verdict(value: object) -> None:
     """Raise ``ValueError`` unless *value* matches the frozen schema.
 
     The four required keys must be present and exactly correct. ``hoot_assisted``
-    (INTERACTION5) is the sole permitted OPTIONAL key; any other extra key is a
-    contract violation."""
+    (INTERACTION5) and ``basis`` (2026-08-08) are the permitted OPTIONAL keys;
+    any other extra key is a contract violation."""
     if not isinstance(value, dict):
         raise ValueError(f"coverage keys must be exactly {sorted(_KEYS)}")
     keys = set(value)
@@ -87,6 +113,13 @@ def validate_coverage_verdict(value: object) -> None:
         raise ValueError("negotiation_counts values must be non-negative integers")
     if "hoot_assisted" in value:
         _validate_assist_map(value["hoot_assisted"])
+    if "basis" in value:
+        _validate_basis_map(value["basis"])
 
 
-__all__ = ["CoverageVerdict", "NegotiationCounts", "validate_coverage_verdict"]
+__all__ = [
+    "BASIS_VALUES",
+    "CoverageVerdict",
+    "NegotiationCounts",
+    "validate_coverage_verdict",
+]

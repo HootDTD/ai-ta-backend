@@ -46,7 +46,12 @@ from apollo.overseer.misconception import (
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.remediation import add_remediation_reviews
 from apollo.overseer.rubric import compute_rubric
-from apollo.overseer.topic_score import TopicScoreResult, compute_centrality, compute_topic_score
+from apollo.overseer.topic_score import (
+    TopicScoreResult,
+    compute_centrality,
+    compute_topic_score,
+    graded_topics_only,
+)
 from apollo.overseer.topic_score_serialize import serialize_topics
 from apollo.overseer.transcript_coverage import compute_transcript_coverage_with_spans
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
@@ -54,6 +59,7 @@ from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
     GradingRun,
     ProblemAttempt,
+    QuestionOpportunity,
     SessionPhase,
     TutoringMessage,
     TutoringSession,
@@ -259,6 +265,110 @@ async def _full_transcript(
     return tuple((role, content) for role, content in rows)
 
 
+async def _question_ledger(
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+) -> tuple[Any, ...] | None:
+    """This attempt's ``QuestionOpportunity`` rows in insertion order, or
+    ``None`` when the read failed.
+
+    ONE read serving BOTH 2026-08-07 bimodal-fix consumers: the adjudicator's
+    ``tally_context`` (P1.3) and the scorer's ``asked_node_ids`` (P1.2b). Its own
+    failure domain — it runs AHEAD of the sole grading lane and must never touch
+    the ``CoverageGradingError -> 503`` contract, so ANY exception logs and
+    yields ``None``, which makes both consumers reproduce the pre-fix grade.
+    Ordered by ``id`` (never node id) so the tally block handed to the LLM is
+    reproducible across runs."""
+    try:
+        rows = (
+            (
+                await db.execute(
+                    select(QuestionOpportunity)
+                    .where(QuestionOpportunity.attempt_id == attempt_id)
+                    .order_by(QuestionOpportunity.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:
+        _LOG.exception("apollo_question_ledger_fetch_failed attempt_id=%s", attempt_id)
+        return None
+    return tuple(rows)
+
+
+def _latest_student_quote(evidence: Any) -> str | None:
+    """The most recent verbatim student quote in a ledger row's evidence list.
+
+    Evidence entries are ``{"turn_id": int, "quote": str}`` appended in turn
+    order by the questioning controller, so the LAST usable one is the student's
+    most recent demonstration of that node. Anything malformed (the column is
+    free-form JSON) yields ``None`` rather than raising — this feeds a prompt,
+    not the grade arithmetic."""
+    if not isinstance(evidence, list):
+        return None
+    for item in reversed(evidence):
+        if not isinstance(item, dict):
+            continue
+        quote = item.get("quote")
+        if isinstance(quote, str) and quote.strip():
+            return quote
+    return None
+
+
+def _probed_node_ids(rows: Any) -> frozenset[str]:
+    """The graded-node ids P1.2b treats as engaged this attempt.
+
+    A ``QuestionOpportunity`` row is NOT by itself proof that the questioning
+    loop engaged with a node. Two paths mint a row without any engagement: a
+    degenerate ``fallback_served`` turn (a verbatim public clause standing in
+    for a question, which deliberately spends no probe — see
+    ``smart_questions/controller``), and a tally update that merely restates
+    ``missing`` with no quote. Counting those as "probed" put the node straight
+    back in the denominator at credit 0 — the exact false F that P1.2b exists to
+    remove. A row therefore counts only when it records real engagement:
+
+    * ``times_asked > 0`` — Apollo actually put a question about it to the
+      student; or
+    * a tally state other than ``missing`` — the engine concluded something
+      about the student's teaching of it; or
+    * a verbatim evidence quote — the student demonstrably taught it.
+
+    Pure and total: unusable/NULL columns coerce rather than raise, because this
+    feeds the grade denominator and must never break a Done.
+    """
+    return frozenset(
+        str(row.reference_node_id)
+        for row in rows
+        if int(row.times_asked or 0) > 0
+        or str(row.state) != "missing"
+        or _latest_student_quote(row.evidence) is not None
+    )
+
+
+def _tally_context(rows: Any) -> list[dict[str, Any]]:
+    """The adjudicator's per-node prior context (P1.3), shape pinned across
+    slices: ``[{node_id, state, times_asked, student_quote|null}, ...]``.
+
+    Defect U1: the live tally (questioning engine) and the grader are two
+    decoupled LLM systems, so identical tallies produced F(0) and A+(100) and a
+    node Apollo marked ``understood`` — celebrated in the UI — was routinely
+    zeroed by the grader. Handing the tally to the adjudicator as PRIOR context
+    (not as a verdict) is the cheap half of that fix; the prompt rule that a
+    quoted ``understood`` node needs a cited reason to score low lives in
+    ``overseer/transcript_coverage``."""
+    return [
+        {
+            "node_id": str(row.reference_node_id),
+            "state": str(row.state),
+            "times_asked": int(row.times_asked or 0),
+            "student_quote": _latest_student_quote(row.evidence),
+        }
+        for row in rows
+    ]
+
+
 async def _aside_texts(
     db: AsyncSession,
     *,
@@ -297,6 +407,7 @@ def _compute_topic_score_safe(
     reference_graph: KGGraph,
     attempt_id: int,
     evidence_spans: dict[str, str] | None = None,
+    asked_node_ids: frozenset[str] | None = None,
 ) -> TopicScoreResult | None:
     """Soft-failing wrapper around ``compute_topic_score`` (2026-07-10 spec
     §3): computed ALWAYS (flag-independent — the artifact gets telemetry
@@ -310,6 +421,7 @@ def _compute_topic_score_safe(
             reference_nodes=reference_graph.nodes,
             centrality=compute_centrality(reference_graph),
             evidence_spans=evidence_spans,
+            asked_node_ids=asked_node_ids,
         )
     except Exception:
         _LOG.exception("topic_score_computation_failed attempt_id=%s", attempt_id)
@@ -468,6 +580,20 @@ async def handle_done(
     course_evidence = _course_evidence_safe(sess, concept_slug=getattr(problem, "concept_id", None))
     transcript = await _full_transcript(db, attempt_id=int(attempt.id))
 
+    # The question ledger, read ONCE for both bimodal-fix consumers below
+    # (P1.3 `tally_context` for the adjudicator, P1.2b `asked_node_ids` for the
+    # scorer). A failed read is `None` for both, which reproduces the pre-fix
+    # grade exactly. An EMPTY ledger is deliberately NOT `None`: an attempt whose
+    # questioning loop engaged no node at all is real signal (the auto-done /
+    # restart-orphan pathologies), and the scorer's own degenerate-case guard
+    # keeps it gradeable. `_probed_node_ids` — NOT the raw row set — is what the
+    # scorer gets: a row minted by a degenerate fallback turn or a bare `missing`
+    # tally update is not engagement, and counting it as probed would put the
+    # node back in the denominator at credit 0.
+    ledger_rows = await _question_ledger(db, attempt_id=int(attempt.id))
+    tally_context = None if ledger_rows is None else _tally_context(ledger_rows)
+    asked_node_ids = None if ledger_rows is None else _probed_node_ids(ledger_rows)
+
     # INTERACTION5 (default OFF) — the Hoot-assist grading cap. Gated on the flag
     # AND the problem concept passing the shared allowlist. Its own failure
     # domain, mirroring the INTERACTION3 pattern: the aside fetch is wrapped so
@@ -493,6 +619,7 @@ async def handle_done(
         problem=problem,
         course_evidence=evidence_block(course_evidence),
         hoot_asides=hoot_asides,
+        tally_context=tally_context,
     )
 
     # Apply the flat cap to the coverage BEFORE rubric / topic-score / diagnostic
@@ -530,6 +657,7 @@ async def handle_done(
         reference_graph=reference_graph,
         attempt_id=int(attempt.id),
         evidence_spans=narrative_spans,
+        asked_node_ids=asked_node_ids,
     )
 
     # Serving (spec §3): `served_rubric` REPLACES `overall` with the topic
@@ -559,13 +687,20 @@ async def handle_done(
         _LOG.warning("apollo_narrative_utterances_fetch_failed attempt_id=%s", attempt.id)
         narrative_utterances = ()
 
+    # P2.1 consistency (2026-08-07): the narrator and the structured topic
+    # feedback see the GRADED topics only. An `unprobed` topic (P1.2b) carries
+    # credit 0 but is excluded from the grade and labelled "not part of this
+    # grade" in the served `topics[]` — narrating it as a gap would make one
+    # payload say both things at once. The served/artifact `topic_score` below
+    # is still the FULL result, so nothing is hidden from the UI or the record.
+    narrative_topic_score = graded_topics_only(topic_score)
     diagnostic_result = await asyncio.to_thread(
         generate_diagnostic,
         coverage=coverage,
         reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,
         rubric=rubric,
-        topic_score=topic_score,
+        topic_score=narrative_topic_score,
         student_utterances=narrative_utterances,
         course_evidence=evidence_block(course_evidence),
     )
@@ -585,14 +720,17 @@ async def handle_done(
     if (
         interaction3_enabled()
         and interaction_allowed_for_concept(problem.concept_id)
-        and topic_score is not None
+        and narrative_topic_score is not None
         and feedback is not None
     ):
         try:
             remediated_feedback = await add_remediation_reviews(
                 db=db,
                 search_space_id=sess.search_space_id,
-                topic_score=topic_score,
+                # Same graded-only view the feedback keys were generated from —
+                # a review pointer for an `unprobed` topic would point at
+                # something the grade explicitly excluded.
+                topic_score=narrative_topic_score,
                 feedback=feedback,
                 grounding_bundle=getattr(sess, "grounding_bundle", None),
             )
@@ -636,6 +774,22 @@ async def handle_done(
         # must read this snapshot first and fall back to `rubric.overall`.
         "served_overall": dict(served_rubric["overall"]),
     }
+    # Teacher-surface consistency (2026-08-07 review fix). The per-problem node
+    # drill-down (`projections/performance_problems`) re-derives each node's
+    # status from `coverage` alone, and `coverage` can only ever say
+    # covered/partial/missing — it has no way to know P1.2b dropped a node from
+    # THIS student's grade, so it would report a class-wide "missed" on a topic
+    # nobody was asked about and that no grade counted. Snapshot the excluded
+    # keys beside `served_overall`, on the same principle: the teacher reads what
+    # the student was served, never a re-derivation. Omitted when nothing was
+    # excluded, so those rows keep the pre-fix shape exactly.
+    unprobed_node_ids = (
+        [topic.canonical_key for topic in topic_score.topics if topic.status == "unprobed"]
+        if topic_score is not None
+        else []
+    )
+    if unprobed_node_ids:
+        diagnostic_report = {**diagnostic_report, "unprobed_node_ids": unprobed_node_ids}
     # Audit stamp (2026-08-07 bimodal-fix P0.4): a Done triggered by budget
     # exhaustion — not by the student — is marked so grade forensics can
     # separate consented grades from auto-grades. Key absent on a student

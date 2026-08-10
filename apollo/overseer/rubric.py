@@ -44,6 +44,17 @@ AXIS_WEIGHTS: Dict[str, float] = {
 }
 
 # (min_score_inclusive, letter) in descending order.
+#
+# 2026-08-07 bimodal-fix P1.5 (decision D1) — the BOTTOM of the map is
+# rescaled. The pre-fix bands gave F half the numeric scale (F = [0, 50), D =
+# [50, 60)); combined with de-facto binary per-node credit over 1-3 graded
+# nodes the reachable score set was ~{0, 33, 50, 67, 100}, so "missed one of two
+# graded nodes" (50) read as a failing grade and a B was unreachable. Now:
+#   F = [0, 30)   D = [30, 50)   C = [50, 65)
+# Every A/B threshold AND the C+ threshold are UNCHANGED, and the letter SET is
+# unchanged — `projections/performance_problems.letter_distribution` renders one
+# teacher-facing bucket per band, so introducing a new letter (e.g. C-) would be
+# a cross-repo UI surface change, which this fix deliberately avoids.
 LETTER_BANDS: List[Tuple[int, str]] = [
     (97, "A+"),
     (90, "A"),
@@ -52,8 +63,8 @@ LETTER_BANDS: List[Tuple[int, str]] = [
     (75, "B"),
     (70, "B-"),
     (65, "C+"),
-    (60, "C"),
-    (50, "D"),
+    (50, "C"),
+    (30, "D"),
     (0, "F"),
 ]
 

@@ -9,7 +9,7 @@ related:
   - apollo/projections/classroom
   - apollo/overseer/topic-score
   - apollo/conversation/routing/router
-last_verified: 2026-07-31
+last_verified: 2026-08-08
 stub: false
 ---
 
@@ -78,9 +78,11 @@ byte-identical to best-wins.
   [performance-problems](performance-problems.md) from the same `best_rows` (and
   the shared `letter_distribution`) as `grade_distribution`, so the two never
   disagree; its `nodes` drill-down reuses the served topic score's own
-  `_credit_for_node`, so it can't disagree with the grade either. `_best_graded_rows`
-  carries each best attempt's `diagnostic_report -> 'coverage'` (coverage only) to
-  feed it.
+  `_credit_for_node`, so it can't disagree with the grade either.
+  `_best_graded_rows` carries each best attempt's
+  `diagnostic_report -> 'coverage'` AND its `'unprobed_node_ids'` (those two
+  sub-objects only) to feed it — without the second the drill-down counts a node
+  P1.2b dropped from that student's own grade as a class-wide `missed`.
 - **`auth.users` lookup is failure-isolated**: outside `Base.metadata`
   (absent from the Testcontainers schema), queried under a `begin_nested()`
   SAVEPOINT so a missing table / revoked grant degrades to null identities
