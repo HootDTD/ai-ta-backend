@@ -22,9 +22,12 @@ no database. Composed by [performance](performance.md)'s assembler.
 - **Stat helpers (pure):** `mean`, `median`, `pearson`, `spearman` (= Pearson on
   average ranks, ties averaged, via `_average_ranks`), `word_count`.
 - **Aggregations (pure):** `engagement_by_student(message_rows)` →
-  `{teaching_turns, median_words}`; `problem_aggregates(attempt_rows)` →
+  `{teaching_turns, median_words}`;
+  `problem_aggregates(attempt_rows, latest_attempt_ids=None, created_at_by_attempt=None)` →
   per-student `ProblemAgg` list (`first_score` = lowest-id graded attempt,
-  `best_score` = best-wins, `best_is_last`); `retry_fields(aggs)` →
+  `best_score` = best-wins, `best_is_last`, plus the display-only
+  `median_gap_seconds` / `min_gap_seconds` / `first_to_best_seconds`, filled
+  only when the `created_at` side map is threaded in); `retry_fields(aggs)` →
   `{problems_retried, avg_gain}`; `student_flags(...)` and `student_extras(...)`
   (the `{engagement, flags}` add-on); `gap_seconds(timestamps)` → consecutive
   ABSOLUTE deltas in seconds over one pair's id-ordered graded-attempt
@@ -67,3 +70,9 @@ hand raw rows to the pure folders above.
 - **Same served-grade semantics as v1 everywhere** — best-wins here is the same
   max-score/latest-id order `_SCORE_EXPR` produces, so retry gain never disagrees
   with the best-wins grade the student was shown.
+- **`created_at` is DISPLAY-ONLY (P3.3).** Timing is threaded in as an optional
+  `created_at_by_attempt` side map and read in ascending ATTEMPT-ID order;
+  `gap_seconds` takes absolute deltas so a clock-skewed row can't report a
+  negative duration. No ordering, best-wins selection, or score expression
+  anywhere is keyed on a timestamp — re-ordering by time would silently change
+  served grades and break teacher/student grade parity.

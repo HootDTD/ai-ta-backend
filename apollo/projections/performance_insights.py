@@ -56,6 +56,13 @@ class ProblemAgg(NamedTuple):
     first_score: float  # score of the lowest-id graded attempt
     best_score: float  # best-wins score (max, latest id breaks ties)
     best_is_last: bool  # no attempt of ANY result came after the best-producing one
+    # P3.3 DISPLAY-ONLY spacing (None unless a created_at side map is threaded
+    # in): median/min consecutive gap between this pair's graded attempts, and
+    # first-attempt-to-best-attempt elapsed seconds. Defaulted so every
+    # pre-P3.3 construction and fixture stays valid.
+    median_gap_seconds: float | None = None
+    min_gap_seconds: float | None = None
+    first_to_best_seconds: float | None = None
 
 
 def _round1(value: float) -> float:
@@ -158,9 +165,42 @@ def engagement_by_student(
     return result
 
 
+def _pair_timings(
+    attempt_ids: list[int],
+    best_id: int,
+    created_at_by_attempt: dict[int, datetime] | None,
+) -> dict[str, float | None]:
+    """The three DISPLAY-ONLY timing fields for ONE (student, problem) pair.
+
+    Stamps are read in ascending ATTEMPT-ID order — id order is the best-wins
+    authority, and ``created_at`` must never become an ordering key. All-None
+    when no side map is threaded in (every pure fixture) or the pair's stamps
+    are absent, so timing can never fabricate a number it doesn't have."""
+    timings: dict[str, float | None] = {
+        "median_gap_seconds": None,
+        "min_gap_seconds": None,
+        "first_to_best_seconds": None,
+    }
+    if not created_at_by_attempt:
+        return timings
+    ordered_ids = sorted(attempt_ids)
+    stamps = [created_at_by_attempt[aid] for aid in ordered_ids if aid in created_at_by_attempt]
+    gaps = gap_seconds(stamps)
+    if gaps:
+        med = median(gaps)
+        timings["median_gap_seconds"] = _round1(med) if med is not None else None
+        timings["min_gap_seconds"] = _round1(min(gaps))
+    first_at = created_at_by_attempt.get(ordered_ids[0])
+    best_at = created_at_by_attempt.get(best_id)
+    if first_at is not None and best_at is not None:
+        timings["first_to_best_seconds"] = _round1(abs((best_at - first_at).total_seconds()))
+    return timings
+
+
 def problem_aggregates(
     attempt_rows: list[tuple[str, int, int, float]],
     latest_attempt_ids: dict[tuple[str, int], int] | None = None,
+    created_at_by_attempt: dict[int, datetime] | None = None,
 ) -> dict[str, list[ProblemAgg]]:
     """Fold ``(user_id, problem_id, attempt_id, score)`` graded-attempt rows
     into per-student ``ProblemAgg`` lists (one per (student, problem)).
@@ -170,7 +210,12 @@ def problem_aggregates(
     supplied it drives ``best_is_last``, so a student who has since STARTED a
     new (still-ungraded) attempt after their best is not counted as having
     stopped — ``gave_up`` must not fire mid-retry. When omitted, ``best_is_last``
-    falls back to the latest attempt among the graded rows given here."""
+    falls back to the latest attempt among the graded rows given here.
+
+    ``created_at_by_attempt`` maps a graded attempt id to its ``pa.created_at``.
+    Supplied it fills the DISPLAY-ONLY timing fields (P3.3); omitted they stay
+    None — an optional SIDE MAP, exactly like ``latest_attempt_ids``, so the
+    4-tuple row shape (and every fixture built on it) is unchanged."""
     grouped: dict[tuple[str, int], list[tuple[int, float]]] = {}
     for user_id, problem_id, attempt_id, score in attempt_rows:
         grouped.setdefault((user_id, problem_id), []).append((attempt_id, float(score)))
@@ -187,6 +232,7 @@ def problem_aggregates(
             if latest_attempt_ids is not None
             else graded_last_id
         )
+        timings = _pair_timings([a[0] for a in attempts], best_id, created_at_by_attempt)
         by_student.setdefault(user_id, []).append(
             ProblemAgg(
                 problem_id=problem_id,
@@ -194,6 +240,9 @@ def problem_aggregates(
                 first_score=first_score,
                 best_score=best_score,
                 best_is_last=best_id == last_id,
+                median_gap_seconds=timings["median_gap_seconds"],
+                min_gap_seconds=timings["min_gap_seconds"],
+                first_to_best_seconds=timings["first_to_best_seconds"],
             )
         )
     return by_student

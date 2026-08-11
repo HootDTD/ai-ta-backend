@@ -438,3 +438,65 @@ def test_gap_seconds_unordered_input_yields_absolute_magnitudes():
     therefore still report a real duration, never a negative one."""
     assert pi.gap_seconds([_at(300), _at(0), _at(60)]) == [300.0, 60.0]
     assert all(gap >= 0.0 for gap in pi.gap_seconds([_at(300), _at(0), _at(60)]))
+
+
+# --- P3.3 retry spacing: ProblemAgg timing fields ---------------------------
+
+
+def test_problem_aggregates_timing_is_none_without_the_side_map():
+    """Every pre-P3.3 caller and fixture passes 4-tuples and no side map: the
+    three timing fields default to None rather than re-arity-ing the row."""
+    rows = [("u1", 10, 1, 40.0), ("u1", 10, 2, 85.0)]
+    agg = pi.problem_aggregates(rows)["u1"][0]
+    assert (agg.graded_count, agg.first_score, agg.best_score) == (2, 40.0, 85.0)
+    assert agg.median_gap_seconds is None
+    assert agg.min_gap_seconds is None
+    assert agg.first_to_best_seconds is None
+    explicit = pi.problem_aggregates(rows, None, created_at_by_attempt=None)["u1"][0]
+    assert explicit == agg
+
+
+def test_problem_aggregates_timing_from_side_map_hand_computed():
+    """Attempts 1/2/3 at 0 s, 60 s, 360 s -> consecutive gaps [60, 300];
+    median([60, 300]) = 180.0, min = 60.0. Best is attempt 2 (score 85), first
+    is attempt 1, so first_to_best = 60 s."""
+    aggs = pi.problem_aggregates(
+        [("u1", 10, 1, 40.0), ("u1", 10, 2, 85.0), ("u1", 10, 3, 70.0)],
+        None,
+        created_at_by_attempt={1: _at(0), 2: _at(60), 3: _at(360)},
+    )
+    agg = aggs["u1"][0]
+    assert agg.median_gap_seconds == 180.0
+    assert agg.min_gap_seconds == 60.0
+    assert agg.first_to_best_seconds == 60.0
+
+
+def test_problem_aggregates_timing_never_reorders_best_wins():
+    """INVARIANT: created_at is display-only. Attempt 2 is stamped BEFORE
+    attempt 1 (clock skew); first/best selection still follows id + score
+    (first = id 1 -> 40.0, best = 85.0), and the gap is the absolute
+    magnitude, never a negative duration."""
+    aggs = pi.problem_aggregates(
+        [("u1", 10, 1, 40.0), ("u1", 10, 2, 85.0)],
+        None,
+        created_at_by_attempt={1: _at(600), 2: _at(0)},
+    )
+    agg = aggs["u1"][0]
+    assert (agg.first_score, agg.best_score) == (40.0, 85.0)
+    assert agg.min_gap_seconds == 600.0
+    assert agg.first_to_best_seconds == 600.0
+
+
+def test_problem_aggregates_timing_tolerates_a_missing_stamp():
+    """A side map missing an attempt's stamp degrades that pair's timing
+    instead of raising: gaps are computed over the stamps present, and
+    first_to_best is None when the best-producing attempt has none."""
+    aggs = pi.problem_aggregates(
+        [("u1", 10, 1, 40.0), ("u1", 10, 2, 85.0), ("u1", 10, 3, 70.0)],
+        None,
+        created_at_by_attempt={1: _at(0), 3: _at(100)},
+    )
+    agg = aggs["u1"][0]
+    assert agg.median_gap_seconds == 100.0
+    assert agg.min_gap_seconds == 100.0
+    assert agg.first_to_best_seconds is None  # best = attempt 2, no stamp
