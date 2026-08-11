@@ -38,7 +38,9 @@ no database. Composed by [performance](performance.md)'s assembler.
 - **DB loaders:** `load_engagement(db, *, search_space_id)` (student messages);
   `load_problem_aggregates(db, *, search_space_id, score_expr)` (graded
   attempts — `score_expr` is [performance](performance.md)'s `_SCORE_EXPR`,
-  passed in so the served-grade expression lives in one place).
+  passed in so the served-grade expression lives in one place; the graded
+  SELECT also carries the display-only `pa.created_at`, threaded on as
+  `created_at_by_attempt`).
 
 ## Data flow
 
@@ -46,9 +48,10 @@ no database. Composed by [performance](performance.md)'s assembler.
 Apollo side is `role = 'apollo'`), course-scoped, joined to
 `app.learning_activities` for the owning student's `user_id` (messages carry no
 user_id). `load_problem_aggregates` reads graded `app.problem_attempts` ordered
-by `pa.id`, plus a second pass surfacing the latest attempt id per (student,
-problem) over **all** attempts (any result) that drives `best_is_last`. Both
-hand raw rows to the pure folders above.
+by `pa.id` (one added column, `pa.created_at` — no new query, scan, or index),
+plus a second pass surfacing the latest attempt id per (student, problem) over
+**all** attempts (any result) that drives `best_is_last`. Both hand raw rows to
+the pure folders above.
 
 ## Invariants & gotchas
 

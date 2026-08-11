@@ -492,14 +492,19 @@ async def load_problem_aggregates(
 
     Scoring rows are graded-only, but ``best_is_last`` (the ``gave_up`` signal)
     must recognise retries of ANY result, so a second pass surfaces the latest
-    attempt id per (student, problem) over ALL attempts (graded or not)."""
+    attempt id per (student, problem) over ALL attempts (graded or not).
+
+    The graded SELECT also carries ``pa.created_at`` — DISPLAY-ONLY, threaded
+    through as the ``created_at_by_attempt`` side map for retry spacing. The
+    ``ORDER BY`` stays ``pa.id``: a timestamp must never order attempts."""
     rows = (
         (
             await db.execute(
                 text(
                     f"""
                 SELECT pa.user_id AS user_id, pa.problem_id AS problem_id,
-                       pa.id AS attempt_id, {score_expr} AS score
+                       pa.id AS attempt_id, {score_expr} AS score,
+                       pa.created_at AS created_at
                 FROM app.problem_attempts pa
                 WHERE pa.course_id = :search_space_id
                   AND pa.result = 'graded'
@@ -534,10 +539,16 @@ async def load_problem_aggregates(
     latest_attempt_ids = {
         (str(r["user_id"]), int(r["problem_id"])): int(r["latest_id"]) for r in latest_rows
     }
+    # DISPLAY-ONLY side map (P3.3): attempt id -> its created_at. Rows with a
+    # null stamp are dropped at this boundary so the pure helpers never see one.
+    created_at_by_attempt = {
+        int(r["attempt_id"]): r["created_at"] for r in rows if r["created_at"] is not None
+    }
     return problem_aggregates(
         [
             (str(r["user_id"]), int(r["problem_id"]), int(r["attempt_id"]), float(r["score"]))
             for r in rows
         ],
         latest_attempt_ids,
+        created_at_by_attempt=created_at_by_attempt,
     )

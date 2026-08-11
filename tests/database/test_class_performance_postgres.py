@@ -14,7 +14,7 @@ test schema by design — Supabase-managed, outside ``Base.metadata``).
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -340,6 +340,16 @@ async def test_full_payload_aggregates(db_session):
         "avg_gain": 45.0,
     }
 
+    # P3.3: the loader's `pa.created_at` column drives per-pair spacing.
+    # user_a's two graded attempts on problem_a are a day apart (86400 s), so
+    # the retry is timed but is NOT a rapid flip.
+    assert payload["insights"]["retry_timing"] == {
+        "pairs_retried": 1,
+        "median_gap_seconds": 86400.0,
+        "min_gap_seconds": 86400.0,
+        "rapid_flips": 0,
+    }
+
     # auth.users does not exist in this schema -> identity degrades to None.
     assert a["email"] is None and a["full_name"] is None
 
@@ -648,3 +658,51 @@ async def test_problem_drilldown_text_students_and_node_breakdown(db_session):
     assert (nodes["c1"]["display_name"], nodes["c1"]["node_type"]) == ("Steady", "condition")
     assert (nodes["c1"]["understood"], nodes["c1"]["partial"], nodes["c1"]["missed"]) == (3, 0, 0)
     assert nodes["c1"]["graded"] == 3
+
+
+async def test_rapid_retry_timing_and_flag_from_real_created_at(db_session):
+    """P3.3 end-to-end over real PG: a 42-second reword that jumped F -> A-
+    surfaces as `rapid_retry` on the student row and a `rapid_flips` tally in
+    `insights.retry_timing`. This is the assertion that covers the added
+    `pa.created_at` SELECT column (the loader is integration-only)."""
+    sid, concept_a, _cb, problem_a, _pb = await _seed_course_with_problems(db_session)
+    user = str(uuid.uuid4())
+    sess = await _seed_session(db_session, user_id=user, search_space_id=sid, concept_id=concept_a)
+    first_at = datetime(2026, 8, 11, 9, 0, tzinfo=UTC)
+
+    await _seed_attempt(
+        db_session,
+        session_id=sess,
+        user_id=user,
+        search_space_id=sid,
+        problem_id=problem_a,
+        result="graded",
+        report=_report(served=(40, "F")),
+        created_at=first_at,
+    )
+    await _seed_attempt(
+        db_session,
+        session_id=sess,
+        user_id=user,
+        search_space_id=sid,
+        problem_id=problem_a,
+        result="graded",
+        report=_report(served=(85, "A-")),
+        created_at=first_at + timedelta(seconds=42),
+    )
+    db_session.add(CourseMembership(user_id=user, course_id=sid, role="student"))
+    await db_session.flush()
+
+    payload = await class_performance(db_session, search_space_id=sid)
+
+    assert payload["insights"]["retry_timing"] == {
+        "pairs_retried": 1,
+        "median_gap_seconds": 42.0,
+        "min_gap_seconds": 42.0,
+        "rapid_flips": 1,
+    }
+    student = next(s for s in payload["students"] if s["user_id"] == user)
+    assert student["flags"] == ["rapid_retry"]
+    # Best-wins is unchanged by timing: the higher-scoring later attempt wins,
+    # and its SERVED letter is carried verbatim.
+    assert (student["avg_best"], student["best_grades"][0]["letter"]) == (85.0, "A-")
