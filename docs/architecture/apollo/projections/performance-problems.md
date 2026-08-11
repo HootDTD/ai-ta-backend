@@ -5,6 +5,7 @@ owns:
   - apollo/projections/performance_problems.py
 related:
   - apollo/projections/performance
+  - apollo/projections/performance-insights
   - apollo/overseer/topic-score
   - apollo/conversation/handlers/done
 last_verified: 2026-08-11

@@ -398,7 +398,7 @@ def test_build_insights_all_null():
     }
 
 
-def test_build_insights_composes_all_three():
+def test_build_insights_composes_every_block():
     points = _points([(i, i * 10.0) for i in range(1, 9)])
     aggs = {"u1": [ProblemAgg(10, 2, 40.0, 90.0, True)]}
     insights = pi.build_insights(points, aggs)

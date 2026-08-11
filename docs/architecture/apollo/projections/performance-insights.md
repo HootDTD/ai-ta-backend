@@ -62,6 +62,12 @@ the pure folders above.
   `MIN_CORRELATION_N` must NOT be applied to `retry_timing`: it is a per-pair
   signal, not a population statistic. `pearson` returns 0.0 on zero variance
   (undefined correlation reported as no signal).
+- **`retry_timing.median_gap_seconds` is the median of the per-pair median
+  gaps** — each retried pair's own median gap is computed first, and the
+  class-level value is the median across those per-pair values, NOT a single
+  median taken over every raw inter-attempt gap in the class. `min_gap_seconds`
+  stays exact: the minimum of each pair's minimum gap equals the true minimum
+  over every raw gap.
 - **Effort quartiles tie-break on `user_id`, NEVER grade:** equal-`teaching_turns`
   students are ordered by `user_id` (neutral, deterministic). Ordering ties by
   grade would smear equal-effort students across quartile boundaries and
@@ -75,9 +81,12 @@ the pure folders above.
   GRINDING_MAX_GAIN`), `rapid_retry` (P3.3: `graded_count >= 2` AND
   `min_gap_seconds < RAPID_RETRY_MAX_SECONDS` (300) AND `best - first >=
   RAPID_RETRY_MIN_GAIN` (30.0) — a band jump by pure arithmetic, since the
-  widest `LETTER_BANDS` band F = [0, 30) is exactly 30 wide). Stable order:
-  not_started, low_effort, gave_up, grinding, rapid_retry. `_is_rapid_flip` is
-  the SINGLE predicate behind both this flag and `retry_timing.rapid_flips`.
+  widest `LETTER_BANDS` band F = [0, 30) is exactly 30 wide). The fast gap and
+  the gain are measured over the pair as a whole, not necessarily over the same
+  transition — on pairs with 3+ attempts this is a heuristic, not proof that one
+  single retry did both. Stable order: not_started, low_effort, gave_up,
+  grinding, rapid_retry. `_is_rapid_flip` is the SINGLE predicate behind both
+  this flag and `retry_timing.rapid_flips`.
 - **Same served-grade semantics as v1 everywhere** — best-wins here is the same
   max-score/latest-id order `_SCORE_EXPR` produces, so retry gain never disagrees
   with the best-wins grade the student was shown.

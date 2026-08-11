@@ -204,6 +204,7 @@ def _pair_timings(
     first_at = created_at_by_attempt.get(ordered_ids[0])
     best_at = created_at_by_attempt.get(best_id)
     if first_at is not None and best_at is not None:
+        # currently unconsumed; candidate input for P3.2 (wrongness signal) — drop if still unread then.
         timings["first_to_best_seconds"] = _round1(abs((best_at - first_at).total_seconds()))
     return timings
 
@@ -253,6 +254,7 @@ def problem_aggregates(
                 best_is_last=best_id == last_id,
                 median_gap_seconds=timings["median_gap_seconds"],
                 min_gap_seconds=timings["min_gap_seconds"],
+                # currently unconsumed; candidate input for P3.2 (wrongness signal) — drop if still unread then.
                 first_to_best_seconds=timings["first_to_best_seconds"],
             )
         )
@@ -297,7 +299,9 @@ def _is_rapid_flip(agg: ProblemAgg) -> bool:
     band (``RAPID_RETRY_MIN_GAIN``). ONE predicate serves both the per-student
     ``rapid_retry`` flag and the class-level ``rapid_flips`` tally, so the two
     can never disagree. A pair with no timing (no side map, pre-P3.3 fixtures)
-    never qualifies."""
+    never qualifies. The fast gap and the gain are measured over the pair as a
+    whole, not necessarily over the same transition — on pairs with 3+ attempts
+    this is a heuristic, not proof that one single retry did both."""
     return (
         agg.graded_count >= 2
         and agg.min_gap_seconds is not None
