@@ -463,6 +463,7 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
         await performance_problems.load_problem_meta(db, problem_ids=problem_ids),
         identities,
         await performance_problems.load_graded_reference_nodes(db, problem_ids=problem_ids),
+        aggregates,
     )
     # Correlation / quartiles run only over students who have a served grade;
     # the point carries the same avg_best the row shows, the email label, and

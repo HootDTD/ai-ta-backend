@@ -329,6 +329,11 @@ async def test_full_payload_aggregates(db_session):
     pa_dist = {row["letter"]: row["count"] for row in pa_block["distribution"]}
     assert pa_dist["A-"] == 1 and pa_dist["F"] == 0
 
+    # P3.3: the per-problem student row carries the PAIR's attempt count and
+    # median gap (user_a's two graded attempts on problem_a, 86400 s apart).
+    assert pa_block["students"][0]["attempts"] == 2
+    assert pa_block["students"][0]["median_gap_seconds"] == 86400.0
+
     # Insights: only user_a is graded (n=1) -> correlation & quartiles suppressed;
     # but user_a retried problem_a, so retry_payoff is populated.
     assert payload["insights"]["correlation"] is None
@@ -706,3 +711,15 @@ async def test_rapid_retry_timing_and_flag_from_real_created_at(db_session):
     # Best-wins is unchanged by timing: the higher-scoring later attempt wins,
     # and its SERVED letter is carried verbatim.
     assert (student["avg_best"], student["best_grades"][0]["letter"]) == (85.0, "A-")
+
+    block = next(p for p in payload["problems"] if p["problem_id"] == problem_a)
+    assert block["students"] == [
+        {
+            "user_id": user,
+            "email": None,
+            "score": 85.0,
+            "letter": "A-",
+            "attempts": 2,
+            "median_gap_seconds": 42.0,
+        }
+    ]

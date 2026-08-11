@@ -9,7 +9,7 @@ related:
   - apollo/projections/classroom
   - apollo/overseer/topic-score
   - apollo/conversation/routing/router
-last_verified: 2026-08-08
+last_verified: 2026-08-11
 stub: false
 ---
 
@@ -41,6 +41,15 @@ endpoints). No new grading, inference, LLM, or Neo4j.
   shared `letter_distribution` behind `grade_distribution` — now lives in
   [performance-problems](performance-problems.md); this leaf's assembler threads
   the best-wins rows + identities into it.
+- **P3.3 payload deltas** (design spec 2026-08-11, additive only, instrumentation
+  with no grade change): NEW `insights.retry_timing`
+  (`{pairs_retried, median_gap_seconds, min_gap_seconds, rapid_flips}`, null
+  under the same gate as `retry_payoff`); each `problems[].students[]` row
+  gained `attempts` + `median_gap_seconds`; `students[].flags` gained a 5th
+  flag `rapid_retry`. The assembler now threads the `aggregates` map it already
+  computes into `build_problems` as a 5th argument. All timing derives from a
+  single added SELECT column, `pa.created_at`, which is DISPLAY-ONLY — no
+  ordering, selection, or score expression is keyed on it.
 
 ## Data flow
 
