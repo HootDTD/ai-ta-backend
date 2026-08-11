@@ -394,6 +394,7 @@ def test_build_insights_all_null():
         "correlation": None,
         "effort_quartiles": None,
         "retry_payoff": None,
+        "retry_timing": None,
     }
 
 
@@ -404,6 +405,7 @@ def test_build_insights_composes_all_three():
     assert insights["correlation"]["n"] == 8
     assert insights["effort_quartiles"] is not None
     assert insights["retry_payoff"]["students_retried"] == 1
+    assert insights["retry_timing"]["pairs_retried"] == 1
 
 
 # --- P3.3 retry spacing: gap_seconds ----------------------------------------
@@ -550,3 +552,51 @@ def test_flag_order_places_rapid_retry_last():
     )
     # not_started, low_effort, gave_up, grinding, rapid_retry — stable order.
     assert flags == ["low_effort", "rapid_retry"]
+
+
+# --- P3.3 class-level retry_timing ------------------------------------------
+
+
+def test_build_retry_timing_uses_the_retry_payoff_gate_not_min_correlation_n():
+    """Null when NO pair has >= 2 graded attempts — the same gate as
+    build_retry_payoff, so the two teacher strips appear and disappear
+    together. MIN_CORRELATION_N (8) is a population-statistics gate and must
+    NOT apply: a single retried pair is a real per-pair signal."""
+    assert pi.build_retry_timing({"u1": [ProblemAgg(10, 1, 50.0, 50.0, True)]}) is None
+    assert pi.build_retry_timing({}) is None
+    one_pair = {"u1": [ProblemAgg(10, 2, 20.0, 90.0, False, 60.0, 42.0)]}
+    assert pi.build_retry_timing(one_pair) is not None  # n=1 < 8, still served
+
+
+def test_build_retry_timing_hand_computed():
+    """Retried pairs: u1/10 (median 60, min 42, gain 70) and u2/10 (median 900,
+    min 600, gain 10). u1/20 is single-attempt and excluded.
+    median([60, 900]) = 480.0 ; min([42, 600]) = 42.0.
+    rapid_flips: u1/10 qualifies (42 < 300 and 70 >= 30); u2/10 does not
+    (600 >= 300, and its 10-point gain is under the band-jump floor)."""
+    aggregates = {
+        "u1": [
+            ProblemAgg(10, 2, 20.0, 90.0, False, 60.0, 42.0),
+            ProblemAgg(20, 1, 55.0, 55.0, True),
+        ],
+        "u2": [ProblemAgg(10, 3, 60.0, 70.0, False, 900.0, 600.0)],
+    }
+    assert pi.build_retry_timing(aggregates) == {
+        "pairs_retried": 2,
+        "median_gap_seconds": 480.0,
+        "min_gap_seconds": 42.0,
+        "rapid_flips": 1,
+    }
+
+
+def test_build_retry_timing_reports_null_stats_for_untimed_retries():
+    """A retried pair with no timestamps (no side map / pre-P3.3 rows) still
+    counts toward pairs_retried, but contributes no spacing statistic and can
+    never be a rapid flip — the strip says 'retried, timing unknown' rather
+    than fabricating a zero."""
+    assert pi.build_retry_timing({"u1": [ProblemAgg(10, 2, 20.0, 90.0, False)]}) == {
+        "pairs_retried": 1,
+        "median_gap_seconds": None,
+        "min_gap_seconds": None,
+        "rapid_flips": 0,
+    }

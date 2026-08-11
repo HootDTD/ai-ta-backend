@@ -413,6 +413,34 @@ def build_retry_payoff(
     }
 
 
+def build_retry_timing(
+    aggregates: dict[str, list[ProblemAgg]],
+) -> dict[str, Any] | None:
+    """Class-wide SPACING over every retried (student, problem) pair: how many
+    pairs were retried, the median and minimum inter-attempt gap across them,
+    and how many of them were rapid flips (`_is_rapid_flip` — the same
+    predicate behind the per-student `rapid_retry` flag).
+
+    Suppressed (None) under the SAME gate as `build_retry_payoff` — no pair
+    with >= 2 graded attempts — so the two teacher strips appear and disappear
+    together. Deliberately NOT gated on `MIN_CORRELATION_N`: that threshold
+    suppresses population statistics (correlation, quartiles), whereas this is
+    a per-pair signal that is meaningful at n=1. Pairs with no timestamps
+    still count toward `pairs_retried` but contribute no gap statistic."""
+    retried = [agg for aggs in aggregates.values() for agg in aggs if agg.graded_count >= 2]
+    if not retried:
+        return None
+    medians = [a.median_gap_seconds for a in retried if a.median_gap_seconds is not None]
+    mins = [a.min_gap_seconds for a in retried if a.min_gap_seconds is not None]
+    overall_median = median(medians)
+    return {
+        "pairs_retried": len(retried),
+        "median_gap_seconds": _round1(overall_median) if overall_median is not None else None,
+        "min_gap_seconds": _round1(min(mins)) if mins else None,
+        "rapid_flips": sum(1 for a in retried if _is_rapid_flip(a)),
+    }
+
+
 def build_insights(
     graded_students: list[dict[str, Any]],
     aggregates: dict[str, list[ProblemAgg]],
@@ -423,6 +451,7 @@ def build_insights(
         "correlation": build_correlation(graded_students),
         "effort_quartiles": build_effort_quartiles(graded_students),
         "retry_payoff": build_retry_payoff(aggregates),
+        "retry_timing": build_retry_timing(aggregates),
     }
 
 

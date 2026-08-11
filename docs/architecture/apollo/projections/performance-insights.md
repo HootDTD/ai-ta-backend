@@ -34,7 +34,7 @@ no database. Composed by [performance](performance.md)'s assembler.
   timestamps (N stamps → N−1 gaps).
 - **Insight builders (pure):** `build_correlation(points)`,
   `build_effort_quartiles(students)`, `build_retry_payoff(aggregates)`,
-  `build_insights(graded_points, aggregates)`.
+  `build_retry_timing(aggregates)`, `build_insights(graded_points, aggregates)`.
 - **DB loaders:** `load_engagement(db, *, search_space_id)` (student messages);
   `load_problem_aggregates(db, *, search_space_id, score_expr)` (graded
   attempts — `score_expr` is [performance](performance.md)'s `_SCORE_EXPR`,
@@ -53,9 +53,12 @@ hand raw rows to the pure folders above.
 ## Invariants & gotchas
 
 - **Suppression:** `correlation` + `effort_quartiles` are null below
-  `MIN_CORRELATION_N` (8) students-with-a-grade; `retry_payoff` is null when no
-  (student, problem) has >= 2 graded attempts. `pearson` returns 0.0 on zero
-  variance (undefined correlation reported as no signal).
+  `MIN_CORRELATION_N` (8) students-with-a-grade; `retry_payoff` AND
+  `retry_timing` are null when no (student, problem) has >= 2 graded attempts
+  — the same gate, so both teacher strips appear and disappear together.
+  `MIN_CORRELATION_N` must NOT be applied to `retry_timing`: it is a per-pair
+  signal, not a population statistic. `pearson` returns 0.0 on zero variance
+  (undefined correlation reported as no signal).
 - **Effort quartiles tie-break on `user_id`, NEVER grade:** equal-`teaching_turns`
   students are ordered by `user_id` (neutral, deterministic). Ordering ties by
   grade would smear equal-effort students across quartile boundaries and

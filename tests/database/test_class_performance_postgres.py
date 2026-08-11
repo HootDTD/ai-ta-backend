@@ -516,6 +516,7 @@ async def test_empty_course_returns_zeroed_payload(db_session):
         "correlation": None,
         "effort_quartiles": None,
         "retry_payoff": None,
+        "retry_timing": None,
     }
 
 

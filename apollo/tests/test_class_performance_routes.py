@@ -81,6 +81,7 @@ async def test_performance_route_returns_payload(db_session, monkeypatch):
         "correlation": None,
         "effort_quartiles": None,
         "retry_payoff": None,
+        "retry_timing": None,
     }
 
 
