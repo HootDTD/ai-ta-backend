@@ -421,9 +421,11 @@ def build_retry_timing(
     aggregates: dict[str, list[ProblemAgg]],
 ) -> dict[str, Any] | None:
     """Class-wide SPACING over every retried (student, problem) pair: how many
-    pairs were retried, the median and minimum inter-attempt gap across them,
-    and how many of them were rapid flips (`_is_rapid_flip` — the same
-    predicate behind the per-student `rapid_retry` flag).
+    pairs were retried, the gap statistics across them — `median_gap_seconds`
+    is the median of the per-pair MEDIAN gaps (not a pooled median of all raw
+    gaps); `min_gap_seconds` is the min of per-pair mins, which IS the pooled
+    minimum — and how many of them were rapid flips (`_is_rapid_flip` — the
+    same predicate behind the per-student `rapid_retry` flag).
 
     Suppressed (None) under the SAME gate as `build_retry_payoff` — no pair
     with >= 2 graded attempts — so the two teacher strips appear and disappear
