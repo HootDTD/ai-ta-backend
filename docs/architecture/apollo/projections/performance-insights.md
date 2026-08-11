@@ -5,7 +5,7 @@ owns:
   - apollo/projections/performance_insights.py
 related:
   - apollo/projections/performance
-last_verified: 2026-07-30
+last_verified: 2026-08-11
 stub: false
 ---
 
@@ -26,7 +26,9 @@ no database. Composed by [performance](performance.md)'s assembler.
   per-student `ProblemAgg` list (`first_score` = lowest-id graded attempt,
   `best_score` = best-wins, `best_is_last`); `retry_fields(aggs)` →
   `{problems_retried, avg_gain}`; `student_flags(...)` and `student_extras(...)`
-  (the `{engagement, flags}` add-on).
+  (the `{engagement, flags}` add-on); `gap_seconds(timestamps)` → consecutive
+  ABSOLUTE deltas in seconds over one pair's id-ordered graded-attempt
+  timestamps (N stamps → N−1 gaps).
 - **Insight builders (pure):** `build_correlation(points)`,
   `build_effort_quartiles(students)`, `build_retry_payoff(aggregates)`,
   `build_insights(graded_points, aggregates)`.

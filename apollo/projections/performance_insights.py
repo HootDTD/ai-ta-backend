@@ -21,6 +21,7 @@ expression is defined in exactly one place (no import cycle, no duplication).
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any, NamedTuple
 
 from sqlalchemy import text
@@ -120,6 +121,20 @@ def spearman(xs: list[float], ys: list[float]) -> float:
 def word_count(content: str) -> int:
     """Whitespace-split word count of a message body."""
     return len(content.split())
+
+
+def gap_seconds(timestamps: list[datetime]) -> list[float]:
+    """Consecutive gaps, in seconds, between one (student, problem) pair's
+    graded-attempt timestamps: N stamps -> N-1 gaps (0 or 1 stamp -> none).
+
+    Deltas are ABSOLUTE magnitudes. The caller's contract is ascending attempt
+    id — never a sort by time, because ``created_at`` is display-only and must
+    never become an ordering key (best-wins is keyed on ``pa.id``) — so a
+    clock-skewed row reports a real duration instead of a negative one. The
+    deltas are TZ-free absolute durations; never bucket one by local date."""
+    return [
+        abs((timestamps[i] - timestamps[i - 1]).total_seconds()) for i in range(1, len(timestamps))
+    ]
 
 
 # --- pure aggregations ------------------------------------------------------

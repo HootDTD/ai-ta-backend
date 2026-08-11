@@ -10,6 +10,7 @@ Postgres in ``tests/database/test_class_performance_postgres.py``.
 from __future__ import annotations
 
 import math
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -403,3 +404,37 @@ def test_build_insights_composes_all_three():
     assert insights["correlation"]["n"] == 8
     assert insights["effort_quartiles"] is not None
     assert insights["retry_payoff"]["students_retried"] == 1
+
+
+# --- P3.3 retry spacing: gap_seconds ----------------------------------------
+
+_T0 = datetime(2026, 8, 11, 9, 0, 0, tzinfo=UTC)
+
+
+def _at(seconds: float) -> datetime:
+    """A timestamp ``seconds`` after the fixture epoch."""
+    return _T0 + timedelta(seconds=seconds)
+
+
+def test_gap_seconds_needs_two_stamps_to_have_a_gap():
+    # 0 stamps -> no gaps; 1 stamp -> no gaps (a single attempt has no spacing).
+    assert pi.gap_seconds([]) == []
+    assert pi.gap_seconds([_at(0)]) == []
+
+
+def test_gap_seconds_two_stamps_is_one_delta():
+    assert pi.gap_seconds([_at(0), _at(42)]) == [42.0]
+
+
+def test_gap_seconds_n_stamps_is_n_minus_one_consecutive_deltas():
+    # stamps at 0, 42, 342, 1000 -> deltas 42, 300, 658 (consecutive, not
+    # cumulative: never [42, 342, 1000] measured from the first stamp).
+    assert pi.gap_seconds([_at(0), _at(42), _at(342), _at(1000)]) == [42.0, 300.0, 658.0]
+
+
+def test_gap_seconds_unordered_input_yields_absolute_magnitudes():
+    """The caller's contract is ascending attempt id, NEVER a sort by time
+    (``created_at`` is display-only). A clock-skewed / out-of-order pair must
+    therefore still report a real duration, never a negative one."""
+    assert pi.gap_seconds([_at(300), _at(0), _at(60)]) == [300.0, 60.0]
+    assert all(gap >= 0.0 for gap in pi.gap_seconds([_at(300), _at(0), _at(60)]))
