@@ -47,6 +47,17 @@ GAVE_UP_MAX_BEST = 60
 GRINDING_MIN_ATTEMPTS = 3
 GRINDING_MAX_GAIN = 2
 
+# rapid_retry: a retry spaced closer than this is a reword, not rework. The
+# pilot's observed inter-attempt gaps (42 s .. 22 min) straddle 300 s, so this
+# catches the smell without flagging genuine rework.
+RAPID_RETRY_MAX_SECONDS = 300
+# ...that nonetheless jumped at least one whole letter band. Pure arithmetic,
+# no letter import: the WIDEST band in rubric.LETTER_BANDS (F = [0, 30)) is
+# exactly 30 wide and every other band is narrower, so a gain of 30 always
+# crosses at least one boundary. Both constants are tunable — changing either
+# changes no stored data.
+RAPID_RETRY_MIN_GAIN = 30.0
+
 
 class ProblemAgg(NamedTuple):
     """One (student, problem) pair's graded-attempt shape."""
@@ -280,6 +291,21 @@ def student_extras(
     }
 
 
+def _is_rapid_flip(agg: ProblemAgg) -> bool:
+    """The rapid-retry smell for ONE (student, problem) pair: a retry, spaced
+    closer than ``RAPID_RETRY_MAX_SECONDS``, that gained at least a full letter
+    band (``RAPID_RETRY_MIN_GAIN``). ONE predicate serves both the per-student
+    ``rapid_retry`` flag and the class-level ``rapid_flips`` tally, so the two
+    can never disagree. A pair with no timing (no side map, pre-P3.3 fixtures)
+    never qualifies."""
+    return (
+        agg.graded_count >= 2
+        and agg.min_gap_seconds is not None
+        and agg.min_gap_seconds < RAPID_RETRY_MAX_SECONDS
+        and (agg.best_score - agg.first_score) >= RAPID_RETRY_MIN_GAIN
+    )
+
+
 def student_flags(
     *,
     attempts: int,
@@ -287,7 +313,7 @@ def student_flags(
     median_words: float | None,
     aggs: list[ProblemAgg],
 ) -> list[str]:
-    """The four algorithmic attention flags, in a stable order."""
+    """The five algorithmic attention flags, in a stable order."""
     flags: list[str] = []
     if attempts == 0:
         flags.append("not_started")
@@ -305,6 +331,8 @@ def student_flags(
         for a in aggs
     ):
         flags.append("grinding")
+    if any(_is_rapid_flip(a) for a in aggs):
+        flags.append("rapid_retry")
     return flags
 
 

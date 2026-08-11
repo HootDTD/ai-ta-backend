@@ -500,3 +500,53 @@ def test_problem_aggregates_timing_tolerates_a_missing_stamp():
     assert agg.median_gap_seconds == 100.0
     assert agg.min_gap_seconds == 100.0
     assert agg.first_to_best_seconds is None  # best = attempt 2, no stamp
+
+
+# --- P3.3 rapid_retry flag --------------------------------------------------
+
+
+def test_flag_rapid_retry_fires_on_a_fast_band_jumping_retry():
+    """2 graded attempts, 42 s apart (< RAPID_RETRY_MAX_SECONDS 300), gaining
+    70 points (>= RAPID_RETRY_MIN_GAIN 30) -> rapid_retry. best 90 >= 60 so no
+    gave_up; 2 attempts < 3 so no grinding."""
+    agg = ProblemAgg(10, 2, 20.0, 90.0, False, min_gap_seconds=42.0)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[agg]) == [
+        "rapid_retry"
+    ]
+
+
+def test_flag_rapid_retry_boundaries_are_exact():
+    # gain exactly 30 and gap just under 300 -> fires (best 50 with
+    # best_is_last False keeps gave_up out of the way).
+    on_edge = ProblemAgg(10, 2, 20.0, 50.0, False, min_gap_seconds=299.9)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[on_edge]) == [
+        "rapid_retry"
+    ]
+    # gap exactly 300 is NOT < 300 -> no flag.
+    at_limit = ProblemAgg(10, 2, 20.0, 90.0, False, min_gap_seconds=300.0)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[at_limit]) == []
+
+
+def test_flag_rapid_retry_needs_all_three_conjuncts():
+    # (a) only one graded attempt -> not a retry at all.
+    single = ProblemAgg(10, 1, 20.0, 90.0, True, min_gap_seconds=60.0)
+    assert pi.student_flags(attempts=1, teaching_turns=0, median_words=None, aggs=[single]) == []
+    # (b) gain below the band-jump floor (49.9 - 20 = 29.9 < 30).
+    small_gain = ProblemAgg(10, 2, 20.0, 49.9, False, min_gap_seconds=42.0)
+    assert (
+        pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[small_gain]) == []
+    )
+    # (c) no timing at all (pre-P3.3 rows / no side map) -> never fires.
+    untimed = ProblemAgg(10, 2, 20.0, 90.0, False)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[untimed]) == []
+
+
+def test_flag_order_places_rapid_retry_last():
+    flags = pi.student_flags(
+        attempts=4,
+        teaching_turns=5,
+        median_words=3.0,
+        aggs=[ProblemAgg(10, 3, 20.0, 90.0, False, min_gap_seconds=30.0)],
+    )
+    # not_started, low_effort, gave_up, grinding, rapid_retry — stable order.
+    assert flags == ["low_effort", "rapid_retry"]

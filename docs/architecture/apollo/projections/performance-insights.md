@@ -66,7 +66,12 @@ hand raw rows to the pure folders above.
   result — graded, ungraded, or in-progress — after the best-producing one, so a
   student mid-retry is never flagged),
   `grinding` (`>= GRINDING_MIN_ATTEMPTS` graded attempts, `best - first <=
-  GRINDING_MAX_GAIN`).
+  GRINDING_MAX_GAIN`), `rapid_retry` (P3.3: `graded_count >= 2` AND
+  `min_gap_seconds < RAPID_RETRY_MAX_SECONDS` (300) AND `best - first >=
+  RAPID_RETRY_MIN_GAIN` (30.0) — a band jump by pure arithmetic, since the
+  widest `LETTER_BANDS` band F = [0, 30) is exactly 30 wide). Stable order:
+  not_started, low_effort, gave_up, grinding, rapid_retry. `_is_rapid_flip` is
+  the SINGLE predicate behind both this flag and `retry_timing.rapid_flips`.
 - **Same served-grade semantics as v1 everywhere** — best-wins here is the same
   max-score/latest-id order `_SCORE_EXPR` produces, so retry gain never disagrees
   with the best-wins grade the student was shown.
