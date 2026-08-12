@@ -123,36 +123,36 @@ Ordered grade assembly (each step delegates to the owner doc):
   `grading_provenance["grounding"]` is the replay-diff hook.
 - **The Hoot-assist cap owns its failure domain** (`overseer/aside-penalty`):
   the aside fetch and `apply_aside_caps` are wrapped so ANY exception logs and
-  leaves `coverage` UNCAPPED (never half-caps, never touches the
-  `CoverageGradingError → 503` contract). Additive
-  `grading_provenance["aside_penalty"] = {enabled, cap: 0.5,
-  assisted_node_ids}` when the gate fired; off → key absent.
+  leaves `coverage` UNCAPPED. Additive `grading_provenance["aside_penalty"] =
+  {enabled, cap: 0.5, assisted_node_ids}` when the gate fired; off → absent.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
-  coverage, served_overall}` plus two conditional keys, each absent when it
-  does not apply: `auto_done: true` iff the questioning engine (not the
-  student) triggered this Done (P0.4), and `unprobed_node_ids` — nodes
-  P1.2b dropped from THIS grade, read by `projections/performance-problems`
-  so its node drill-down never re-derives a class-wide "missed" from
-  `coverage` alone. `served_overall` snapshots `served_rubric["overall"]`;
-  re-serving surfaces read it first, falling back to `rubric.overall` for
-  pre-snapshot rows.
+  coverage, served_overall}` plus two conditional keys, absent when they don't
+  apply: `auto_done: true` iff the questioning engine (not the student)
+  triggered this Done (P0.4), and `unprobed_node_ids` — nodes P1.2b dropped
+  from THIS grade, read by `projections/performance-problems` so its
+  drill-down never re-derives a class-wide "missed" from `coverage` alone.
+  `served_overall` snapshots `served_rubric["overall"]`; re-serving surfaces
+  read it first, falling back to `rubric.overall` for pre-snapshot rows.
 - The response keeps historical `graph_lane: null` for API compatibility, and
   does NOT import `done_turn_order` (the WU-4C1 shadow chain — A7 removed it).
 - **`grading_provenance.reference_question_asides_used`** (additive) reads
   `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]` (default 0) — teacher-only.
 - **Claim lifecycle (M1, P3.4; gated in `test_apollo_done_claim_postgres.py`):**
   `_claim_grading_slot` CASes `phase` (`IS DISTINCT FROM 'SOLVING' OR
-  updated_at < now-15min`, NULL-safe) as Done's FIRST Postgres write and
-  returns its `updated_at` as a fencing STAMP, not a bool.
-  `_release_grading_claim` / `_fence_grade_commit` (the terminal
-  `phase='REPORT'` write) both guard on `phase = 'SOLVING' AND updated_at =
-  claim_stamp` — phase alone can't tell a stale claim from a LIVE reclaim at
-  the same phase; a reclaimed-out Done writes NOTHING and raises
-  `GradingInProgressError`. Release runs under `asyncio.shield` (survives a
-  client-disconnect `CancelledError`). A SECOND `_stored_grade_payload` check
-  right after the claim catches a stale pre-claim hoist (another Done graded
-  the SAME attempt mid-claim) and replays instead of re-grading; the helper
-  itself has NO side effects.
+  updated_at < now-15min`, NULL-safe) as Done's FIRST Postgres write —
+  PHASE-ONLY (fix-round-2 reverted a stamp guard: `updated_at`'s model-level
+  `onupdate` let ANY unrelated session write — chat's pending-intent commit,
+  aside metadata, session_init — invalidate the RIGHTFUL owner's own stamp).
+  **Integrity invariant**: the terminal fence `_fence_grade_commit` runs
+  before `apply_xp`/every grade-visible write as one `UPDATE ... WHERE
+  phase='SOLVING'`; Postgres serializes concurrent UPDATEs to a row, so AT
+  MOST ONE Done ever passes it. Two ACCEPTED AVAILABILITY residuals (never
+  integrity): a stale Done's release can reset a LIVE reclaim's phase (same
+  value, no stamp to tell apart) — the reclaimer loses its fence and retries;
+  a fenced-out/crashed Done's only recovery is
+  `_STALE_CLAIM_AFTER`/`handle_retry`. Release runs under `asyncio.shield`; a
+  SECOND `_stored_grade_payload` check post-claim catches a stale hoist and
+  replays instead of re-grading.
 
 ## Env flags
 

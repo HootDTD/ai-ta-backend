@@ -1,6 +1,5 @@
 """Deterministic collaborators for Done-handler unit tests."""
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from apollo.ontology import KGGraph
@@ -105,12 +104,10 @@ def _old_path_patches():
         # M1 (P3.4): the claim is a Core UPDATE against a real row, which the
         # MagicMock `db` above cannot serve — patch the seam, not the SQL. The
         # golden path is "this Done owns the claim" through to the terminal
-        # fence too (M1b delta's `_fence_grade_commit`). Fix-round-1: the
-        # claim now returns a fencing-token TIMESTAMP, not a bool.
-        patch(
-            "apollo.handlers.done._claim_grading_slot",
-            new=AsyncMock(return_value=datetime.now(UTC)),
-        ),
+        # fence too (M1b delta's `_fence_grade_commit`). Fix-round-2 reverted
+        # the claim to a plain bool (a fencing-token stamp was tried and
+        # reverted — see `_claim_grading_slot`'s docstring).
+        patch("apollo.handlers.done._claim_grading_slot", new=AsyncMock(return_value=True)),
         patch("apollo.handlers.done._release_grading_claim", new=AsyncMock()),
         # Fix-round-1 (Minor #4): `set_committed_value` requires a real
         # SQLAlchemy-mapped instance (it reaches into `instance_state`), which

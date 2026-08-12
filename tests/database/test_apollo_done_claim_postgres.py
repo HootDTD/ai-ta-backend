@@ -104,17 +104,13 @@ async def test_exactly_one_of_two_concurrent_claims_wins(pg_committing_sessions)
     maker, slug_prefix = pg_committing_sessions
     session_id = await _seed_session(maker, slug_prefix, phase=SessionPhase.TEACHING.value)
 
-    async def _claim() -> datetime | None:
+    async def _claim() -> bool:
         async with maker() as db:
             return await _claim_grading_slot(db, session_id=session_id)
 
     outcomes = await asyncio.gather(_claim(), _claim())
 
-    winners = [o for o in outcomes if o is not None]
-    losers = [o for o in outcomes if o is None]
-    assert len(winners) == 1
-    assert len(losers) == 1
-    assert isinstance(winners[0], datetime)
+    assert sorted(outcomes) == [False, True]
     assert await _phase(maker, session_id) == SessionPhase.SOLVING.value
 
 
@@ -126,7 +122,7 @@ async def test_claim_succeeds_on_a_null_phase(pg_committing_sessions):
     session_id = await _seed_session(maker, slug_prefix, phase=None)
 
     async with maker() as db:
-        assert await _claim_grading_slot(db, session_id=session_id) is not None
+        assert await _claim_grading_slot(db, session_id=session_id) is True
     assert await _phase(maker, session_id) == SessionPhase.SOLVING.value
 
 
@@ -139,7 +135,7 @@ async def test_a_stale_claim_is_reclaimable(pg_committing_sessions):
     session_id = await _seed_session(maker, slug_prefix, phase=SessionPhase.SOLVING.value)
 
     async with maker() as db:
-        assert await _claim_grading_slot(db, session_id=session_id) is None
+        assert await _claim_grading_slot(db, session_id=session_id) is False
 
         stale = datetime.now(UTC) - _STALE_CLAIM_AFTER - timedelta(minutes=1)
         await db.execute(
@@ -150,7 +146,7 @@ async def test_a_stale_claim_is_reclaimable(pg_committing_sessions):
         )
         await db.commit()
 
-        assert await _claim_grading_slot(db, session_id=session_id) is not None
+        assert await _claim_grading_slot(db, session_id=session_id) is True
 
 
 async def test_release_restores_the_prior_phase(pg_committing_sessions):
@@ -158,15 +154,14 @@ async def test_release_restores_the_prior_phase(pg_committing_sessions):
     session_id = await _seed_session(maker, slug_prefix, phase=SessionPhase.TEACHING.value)
 
     async with maker() as db:
-        stamp = await _claim_grading_slot(db, session_id=session_id)
-        assert stamp is not None
+        assert await _claim_grading_slot(db, session_id=session_id) is True
         await _release_grading_claim(
-            db, session_id=session_id, prior_phase=SessionPhase.TEACHING.value, claim_stamp=stamp
+            db, session_id=session_id, prior_phase=SessionPhase.TEACHING.value
         )
 
     assert await _phase(maker, session_id) == SessionPhase.TEACHING.value
     async with maker() as db:
-        assert await _claim_grading_slot(db, session_id=session_id) is not None
+        assert await _claim_grading_slot(db, session_id=session_id) is True
 
 
 async def test_release_of_a_reclaimed_stale_claim_falls_back_to_teaching(
@@ -178,22 +173,9 @@ async def test_release_of_a_reclaimed_stale_claim_falls_back_to_teaching(
     maker, slug_prefix = pg_committing_sessions
     session_id = await _seed_session(maker, slug_prefix, phase=SessionPhase.SOLVING.value)
 
-    # Seeded directly (not via `_claim_grading_slot`), so the release's
-    # `claim_stamp` must match whatever `updated_at` the seed actually wrote —
-    # this test is about the `prior_phase` fallback, not the stamp fence.
-    async with maker() as db:
-        seeded_stamp = (
-            await db.execute(
-                select(TutoringSession.updated_at).where(TutoringSession.id == session_id)
-            )
-        ).scalar_one()
-
     async with maker() as db:
         await _release_grading_claim(
-            db,
-            session_id=session_id,
-            prior_phase=SessionPhase.SOLVING.value,
-            claim_stamp=seeded_stamp,
+            db, session_id=session_id, prior_phase=SessionPhase.SOLVING.value
         )
 
     assert await _phase(maker, session_id) == SessionPhase.TEACHING.value
@@ -201,63 +183,25 @@ async def test_release_of_a_reclaimed_stale_claim_falls_back_to_teaching(
 
 async def test_release_never_clobbers_a_later_claim(pg_committing_sessions):
     """The release is itself a CAS guarded on `phase = 'SOLVING'`, so a release
-    arriving after the session already moved on (REPORT) is a no-op — the
-    phase mismatch alone is enough here regardless of `claim_stamp`."""
+    arriving after the session already moved on (REPORT) is a no-op.
+
+    P3.4 fix-round-2 note: this is phase-only, deliberately (a fencing-token
+    guard was tried and reverted — see `_release_grading_claim`'s docstring).
+    The ACCEPTED residual this leaves is the mirror image of this test: a
+    release racing a LIVE reclaim that is STILL sitting at `phase = 'SOLVING'`
+    (not yet REPORT) is NOT distinguishable from this test's REPORT case and
+    DOES clobber it — see the docstring for why that's an availability cost,
+    never a grade-integrity one, and judged acceptable versus the token's
+    common-case regression."""
     maker, slug_prefix = pg_committing_sessions
     session_id = await _seed_session(maker, slug_prefix, phase=SessionPhase.REPORT.value)
 
     async with maker() as db:
         await _release_grading_claim(
-            db,
-            session_id=session_id,
-            prior_phase=SessionPhase.TEACHING.value,
-            claim_stamp=datetime.now(UTC),
+            db, session_id=session_id, prior_phase=SessionPhase.TEACHING.value
         )
 
     assert await _phase(maker, session_id) == SessionPhase.REPORT.value
-
-
-async def test_release_with_a_stale_stamp_does_not_clobber_a_live_reclaim(
-    pg_committing_sessions,
-):
-    """Fencing token (P3.4 fix-round-1): the OLD `_release_grading_claim` guard
-    was `phase = 'SOLVING'` alone, which a stale Done's (A's) compensating
-    release could match just as well as another Done's (B's) LIVE reclaim —
-    both sit at the identical phase — silently killing B's in-flight claim.
-    `claim_stamp` closes that: A's release, carrying ITS OWN (now-stale)
-    stamp, must no-op against B's claim, which carries a DIFFERENT stamp."""
-    maker, slug_prefix = pg_committing_sessions
-    session_id = await _seed_session(maker, slug_prefix, phase=SessionPhase.TEACHING.value)
-
-    async with maker() as db:
-        stamp_a = await _claim_grading_slot(db, session_id=session_id)
-    assert stamp_a is not None
-
-    # A stalls; age the claim past the staleness window so B is entitled to
-    # reclaim.
-    async with maker() as db:
-        await db.execute(
-            update(TutoringSession)
-            .where(TutoringSession.id == session_id)
-            .values(updated_at=datetime.now(UTC) - _STALE_CLAIM_AFTER - timedelta(minutes=1))
-            .execution_options(synchronize_session=False)
-        )
-        await db.commit()
-
-    async with maker() as db:
-        stamp_b = await _claim_grading_slot(db, session_id=session_id)
-    assert stamp_b is not None
-    assert stamp_b != stamp_a
-    assert await _phase(maker, session_id) == SessionPhase.SOLVING.value  # B's live claim
-
-    # A, unaware it lost the race, tries to release using ITS OWN (stale)
-    # stamp — must be a no-op: B's live claim survives untouched.
-    async with maker() as db:
-        await _release_grading_claim(
-            db, session_id=session_id, prior_phase=SessionPhase.TEACHING.value, claim_stamp=stamp_a
-        )
-
-    assert await _phase(maker, session_id) == SessionPhase.SOLVING.value
 
 
 async def test_stored_grade_payload_replays_without_side_effects(pg_committing_sessions):
@@ -510,8 +454,7 @@ async def test_terminal_fence_rejects_a_done_reclaimed_out_from_under_it(
 
     # A claims the slot.
     async with maker() as db:
-        stamp_a = await _claim_grading_slot(db, session_id=session_id)
-    assert stamp_a is not None
+        assert await _claim_grading_slot(db, session_id=session_id) is True
 
     # A stalls: age its claim past the 15-minute staleness window so B's
     # reclaim below is a LEGITIMATE reclaim, not a bug.
@@ -538,10 +481,9 @@ async def test_terminal_fence_rejects_a_done_reclaimed_out_from_under_it(
     assert b_result["xp_earned"] == 10
     assert await _phase(maker, session_id) == SessionPhase.REPORT.value
 
-    # A finally reaches ITS terminal fence, carrying ITS OWN (now-stale)
-    # claim_stamp — too late, B already owns REPORT under a different stamp.
+    # A finally reaches ITS terminal fence — too late, B already owns REPORT.
     async with maker() as db:
-        fenced_in = await _fence_grade_commit(db, session_id=session_id, claim_stamp=stamp_a)
+        fenced_in = await _fence_grade_commit(db, session_id=session_id)
         await db.rollback()
     assert fenced_in is False
 

@@ -12,7 +12,6 @@ modules are imported and called directly. Test attempt_ids are NEGATIVE.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import ANY, AsyncMock, patch
 
@@ -161,12 +160,9 @@ async def test_done_stamps_graded_at():
         patch("apollo.handlers.done.KGStore.stamp_graded_at", stamp_spy),
         # M1 (P3.4): the claim + terminal fence are Core UPDATEs against a real
         # row, which `_StubDB`'s queued-result stand-in cannot serve — patch the
-        # seams, not the SQL, same as the golden unit-test harness. Fix-round-1:
-        # the claim now returns a fencing-token TIMESTAMP, not a bool.
-        patch(
-            "apollo.handlers.done._claim_grading_slot",
-            new=AsyncMock(return_value=datetime.now(UTC)),
-        ),
+        # seams, not the SQL, same as the golden unit-test harness. Fix-round-2
+        # reverted the claim to a plain bool.
+        patch("apollo.handlers.done._claim_grading_slot", new=AsyncMock(return_value=True)),
         patch("apollo.handlers.done._release_grading_claim", new=AsyncMock()),
         patch("apollo.handlers.done._fence_grade_commit", new=AsyncMock(return_value=True)),
         # Fix-round-1 (Minor #4): `set_committed_value` needs a real
