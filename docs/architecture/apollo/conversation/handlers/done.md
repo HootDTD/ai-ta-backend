@@ -19,7 +19,7 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-08-08
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -37,6 +37,10 @@ score→letter→narrative) live in `overseer/_index`, not restated here.
   intent/questioning gate decides "done"; the questioning gate passes
   `auto_done=True`). Returns the student grade payload (`rubric`, `topics`,
   `progress`, `scorecard`, `grading_provenance`, `transcript`, …).
+- **M1 (P3.4) claim primitives** (built, NOT yet wired into `handle_done` —
+  see Invariants): `_CLAIM_PHASE`, `_STALE_CLAIM_AFTER`,
+  `_claim_grading_slot`, `_release_grading_claim`, `_progress_block`,
+  `_stored_grade_payload`.
 
 ## Data flow
 
@@ -50,27 +54,22 @@ Ordered grade assembly (each step delegates to the owner doc):
    on the real Done). Then read the student graph (degraded Neo4j tolerated) and
    `store.freeze(session_id)`.
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
-2a. **Question ledger** (`_question_ledger`, 2026-08-07 P1.2b/P1.3): ONE read of
-   this attempt's `QuestionOpportunity` rows (ordered by `id`), never a second,
-   feeding the adjudicator's `tally_context` (step 3 — `_tally_context` shapes
-   `[{node_id, state, times_asked, student_quote|null}]`, last usable `evidence`
-   quote) AND the scorer's `asked_node_ids` (step 5). The scorer gets
-   `_probed_node_ids(rows)`, NOT the raw row set: only rows showing real
-   ENGAGEMENT count (`times_asked > 0`, a state past bare `missing`, or a
-   verbatim quote), because a degenerate `fallback_served` turn mints a row
-   without probing anything and counting it re-created the false F. Own failure
-   domain: any exception logs `apollo_question_ledger_fetch_failed` → `None` for
-   both (pre-fix grade, 503 untouched); an EMPTY ledger stays `frozenset()`.
+2a. **Question ledger** (`_question_ledger`, P1.2b/P1.3): ONE read of this
+   attempt's `QuestionOpportunity` rows (by `id`), feeding the adjudicator's
+   `tally_context` (step 3 — `[{node_id, state, times_asked,
+   student_quote|null}]`) AND the scorer's `asked_node_ids` (step 5) via
+   `_probed_node_ids(rows)` — NOT the raw row set, since a degenerate
+   `fallback_served` turn mints a row without probing anything. Any exception
+   logs and yields `None` for both (pre-fix grade); an EMPTY ledger stays
+   `frozenset()`.
 3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans`
-   (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated
-   evidence spans. Just before it, `_course_evidence_safe` checks both
-   `INTERACTION2` and the problem concept against `INTERACTION_CONCEPTS`, then
-   renders the session's `grounding_bundle` into the optional `course_evidence`
-   block (also step 6).
-   `_full_transcript` excludes any `TutoringMessage` tagged
-   `intent == ASIDE_MESSAGE_INTENT_TAG` (`hoot-bridge-reference-answer`) — the
-   INTERACTION4 hint-lane aside text never enters grading, but the student's
-   untagged triggering question does (it's real signal about a gap).
+   (`overseer/transcript-coverage`) over `_full_transcript` → coverage +
+   validated evidence spans. `_course_evidence_safe` (before it) checks
+   `INTERACTION2` + `INTERACTION_CONCEPTS`, then renders `grounding_bundle`
+   into the optional `course_evidence` block (also step 6). `_full_transcript`
+   excludes `TutoringMessage` tagged `intent == ASIDE_MESSAGE_INTENT_TAG`
+   (`hoot-bridge-reference-answer`) — INTERACTION4 hint-lane text never enters
+   grading, but the student's untagged triggering question does.
 3a. **Hoot-assist cap** (INTERACTION5, `overseer/aside-penalty`): gated on
    `interaction5_enabled()` AND `interaction_allowed_for_concept`, `_aside_texts`
    fetches the same aside rows `_full_transcript` EXCLUDES (its exact complement)
@@ -83,16 +82,14 @@ Ordered grade assembly (each step delegates to the owner doc):
    and given `asked_node_ids` (step 2a) so never-engaged graded nodes leave the
    denominator (P1.2b). On success `served_rubric` REPLACES `overall` with the
    topic score/letter (new dict; `rubric` itself is never mutated).
-6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative plus, on
-   topic-score JSON success, structured per-topic feedback from the student's
-   verbatim utterances; the same `course_evidence` lets feedback cite the course.
-   It is handed `graded_topics_only(topic_score)`, NOT the full result: an
-   `unprobed` topic is excluded from the grade, so narrating it as a gap would
-   contradict the served `topics[]` (P2.1/U2). The remediation pass gets that
-   same view; with `INTERACTION3` on and the concept allowed by
-   `INTERACTION_CONCEPTS`, one best-effort pass decorates at most three weak
-   topics with citation-only review pointers. Run via `asyncio.to_thread`
-   (2026-08-04) so the narrative LLM never blocks the event loop.
+6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative plus,
+   on topic-score JSON success, structured per-topic feedback from the
+   student's verbatim utterances. Handed `graded_topics_only(topic_score)`,
+   NOT the full result (an `unprobed` topic is excluded from the grade, so
+   narrating it as a gap would contradict served `topics[]`, P2.1/U2); the
+   remediation pass (`INTERACTION3`, ≤3 weak topics, citation-only) shares
+   that view. Runs via `asyncio.to_thread` so the narrative LLM never blocks
+   the event loop.
 7. XP: `compute_xp_earned`/`compute_progress_envelope`/`apply_xp`
    (`overseer/xp` + `persistence/progress-repo`); reattempt detection via
    `has_prior_graded_attempt` (`persistence/done-write-linkage`).
@@ -122,36 +119,39 @@ Ordered grade assembly (each step delegates to the owner doc):
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
   dormant Bayesian path would double-apply evidence).
 - **Course grounding never adds a failure mode** (`overseer/grounding`):
-  `_course_evidence_safe` runs AHEAD of the sole grading lane and is soft-fail
-  by construction — flag off, concept not allowed, NULL/corrupt bundle, nothing
-  student-safe, or ANY exception → `None` ⇒ both prompts byte-identical to
-  pre-feature. Additive `grading_provenance["grounding"]` is the replay-diff hook.
+  `_course_evidence_safe` runs AHEAD of the grading lane and is soft-fail by
+  construction — flag off, concept disallowed, corrupt bundle, or ANY
+  exception → `None` (both prompts byte-identical to pre-feature).
 - **The Hoot-assist cap owns its failure domain** (`overseer/aside-penalty`):
-  both the aside fetch and the `apply_aside_caps` pass are wrapped so ANY
-  exception is logged and swallowed, leaving `coverage` the original UNCAPPED
-  verdict (the cap RHS binds atomically, so a raise never half-caps). It runs
-  AHEAD of the sole grading lane and NEVER touches the `CoverageGradingError →
-  503` contract; the cap can only lower a grade. Additive
-  `grading_provenance["aside_penalty"] = {enabled, cap: 0.5, assisted_node_ids}`
-  is emitted ONLY when the gate was on AND asides were fetched (empty
-  `assisted_node_ids` if nothing matched); off → key absent, byte-identical.
+  both the aside fetch and `apply_aside_caps` are wrapped so ANY exception
+  logs and leaves `coverage` UNCAPPED (never half-caps); it runs AHEAD of the
+  sole grading lane and never touches the `CoverageGradingError → 503`
+  contract, and can only lower a grade. Additive
+  `grading_provenance["aside_penalty"] = {enabled, cap: 0.5,
+  assisted_node_ids}` when the gate fired; off → key absent.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
-  coverage, served_overall}` plus two conditional keys, each absent when it does
-  not apply so those rows stay byte-identical: `auto_done: true` iff the
-  questioning engine (not the student) triggered this Done (P0.4 audit stamp),
-  and `unprobed_node_ids` — the graded nodes P1.2b dropped from THIS grade, read
-  by `projections/performance-problems`, whose node drill-down would otherwise
-  re-derive them from `coverage` alone and report a class-wide "missed" on a
-  topic no grade counted. `served_overall` (2026-07-26) snapshots
-  `served_rubric["overall"]` — the grade actually shown. Re-serving surfaces
-  (`handlers/browse` cards, `handlers/progress` recents) read the snapshot first,
-  falling back to `rubric.overall` for pre-snapshot rows; `rubric` stays the RAW
-  axis rubric for rerun/janitor consumers.
+  coverage, served_overall}` plus two conditional keys, each absent when it
+  does not apply: `auto_done: true` iff the questioning engine (not the
+  student) triggered this Done (P0.4), and `unprobed_node_ids` — nodes
+  P1.2b dropped from THIS grade, read by `projections/performance-problems`
+  so its node drill-down never re-derives a class-wide "missed" from
+  `coverage` alone. `served_overall` snapshots `served_rubric["overall"]`;
+  re-serving surfaces read it first, falling back to `rubric.overall` for
+  pre-snapshot rows.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
 - **`grading_provenance.reference_question_asides_used`** (additive) reads
   `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]`, defaulting to 0 — never
   affects the score, just teacher-facing provenance.
+- **Claim lifecycle (M1, P3.4; gated in `test_apollo_done_claim_postgres.py`):**
+  Done's 6-7 commits rule out any transaction-scoped lock, so
+  `_claim_grading_slot` CASes `phase` (`IS DISTINCT FROM 'SOLVING' OR
+  updated_at < now-15min`, NULL-safe, self-healing on a crashed claim).
+  `_release_grading_claim` guards on `phase = 'SOLVING'` (never clobbers a
+  later claim); a stale reclaim's `prior_phase` falls back to `TEACHING`
+  instead of re-bricking. `prior_phase` must come from the `sess` read
+  preceding the claim call. `_stored_grade_payload` replays with NO side
+  effects (no XP write, no `load_progress` upsert/commit).
 
 ## Env flags
 

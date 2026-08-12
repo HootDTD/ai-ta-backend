@@ -22,7 +22,6 @@ from sqlalchemy import select
 from apollo.persistence.models import StudentProgress
 from apollo.persistence.progress_repo import apply_xp, load_progress
 from database.models import Course
-from tests.database._concurrency_fixtures import pg_committing_sessions  # noqa: F401
 
 pytestmark = pytest.mark.integration
 

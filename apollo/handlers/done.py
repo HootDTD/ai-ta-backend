@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import (
     EmptyAttemptError,
-    GradingInProgressError,
+    GradingInProgressError,  # noqa: F401 — consumed by the M1b wiring (Task 5)
     KGUnavailableError,
     RetentionError,
 )
@@ -63,11 +63,12 @@ from apollo.persistence.models import (
     ProblemAttempt,
     QuestionOpportunity,
     SessionPhase,
+    StudentProgress,
     TutoringMessage,
     TutoringSession,
 )
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
-from apollo.persistence.progress_repo import apply_xp, load_progress
+from apollo.persistence.progress_repo import apply_xp
 from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
@@ -531,6 +532,13 @@ async def _claim_grading_slot(db: AsyncSession, *, session_id: int) -> bool:
     `_STALE_CLAIM_AFTER`". Both sides of that comparison use the application
     clock deliberately — one clock, and the same statement runs unchanged on the
     SQLite unit harness.
+
+    Callers must snapshot the pre-claim `phase` from the SAME `sess` read that
+    precedes this call — that value is what gets passed as `_release_grading_claim`'s
+    `prior_phase` on any failure path. The small window between that read and
+    this CAS is an accepted design tradeoff (not itself locked); the release's
+    own `WHERE phase = SOLVING` guard bounds its blast radius so a claim that
+    raced ahead in that window is never clobbered by a release racing behind it.
     """
     now = datetime.now(UTC)
     claimed = (
@@ -568,11 +576,15 @@ async def _release_grading_claim(
     that case (and a NULL prior phase) falls back to `TEACHING`, the phase
     `handle_retry` resets to. Never raises: a failure here must not mask the
     error that triggered it.
+
+    `prior_phase` must be the value snapshotted from the SAME `sess` read that
+    preceded the `_claim_grading_slot` call, not a fresh read taken here — the
+    read-to-CAS window that opens up is an accepted design tradeoff, and this
+    call's own `phase = SOLVING` guard is what bounds it (see
+    `_claim_grading_slot`'s docstring).
     """
     release_to = (
-        prior_phase
-        if prior_phase not in (None, _CLAIM_PHASE)
-        else SessionPhase.TEACHING.value
+        prior_phase if prior_phase not in (None, _CLAIM_PHASE) else SessionPhase.TEACHING.value
     )
     try:
         await db.rollback()
@@ -627,6 +639,14 @@ async def _stored_grade_payload(
     `grading_provenance` are deliberately ABSENT — they are not persisted in
     `diagnostic_report`, and the student payload already treats them as optional
     keys, so omitting them is honest where fabricating them would not be.
+
+    SIDE-EFFECT FREE by construction: this is a replay path, reachable on every
+    double-clicked Done, and must never write anything. `progress_repo.load_progress`
+    is deliberately NOT used here — it does an `INSERT ... ON CONFLICT DO
+    NOTHING` upsert AND commits the caller's session, neither of which belongs
+    on a read-only replay. A missing `StudentProgress` row (the attempt is
+    graded but the student never got a progress row some other way) reads as
+    `xp_total=0` rather than materializing one.
     """
     report = attempt.diagnostic_report
     if attempt.result != "graded" or not isinstance(report, dict):
@@ -638,10 +658,15 @@ async def _stored_grade_payload(
     served_rubric = (
         {**raw_rubric, "overall": overall} if isinstance(raw_rubric, dict) else {"overall": overall}
     )
-    progress_row = await load_progress(
-        db=db, user_id=sess.user_id, course_id=sess.course_id
-    )
-    xp_total = int(progress_row.xp_total)
+    progress_row = (
+        await db.execute(
+            select(StudentProgress).where(
+                StudentProgress.user_id == sess.user_id,
+                StudentProgress.course_id == sess.course_id,
+            )
+        )
+    ).scalar_one_or_none()
+    xp_total = int(progress_row.xp_total) if progress_row is not None else 0
     envelope = compute_progress_envelope(xp_earned=0, xp_before=xp_total, xp_after=xp_total)
     return {
         "rubric": served_rubric,

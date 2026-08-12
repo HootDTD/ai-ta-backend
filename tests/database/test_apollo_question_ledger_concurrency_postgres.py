@@ -19,7 +19,6 @@ from sqlalchemy import select
 from apollo.persistence.models import ProblemAttempt, QuestionOpportunity, TutoringSession
 from apollo.smart_questions.controller import _bump_times_asked
 from database.models import Course
-from tests.database._concurrency_fixtures import pg_committing_sessions  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -112,9 +111,7 @@ async def test_bump_does_not_re_emit_a_blind_write_at_commit(pg_committing_sessi
             async with maker() as other:
                 other_row = (
                     await other.execute(
-                        select(QuestionOpportunity).where(
-                            QuestionOpportunity.id == opportunity_id
-                        )
+                        select(QuestionOpportunity).where(QuestionOpportunity.id == opportunity_id)
                     )
                 ).scalar_one()
                 await _bump_times_asked(other, row=other_row)
