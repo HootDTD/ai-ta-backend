@@ -121,14 +121,14 @@ Ordered grade assembly (each step delegates to the owner doc):
 - **Course grounding never adds a failure mode** (`overseer/grounding`):
   `_course_evidence_safe` runs AHEAD of the grading lane and is soft-fail by
   construction — flag off, concept disallowed, corrupt bundle, or ANY
-  exception → `None` (both prompts byte-identical to pre-feature).
+  exception → `None` (both prompts byte-identical to pre-feature). Additive
+  `grading_provenance["grounding"]` is the replay-diff hook.
 - **The Hoot-assist cap owns its failure domain** (`overseer/aside-penalty`):
-  both the aside fetch and `apply_aside_caps` are wrapped so ANY exception
-  logs and leaves `coverage` UNCAPPED (never half-caps); it runs AHEAD of the
-  sole grading lane and never touches the `CoverageGradingError → 503`
-  contract, and can only lower a grade. Additive
-  `grading_provenance["aside_penalty"] = {enabled, cap: 0.5,
-  assisted_node_ids}` when the gate fired; off → key absent.
+  the aside fetch and `apply_aside_caps` are wrapped so ANY exception logs and
+  leaves `coverage` UNCAPPED (never half-caps); runs AHEAD of the sole grading
+  lane, never touches the `CoverageGradingError → 503` contract, and can only
+  lower a grade. Additive `grading_provenance["aside_penalty"] = {enabled,
+  cap: 0.5, assisted_node_ids}` when the gate fired; off → key absent.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
   coverage, served_overall}` plus two conditional keys, each absent when it
   does not apply: `auto_done: true` iff the questioning engine (not the
