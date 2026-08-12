@@ -2,7 +2,7 @@
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
   "generated_at": "2026-08-12",
-  "repo": "p32-integration",
+  "repo": "p32-w2-a",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -179,6 +179,7 @@
     "apollo/schemas/procedure.py": "apollo/schemas/authoring-schemas",
     "apollo/schemas/variable_map.py": "apollo/schemas/authoring-schemas",
     "apollo/smart_questions/__init__.py": "apollo/conversation/questioning/controller",
+    "apollo/smart_questions/challenge.py": "apollo/conversation/questioning/challenge",
     "apollo/smart_questions/controller.py": "apollo/conversation/questioning/controller",
     "apollo/smart_questions/leakage.py": "apollo/conversation/questioning/leakage",
     "apollo/smart_questions/prompts.py": "apollo/conversation/questioning/prompts",
@@ -572,6 +573,14 @@
         "apollo/parser/__init__.py"
       ]
     },
+    "apollo/conversation/questioning/challenge": {
+      "path": "docs/architecture/apollo/conversation/questioning/challenge.md",
+      "kind": "leaf",
+      "description": "The P3.2 done-gate \u2014 Apollo may not self-declare done while a graded node is owed a challenge; pure, deterministic, no extra LLM call.",
+      "owns": [
+        "apollo/smart_questions/challenge.py"
+      ]
+    },
     "apollo/conversation/questioning/controller": {
       "path": "docs/architecture/apollo/conversation/questioning/controller.md",
       "kind": "leaf",
@@ -592,7 +601,7 @@
     "apollo/conversation/questioning/prompts": {
       "path": "docs/architecture/apollo/conversation/questioning/prompts.md",
       "kind": "leaf",
-      "description": "Model-facing contract for the unified questioning call \u2014 system prompt, optional WRONGNESS DUTY block, JSON response schema, repair feedback strings.",
+      "description": "Model-facing contract for the unified questioning call \u2014 system prompt, optional WRONGNESS DUTY and CARRIED CHALLENGE blocks, JSON response schema, repair feedback strings.",
       "owns": [
         "apollo/smart_questions/prompts.py"
       ]
@@ -600,7 +609,7 @@
     "apollo/conversation/questioning/selection": {
       "path": "docs/architecture/apollo/conversation/questioning/selection.md",
       "kind": "leaf",
-      "description": "Deterministic question-target policy \u2014 graded-first ordering, the 2-asks-per-node cap, and the graded budget reservation.",
+      "description": "Deterministic question-target policy \u2014 graded-first ordering, contested-first priority, the 2-asks-per-node cap, and the graded budget reservation.",
       "owns": [
         "apollo/smart_questions/selection.py"
       ]
@@ -2080,6 +2089,7 @@
         "apollo/conversation/parser/extraction-schema",
         "apollo/conversation/parser/graph-context",
         "apollo/conversation/parser/parser-llm",
+        "apollo/conversation/questioning/challenge",
         "apollo/conversation/questioning/controller",
         "apollo/conversation/questioning/leakage",
         "apollo/conversation/questioning/prompts",
