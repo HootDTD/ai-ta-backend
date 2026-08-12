@@ -5,9 +5,10 @@ owns:
   - apollo/projections/performance_problems.py
 related:
   - apollo/projections/performance
+  - apollo/projections/performance-insights
   - apollo/overseer/topic-score
   - apollo/conversation/handlers/done
-last_verified: 2026-08-08
+last_verified: 2026-08-11
 stub: false
 ---
 
@@ -24,13 +25,14 @@ exercise it with hand-computed fixtures and no database. Composed by
 - **Pure builders:** `letter_distribution(best_rows)` (best-wins letter counts
   over every `LETTER_BANDS` band, zeros included — also reused by
   [performance](performance.md) for the class-level `grade_distribution`);
-  `students_for(rows, identities)` (per-problem best-wins
-  `{user_id, email, score, letter}`, score desc, id tie-break);
-  `aggregate_nodes(graded_nodes, attempts)` (per graded node,
+  `students_for(rows, identities, aggregates=None)` (per-problem best-wins
+  `{user_id, email, score, letter, attempts, median_gap_seconds}`, score desc,
+  id tie-break); `aggregate_nodes(graded_nodes, attempts)` (per graded node,
   understood/partial/missed/`unprobed`/`graded` counts over
   `AttemptNodes(coverage, unprobed)` records); `build_problems(best_rows,
-  meta_by_problem, identities, graded_nodes_by_problem)` (assembles the ordered
-  rows: `problem_text`, distribution, `students`, `nodes`).
+  meta_by_problem, identities, graded_nodes_by_problem, aggregates=None)`
+  (assembles the ordered rows: `problem_text`, distribution, `students`,
+  `nodes`).
 - **Value object:** `AttemptNodes(coverage, unprobed=frozenset())` — one
   included attempt's stored coverage plus the node ids that attempt's OWN grade
   excluded; `_unprobed_ids` parses the latter defensively from the row.
@@ -84,3 +86,10 @@ the way `done.py` / [topic-score](../overseer/topic-score.md) do
 - **Roster-bounded.** A course is tens of students / a handful of problems, so
   full `problem_text` and per-problem student lists are not a cross-course
   export.
+- **Per-pair retry decoration is display-only (P3.3).** `attempts` (graded
+  count) and `median_gap_seconds` come from the SAME
+  `performance_insights.ProblemAgg` map the insights block uses, matched on
+  (user_id, problem_id) — pair-grained, never that student's cross-problem
+  totals. Absent aggregate → `(1, None)`, the truthful floor for a row that
+  exists only because a graded attempt does. Neither field participates in
+  ordering or in the served grade.

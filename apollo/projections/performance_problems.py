@@ -47,6 +47,7 @@ from apollo.overseer.topic_score import (
     _display_name_for,
 )
 from apollo.persistence.models import Concept, Problem
+from apollo.projections.performance_insights import ProblemAgg
 from apollo.schemas.problem import Problem as ProblemSchema
 
 logger = logging.getLogger(__name__)
@@ -158,22 +159,50 @@ def aggregate_nodes(graded_nodes: list[Node], attempts: list[AttemptNodes]) -> l
     return result
 
 
+def _timing_for(
+    aggregates: dict[str, list[ProblemAgg]] | None, row: dict[str, Any]
+) -> tuple[int, float | None]:
+    """``(attempts, median_gap_seconds)`` for one best-wins row's (student,
+    problem) PAIR — never that student's totals across problems.
+
+    Falls back to ``(1, None)``: a best-wins row exists only because at least
+    one graded attempt does, and an absent aggregate (no map threaded in, e.g.
+    the pure fixtures) means no timing is known — never a fabricated zero."""
+    problem_id = row.get("problem_id")
+    for agg in (aggregates or {}).get(row["user_id"], []):
+        if agg.problem_id == problem_id:
+            return agg.graded_count, agg.median_gap_seconds
+    return 1, None
+
+
 def students_for(
-    rows: list[dict[str, Any]], identities: dict[str, dict[str, Any]]
+    rows: list[dict[str, Any]],
+    identities: dict[str, dict[str, Any]],
+    aggregates: dict[str, list[ProblemAgg]] | None = None,
 ) -> list[dict[str, Any]]:
     """The per-problem best-wins student list — one row per distinct student,
     email from the shared identities map, ordered by score desc (id as the stable
-    tie-break so equal scores render deterministically)."""
+    tie-break so equal scores render deterministically).
+
+    ``aggregates`` (P3.3, optional) decorates each row with that pair's
+    ``attempts`` (graded attempt count) and DISPLAY-ONLY
+    ``median_gap_seconds``. The grade, the ordering, and the served letter are
+    untouched by it — timing never participates in selection."""
     ordered = sorted(rows, key=lambda r: (-r["score"], r["user_id"]))
-    return [
-        {
-            "user_id": r["user_id"],
-            "email": identities.get(r["user_id"], {}).get("email"),
-            "score": r["score"],
-            "letter": r["letter"],
-        }
-        for r in ordered
-    ]
+    decorated: list[dict[str, Any]] = []
+    for r in ordered:
+        attempts, median_gap_seconds = _timing_for(aggregates, r)
+        decorated.append(
+            {
+                "user_id": r["user_id"],
+                "email": identities.get(r["user_id"], {}).get("email"),
+                "score": r["score"],
+                "letter": r["letter"],
+                "attempts": attempts,
+                "median_gap_seconds": median_gap_seconds,
+            }
+        )
+    return decorated
 
 
 def build_problems(
@@ -181,6 +210,7 @@ def build_problems(
     meta_by_problem: dict[int, dict[str, Any]],
     identities: dict[str, dict[str, Any]],
     graded_nodes_by_problem: dict[int, list[Node]],
+    aggregates: dict[str, list[ProblemAgg]] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per problem with >=1 graded best attempt: full text, best-wins
     letter distribution (all bands incl. zeros), mean best score, distinct graded
@@ -210,7 +240,7 @@ def build_problems(
                 "students_graded": len(rows),  # one best row per distinct student
                 "avg_best": _round1(sum(scores) / len(scores)),
                 "distribution": letter_distribution(rows),
-                "students": students_for(rows, identities),
+                "students": students_for(rows, identities, aggregates),
                 "nodes": aggregate_nodes(graded_nodes_by_problem.get(problem_id, []), usable),
             }
         )

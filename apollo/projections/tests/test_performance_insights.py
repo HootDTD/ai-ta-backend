@@ -10,6 +10,7 @@ Postgres in ``tests/database/test_class_performance_postgres.py``.
 from __future__ import annotations
 
 import math
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -393,13 +394,209 @@ def test_build_insights_all_null():
         "correlation": None,
         "effort_quartiles": None,
         "retry_payoff": None,
+        "retry_timing": None,
     }
 
 
-def test_build_insights_composes_all_three():
+def test_build_insights_composes_every_block():
     points = _points([(i, i * 10.0) for i in range(1, 9)])
     aggs = {"u1": [ProblemAgg(10, 2, 40.0, 90.0, True)]}
     insights = pi.build_insights(points, aggs)
     assert insights["correlation"]["n"] == 8
     assert insights["effort_quartiles"] is not None
     assert insights["retry_payoff"]["students_retried"] == 1
+    assert insights["retry_timing"]["pairs_retried"] == 1
+
+
+# --- P3.3 retry spacing: gap_seconds ----------------------------------------
+
+_T0 = datetime(2026, 8, 11, 9, 0, 0, tzinfo=UTC)
+
+
+def _at(seconds: float) -> datetime:
+    """A timestamp ``seconds`` after the fixture epoch."""
+    return _T0 + timedelta(seconds=seconds)
+
+
+def test_gap_seconds_needs_two_stamps_to_have_a_gap():
+    # 0 stamps -> no gaps; 1 stamp -> no gaps (a single attempt has no spacing).
+    assert pi.gap_seconds([]) == []
+    assert pi.gap_seconds([_at(0)]) == []
+
+
+def test_gap_seconds_two_stamps_is_one_delta():
+    assert pi.gap_seconds([_at(0), _at(42)]) == [42.0]
+
+
+def test_gap_seconds_n_stamps_is_n_minus_one_consecutive_deltas():
+    # stamps at 0, 42, 342, 1000 -> deltas 42, 300, 658 (consecutive, not
+    # cumulative: never [42, 342, 1000] measured from the first stamp).
+    assert pi.gap_seconds([_at(0), _at(42), _at(342), _at(1000)]) == [42.0, 300.0, 658.0]
+
+
+def test_gap_seconds_unordered_input_yields_absolute_magnitudes():
+    """The caller's contract is ascending attempt id, NEVER a sort by time
+    (``created_at`` is display-only). A clock-skewed / out-of-order pair must
+    therefore still report a real duration, never a negative one."""
+    assert pi.gap_seconds([_at(300), _at(0), _at(60)]) == [300.0, 60.0]
+    assert all(gap >= 0.0 for gap in pi.gap_seconds([_at(300), _at(0), _at(60)]))
+
+
+# --- P3.3 retry spacing: ProblemAgg timing fields ---------------------------
+
+
+def test_problem_aggregates_timing_is_none_without_the_side_map():
+    """Every pre-P3.3 caller and fixture passes 4-tuples and no side map: the
+    three timing fields default to None rather than re-arity-ing the row."""
+    rows = [("u1", 10, 1, 40.0), ("u1", 10, 2, 85.0)]
+    agg = pi.problem_aggregates(rows)["u1"][0]
+    assert (agg.graded_count, agg.first_score, agg.best_score) == (2, 40.0, 85.0)
+    assert agg.median_gap_seconds is None
+    assert agg.min_gap_seconds is None
+    assert agg.first_to_best_seconds is None
+    explicit = pi.problem_aggregates(rows, None, created_at_by_attempt=None)["u1"][0]
+    assert explicit == agg
+
+
+def test_problem_aggregates_timing_from_side_map_hand_computed():
+    """Attempts 1/2/3 at 0 s, 60 s, 360 s -> consecutive gaps [60, 300];
+    median([60, 300]) = 180.0, min = 60.0. Best is attempt 2 (score 85), first
+    is attempt 1, so first_to_best = 60 s."""
+    aggs = pi.problem_aggregates(
+        [("u1", 10, 1, 40.0), ("u1", 10, 2, 85.0), ("u1", 10, 3, 70.0)],
+        None,
+        created_at_by_attempt={1: _at(0), 2: _at(60), 3: _at(360)},
+    )
+    agg = aggs["u1"][0]
+    assert agg.median_gap_seconds == 180.0
+    assert agg.min_gap_seconds == 60.0
+    assert agg.first_to_best_seconds == 60.0
+
+
+def test_problem_aggregates_timing_never_reorders_best_wins():
+    """INVARIANT: created_at is display-only. Attempt 2 is stamped BEFORE
+    attempt 1 (clock skew); first/best selection still follows id + score
+    (first = id 1 -> 40.0, best = 85.0), and the gap is the absolute
+    magnitude, never a negative duration."""
+    aggs = pi.problem_aggregates(
+        [("u1", 10, 1, 40.0), ("u1", 10, 2, 85.0)],
+        None,
+        created_at_by_attempt={1: _at(600), 2: _at(0)},
+    )
+    agg = aggs["u1"][0]
+    assert (agg.first_score, agg.best_score) == (40.0, 85.0)
+    assert agg.min_gap_seconds == 600.0
+    assert agg.first_to_best_seconds == 600.0
+
+
+def test_problem_aggregates_timing_tolerates_a_missing_stamp():
+    """A side map missing an attempt's stamp degrades that pair's timing
+    instead of raising: gaps are computed over the stamps present, and
+    first_to_best is None when the best-producing attempt has none."""
+    aggs = pi.problem_aggregates(
+        [("u1", 10, 1, 40.0), ("u1", 10, 2, 85.0), ("u1", 10, 3, 70.0)],
+        None,
+        created_at_by_attempt={1: _at(0), 3: _at(100)},
+    )
+    agg = aggs["u1"][0]
+    assert agg.median_gap_seconds == 100.0
+    assert agg.min_gap_seconds == 100.0
+    assert agg.first_to_best_seconds is None  # best = attempt 2, no stamp
+
+
+# --- P3.3 rapid_retry flag --------------------------------------------------
+
+
+def test_flag_rapid_retry_fires_on_a_fast_band_jumping_retry():
+    """2 graded attempts, 42 s apart (< RAPID_RETRY_MAX_SECONDS 300), gaining
+    70 points (>= RAPID_RETRY_MIN_GAIN 30) -> rapid_retry. best 90 >= 60 so no
+    gave_up; 2 attempts < 3 so no grinding."""
+    agg = ProblemAgg(10, 2, 20.0, 90.0, False, min_gap_seconds=42.0)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[agg]) == [
+        "rapid_retry"
+    ]
+
+
+def test_flag_rapid_retry_boundaries_are_exact():
+    # gain exactly 30 and gap just under 300 -> fires (best 50 with
+    # best_is_last False keeps gave_up out of the way).
+    on_edge = ProblemAgg(10, 2, 20.0, 50.0, False, min_gap_seconds=299.9)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[on_edge]) == [
+        "rapid_retry"
+    ]
+    # gap exactly 300 is NOT < 300 -> no flag.
+    at_limit = ProblemAgg(10, 2, 20.0, 90.0, False, min_gap_seconds=300.0)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[at_limit]) == []
+
+
+def test_flag_rapid_retry_needs_all_three_conjuncts():
+    # (a) only one graded attempt -> not a retry at all.
+    single = ProblemAgg(10, 1, 20.0, 90.0, True, min_gap_seconds=60.0)
+    assert pi.student_flags(attempts=1, teaching_turns=0, median_words=None, aggs=[single]) == []
+    # (b) gain below the band-jump floor (49.9 - 20 = 29.9 < 30).
+    small_gain = ProblemAgg(10, 2, 20.0, 49.9, False, min_gap_seconds=42.0)
+    assert (
+        pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[small_gain]) == []
+    )
+    # (c) no timing at all (pre-P3.3 rows / no side map) -> never fires.
+    untimed = ProblemAgg(10, 2, 20.0, 90.0, False)
+    assert pi.student_flags(attempts=2, teaching_turns=0, median_words=None, aggs=[untimed]) == []
+
+
+def test_flag_order_places_rapid_retry_last():
+    flags = pi.student_flags(
+        attempts=4,
+        teaching_turns=5,
+        median_words=3.0,
+        aggs=[ProblemAgg(10, 3, 20.0, 90.0, False, min_gap_seconds=30.0)],
+    )
+    # not_started, low_effort, gave_up, grinding, rapid_retry — stable order.
+    assert flags == ["low_effort", "rapid_retry"]
+
+
+# --- P3.3 class-level retry_timing ------------------------------------------
+
+
+def test_build_retry_timing_uses_the_retry_payoff_gate_not_min_correlation_n():
+    """Null when NO pair has >= 2 graded attempts — the same gate as
+    build_retry_payoff, so the two teacher strips appear and disappear
+    together. MIN_CORRELATION_N (8) is a population-statistics gate and must
+    NOT apply: a single retried pair is a real per-pair signal."""
+    assert pi.build_retry_timing({"u1": [ProblemAgg(10, 1, 50.0, 50.0, True)]}) is None
+    assert pi.build_retry_timing({}) is None
+    one_pair = {"u1": [ProblemAgg(10, 2, 20.0, 90.0, False, 60.0, 42.0)]}
+    assert pi.build_retry_timing(one_pair) is not None  # n=1 < 8, still served
+
+
+def test_build_retry_timing_hand_computed():
+    """Retried pairs: u1/10 (median 60, min 42, gain 70) and u2/10 (median 900,
+    min 600, gain 10). u1/20 is single-attempt and excluded.
+    median([60, 900]) = 480.0 ; min([42, 600]) = 42.0.
+    rapid_flips: u1/10 qualifies (42 < 300 and 70 >= 30); u2/10 does not
+    (600 >= 300, and its 10-point gain is under the band-jump floor)."""
+    aggregates = {
+        "u1": [
+            ProblemAgg(10, 2, 20.0, 90.0, False, 60.0, 42.0),
+            ProblemAgg(20, 1, 55.0, 55.0, True),
+        ],
+        "u2": [ProblemAgg(10, 3, 60.0, 70.0, False, 900.0, 600.0)],
+    }
+    assert pi.build_retry_timing(aggregates) == {
+        "pairs_retried": 2,
+        "median_gap_seconds": 480.0,
+        "min_gap_seconds": 42.0,
+        "rapid_flips": 1,
+    }
+
+
+def test_build_retry_timing_reports_null_stats_for_untimed_retries():
+    """A retried pair with no timestamps (no side map / pre-P3.3 rows) still
+    counts toward pairs_retried, but contributes no spacing statistic and can
+    never be a rapid flip — the strip says 'retried, timing unknown' rather
+    than fabricating a zero."""
+    assert pi.build_retry_timing({"u1": [ProblemAgg(10, 2, 20.0, 90.0, False)]}) == {
+        "pairs_retried": 1,
+        "median_gap_seconds": None,
+        "min_gap_seconds": None,
+        "rapid_flips": 0,
+    }

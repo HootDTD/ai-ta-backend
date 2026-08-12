@@ -5,7 +5,7 @@ owns:
   - apollo/projections/performance_insights.py
 related:
   - apollo/projections/performance
-last_verified: 2026-07-30
+last_verified: 2026-08-11
 stub: false
 ---
 
@@ -22,18 +22,25 @@ no database. Composed by [performance](performance.md)'s assembler.
 - **Stat helpers (pure):** `mean`, `median`, `pearson`, `spearman` (= Pearson on
   average ranks, ties averaged, via `_average_ranks`), `word_count`.
 - **Aggregations (pure):** `engagement_by_student(message_rows)` →
-  `{teaching_turns, median_words}`; `problem_aggregates(attempt_rows)` →
+  `{teaching_turns, median_words}`;
+  `problem_aggregates(attempt_rows, latest_attempt_ids=None, created_at_by_attempt=None)` →
   per-student `ProblemAgg` list (`first_score` = lowest-id graded attempt,
-  `best_score` = best-wins, `best_is_last`); `retry_fields(aggs)` →
+  `best_score` = best-wins, `best_is_last`, plus the display-only
+  `median_gap_seconds` / `min_gap_seconds` / `first_to_best_seconds`, filled
+  only when the `created_at` side map is threaded in); `retry_fields(aggs)` →
   `{problems_retried, avg_gain}`; `student_flags(...)` and `student_extras(...)`
-  (the `{engagement, flags}` add-on).
+  (the `{engagement, flags}` add-on); `gap_seconds(timestamps)` → consecutive
+  ABSOLUTE deltas in seconds over one pair's id-ordered graded-attempt
+  timestamps (N stamps → N−1 gaps).
 - **Insight builders (pure):** `build_correlation(points)`,
   `build_effort_quartiles(students)`, `build_retry_payoff(aggregates)`,
-  `build_insights(graded_points, aggregates)`.
+  `build_retry_timing(aggregates)`, `build_insights(graded_points, aggregates)`.
 - **DB loaders:** `load_engagement(db, *, search_space_id)` (student messages);
   `load_problem_aggregates(db, *, search_space_id, score_expr)` (graded
   attempts — `score_expr` is [performance](performance.md)'s `_SCORE_EXPR`,
-  passed in so the served-grade expression lives in one place).
+  passed in so the served-grade expression lives in one place; the graded
+  SELECT also carries the display-only `pa.created_at`, threaded on as
+  `created_at_by_attempt`).
 
 ## Data flow
 
@@ -41,16 +48,26 @@ no database. Composed by [performance](performance.md)'s assembler.
 Apollo side is `role = 'apollo'`), course-scoped, joined to
 `app.learning_activities` for the owning student's `user_id` (messages carry no
 user_id). `load_problem_aggregates` reads graded `app.problem_attempts` ordered
-by `pa.id`, plus a second pass surfacing the latest attempt id per (student,
-problem) over **all** attempts (any result) that drives `best_is_last`. Both
-hand raw rows to the pure folders above.
+by `pa.id` (one added column, `pa.created_at` — no new query, scan, or index),
+plus a second pass surfacing the latest attempt id per (student, problem) over
+**all** attempts (any result) that drives `best_is_last`. Both hand raw rows to
+the pure folders above.
 
 ## Invariants & gotchas
 
 - **Suppression:** `correlation` + `effort_quartiles` are null below
-  `MIN_CORRELATION_N` (8) students-with-a-grade; `retry_payoff` is null when no
-  (student, problem) has >= 2 graded attempts. `pearson` returns 0.0 on zero
-  variance (undefined correlation reported as no signal).
+  `MIN_CORRELATION_N` (8) students-with-a-grade; `retry_payoff` AND
+  `retry_timing` are null when no (student, problem) has >= 2 graded attempts
+  — the same gate, so both teacher strips appear and disappear together.
+  `MIN_CORRELATION_N` must NOT be applied to `retry_timing`: it is a per-pair
+  signal, not a population statistic. `pearson` returns 0.0 on zero variance
+  (undefined correlation reported as no signal).
+- **`retry_timing.median_gap_seconds` is the median of the per-pair median
+  gaps** — each retried pair's own median gap is computed first, and the
+  class-level value is the median across those per-pair values, NOT a single
+  median taken over every raw inter-attempt gap in the class. `min_gap_seconds`
+  stays exact: the minimum of each pair's minimum gap equals the true minimum
+  over every raw gap.
 - **Effort quartiles tie-break on `user_id`, NEVER grade:** equal-`teaching_turns`
   students are ordered by `user_id` (neutral, deterministic). Ordering ties by
   grade would smear equal-effort students across quartile boundaries and
@@ -61,7 +78,21 @@ hand raw rows to the pure folders above.
   result — graded, ungraded, or in-progress — after the best-producing one, so a
   student mid-retry is never flagged),
   `grinding` (`>= GRINDING_MIN_ATTEMPTS` graded attempts, `best - first <=
-  GRINDING_MAX_GAIN`).
+  GRINDING_MAX_GAIN`), `rapid_retry` (P3.3: `graded_count >= 2` AND
+  `min_gap_seconds < RAPID_RETRY_MAX_SECONDS` (300) AND `best - first >=
+  RAPID_RETRY_MIN_GAIN` (30.0) — a band jump by pure arithmetic, since the
+  widest `LETTER_BANDS` band F = [0, 30) is exactly 30 wide). The fast gap and
+  the gain are measured over the pair as a whole, not necessarily over the same
+  transition — on pairs with 3+ attempts this is a heuristic, not proof that one
+  single retry did both. Stable order: not_started, low_effort, gave_up,
+  grinding, rapid_retry. `_is_rapid_flip` is the SINGLE predicate behind both
+  this flag and `retry_timing.rapid_flips`.
 - **Same served-grade semantics as v1 everywhere** — best-wins here is the same
   max-score/latest-id order `_SCORE_EXPR` produces, so retry gain never disagrees
   with the best-wins grade the student was shown.
+- **`created_at` is DISPLAY-ONLY (P3.3).** Timing is threaded in as an optional
+  `created_at_by_attempt` side map and read in ascending ATTEMPT-ID order;
+  `gap_seconds` takes absolute deltas so a clock-skewed row can't report a
+  negative duration. No ordering, best-wins selection, or score expression
+  anywhere is keyed on a timestamp — re-ordering by time would silently change
+  served grades and break teacher/student grade parity.
