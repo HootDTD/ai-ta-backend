@@ -15,7 +15,10 @@ transcript fixtures are W0's; these tests pin the semantics, not the data):
 
 from __future__ import annotations
 
+import ast
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -30,12 +33,19 @@ OTHER = "eq.energy"
 
 @dataclass
 class _Row:
-    """A duck-typed `QuestionOpportunity` — `ledger_findings` never touches the ORM."""
+    """A duck-typed `QuestionOpportunity` — `ledger_findings` never touches the ORM.
+
+    Every field the reader coerces is annotated `Any` ON PURPOSE: the column it
+    stands in for is free-form JSONB (or an ORM attribute that can hold whatever
+    a prior write left there), and `test_non_string_field_types_coerce` proves
+    the reader is total by handing it garbage. A narrower annotation here would
+    make the type-checker reject the very cases the module promises to survive.
+    """
 
     reference_node_id: Any = NODE
     state: str = "understood"
-    times_asked: int = 1
-    last_asked_turn: int | None = 1
+    times_asked: Any = 1
+    last_asked_turn: Any = 1
     evidence: Any = field(default_factory=list)
 
 
@@ -65,12 +75,15 @@ def _select(
     graded: set[str] | None = None,
     raw_score: int = 90,
 ) -> tuple[wrongness.WrongnessFinding, ...]:
+    reader: Mapping[str, Mapping[str, bool]] = {
+        NODE: {"contradicted": True, "corrected_later": False, "prompted": True}
+    }
+    if second_reader is not None:
+        reader = second_reader
     return wrongness.select_findings(
         findings=wrongness.ledger_findings(rows),
         credits={NODE: 1.0} if credits is None else credits,
-        second_reader={NODE: {"contradicted": True, "corrected_later": False, "prompted": True}}
-        if second_reader is None
-        else second_reader,
+        second_reader=reader,
         graded_node_ids={NODE} if graded is None else graded,
         raw_score=raw_score,
     )
@@ -336,13 +349,38 @@ def test_resolved_and_elicited_is_the_xp_bonus_shape() -> None:
 
 def test_ceiling_constant_agrees_with_topic_score() -> None:
     """`topic_score` is the authority; `wrongness` keeps an import-light copy to
-    avoid the `unified → selection → topic_score → wrongness` cycle. W1-D lands
-    the `topic_score` constant in this same wave — once present the two must be
-    equal, and `84` is B+ on today's letter bands."""
+    avoid the `unified → selection → topic_score → wrongness` cycle. Since W1-D
+    landed the authority, this is an UNCONDITIONAL equality — it was written
+    tolerantly (`getattr(..., None)`) while the two slices were building in
+    parallel, and a tolerant duplicate-constant pin is worth nothing: it would
+    also pass if the authority were renamed or deleted, which is precisely the
+    drift it exists to catch. `84` is B+ on today's letter bands
+    (`test_ceiling_letter_bands.py` pins that half)."""
     assert wrongness.CEILING_UNCORRECTED == 84
-    authority = getattr(topic_score, "CEILING_UNCORRECTED", None)
-    if authority is not None:
-        assert wrongness.CEILING_UNCORRECTED == authority
+    assert wrongness.CEILING_UNCORRECTED == topic_score.CEILING_UNCORRECTED
+
+
+def test_wrongness_core_stays_import_light() -> None:
+    """The duplicate constant is only justified while `wrongness` is import-light.
+
+    The moment this module imports `topic_score` (or `transcript_coverage`, or
+    `smart_questions.*`), the honest fix is to import the constant instead of
+    duplicating it — so the duplication and the import ban are pinned together,
+    in one place, rather than living as a comment.
+    """
+    imported = {
+        node.module
+        for node in ast.walk(ast.parse(Path(wrongness.__file__).read_text(encoding="utf-8")))
+        if isinstance(node, ast.ImportFrom) and node.module
+    } | {
+        alias.name
+        for node in ast.walk(ast.parse(Path(wrongness.__file__).read_text(encoding="utf-8")))
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    apollo_imports = sorted(name for name in imported if name.startswith("apollo"))
+    assert apollo_imports == [], apollo_imports
+    assert "config.settings" in imported
 
 
 # ---------------------------------------------------------------------------

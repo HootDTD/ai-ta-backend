@@ -20,12 +20,14 @@ below pins that carrying wrongness does not sneak into it.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from apollo.grading.artifact_build import build_llm_artifact
 from apollo.ontology import KGGraph, build_node
 from apollo.overseer.aside_penalty import apply_aside_caps
-from apollo.overseer.coverage_contract import validate_coverage_verdict
+from apollo.overseer.coverage_contract import CoverageVerdict, validate_coverage_verdict
 from apollo.overseer.rubric import compute_rubric
 from apollo.overseer.topic_score import compute_centrality, compute_topic_score
 
@@ -200,11 +202,17 @@ def test_full_downstream_chain_produces_identical_output():
     centrality = compute_centrality(KGGraph(nodes=nodes))
 
     def _run(coverage: dict) -> tuple:
-        capped, assisted = apply_aside_caps(coverage)
-        rubric = compute_rubric(capped, nodes)
-        topics = compute_topic_score(coverage=capped, reference_nodes=nodes, centrality=centrality)
+        # `apply_aside_caps` is typed on the `CoverageVerdict` TypedDict while the
+        # three consumers after it take a plain dict; mypy treats those as
+        # unrelated, so the hop is spelled out rather than papered over with
+        # per-call ignores. `dict(...)` copies key-for-key, which is exactly what
+        # the equality assertion below compares.
+        capped, assisted = apply_aside_caps(cast("CoverageVerdict", coverage))
+        plain: dict[str, Any] = dict(capped)
+        rubric = compute_rubric(plain, nodes)
+        topics = compute_topic_score(coverage=plain, reference_nodes=nodes, centrality=centrality)
         artifact = build_llm_artifact(
-            coverage=capped,
+            coverage=plain,
             rubric=rubric,
             latency_ms=12,
             clarification_trace=[],

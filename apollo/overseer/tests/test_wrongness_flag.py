@@ -14,6 +14,7 @@ the gradient IS the safety design and the kill switch is a single decrement
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -146,16 +147,74 @@ def _non_test_sources() -> list[Path]:
     return files
 
 
+def _mentions_env_in_code(source: str) -> bool:
+    """True iff the env-var NAME appears in executable code.
+
+    Parsed, not grepped. A substring scan over the raw file counted every
+    `# APOLLO_WRONGNESS_LEVEL == 4` comment and every docstring cross-reference
+    as a "reader", which is both wrong and actively harmful: it pressures the
+    next author to strip the prose that explains the gate rather than to stop
+    reading the flag. Comments never reach the AST at all, and a module/class/
+    function docstring is subtracted explicitly, so what remains is a genuine
+    string literal in code — which is exactly the shape of `os.getenv(...)`,
+    `os.environ[...]`, and every other way the value can actually be read.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # pragma: no cover — a syntax error fails the suite elsewhere
+        return _ENV in source
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    return any(
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and _ENV in node.value
+        and id(node) not in docstrings
+        for node in ast.walk(tree)
+    )
+
+
 def test_no_other_module_reads_the_env_var() -> None:
     """One reader, or the concept allowlist silently stops applying at the
     second site. `wrongness.effective_wrongness_level` is the only consumer of
-    `config.settings.wrongness_level`, which is the only reader of the env var."""
+    `config.settings.wrongness_level`, which is the only reader of the env var.
+
+    Documenting the flag in a comment or a docstring is NOT reading it — three
+    P3.2 modules legitimately name it in prose to say why they never touch it.
+    """
     readers = [
         path.relative_to(_REPO_ROOT).as_posix()
         for path in _non_test_sources()
-        if _ENV in path.read_text(encoding="utf-8")
+        if _mentions_env_in_code(path.read_text(encoding="utf-8"))
     ]
     assert readers == ["config/settings.py"], readers
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "expected"),
+    [
+        ("a real read", f'import os\nos.getenv("{_ENV}", "")\n', True),
+        ("a subscript read", f'import os\nos.environ["{_ENV}"]\n', True),
+        ("a read hidden in a helper default", f'def f(name: str = "{_ENV}") -> str: ...\n', True),
+        ("a module docstring", f'"""Gated on {_ENV}."""\n', False),
+        ("a function docstring", f'def f() -> None:\n    """Off below {_ENV} 4."""\n', False),
+        ("a comment", f"# nothing here reaches {_ENV}\nX = 1\n", False),
+    ],
+)
+def test_the_single_reader_scan_reads_code_not_prose(
+    label: str, source: str, expected: bool
+) -> None:
+    """The scan above is only worth having if it still FAILS on a real second
+    reader. Loosening it from "the name appears anywhere in the bytes" to "the
+    name appears in code" must not loosen it to "never fires"."""
+    assert _mentions_env_in_code(source) is expected, label
 
 
 def test_only_wrongness_calls_the_settings_helper() -> None:

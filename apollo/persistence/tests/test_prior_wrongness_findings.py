@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.attempt_history import prior_wrongness_findings
 from apollo.persistence.models import (
@@ -87,7 +88,12 @@ def _artifact(
     misconceptions: Any,
     role: str = "canonical",
     created_at: datetime | None = None,
+    grader_payload: dict[str, Any] | None = None,
 ) -> GradingRun:
+    """One `internal.grading_runs` row. ``grader_payload`` overrides the whole
+    payload (used to seed a row where `misconceptions` is absent entirely) —
+    passed at construction rather than mutated afterwards, so the row is built
+    once and never reassigned through a mapped ORM attribute."""
     return GradingRun(
         attempt_id=attempt_id,
         role=role,
@@ -103,7 +109,11 @@ def _artifact(
         score_details={"composite": 0.9},
         composite_score=0.9,
         abstained=False,
-        grader_payload={"misconceptions": misconceptions, "clarification_trace": []},
+        grader_payload=(
+            grader_payload
+            if grader_payload is not None
+            else {"misconceptions": misconceptions, "clarification_trace": []}
+        ),
         created_at=created_at or datetime.now(UTC),
     )
 
@@ -124,7 +134,11 @@ async def test_returns_only_same_user_same_problem(db_session) -> None:
     other_problem_id, other_concept_id = await _seed_problem(db_session, search_space_id=sid)
     mine, theirs = str(uuid.uuid4()), str(uuid.uuid4())
 
-    common = {"search_space_id": sid, "concept_id": concept_id, "problem_id": problem_id}
+    common: dict[str, Any] = {
+        "search_space_id": sid,
+        "concept_id": concept_id,
+        "problem_id": problem_id,
+    }
     prior = await _seed_attempt(db_session, user_id=mine, **common)
     current = await _seed_attempt(db_session, user_id=mine, **common)
     their_attempt = await _seed_attempt(db_session, user_id=theirs, **common)
@@ -179,7 +193,11 @@ async def test_excludes_the_current_attempt(db_session) -> None:
     sid = await seed_search_space(db_session)
     problem_id, concept_id = await _seed_problem(db_session, search_space_id=sid)
     user_id = str(uuid.uuid4())
-    common = {"search_space_id": sid, "concept_id": concept_id, "problem_id": problem_id}
+    common: dict[str, Any] = {
+        "search_space_id": sid,
+        "concept_id": concept_id,
+        "problem_id": problem_id,
+    }
     current = await _seed_attempt(db_session, user_id=user_id, **common)
 
     db_session.add(
@@ -202,7 +220,11 @@ async def test_newest_first_and_limited(db_session) -> None:
     sid = await seed_search_space(db_session)
     problem_id, concept_id = await _seed_problem(db_session, search_space_id=sid)
     user_id = str(uuid.uuid4())
-    common = {"search_space_id": sid, "concept_id": concept_id, "problem_id": problem_id}
+    common: dict[str, Any] = {
+        "search_space_id": sid,
+        "concept_id": concept_id,
+        "problem_id": problem_id,
+    }
     current = await _seed_attempt(db_session, user_id=user_id, **common)
 
     base = datetime.now(UTC)
@@ -239,7 +261,11 @@ async def test_empty_when_no_prior_findings(db_session) -> None:
     sid = await seed_search_space(db_session)
     problem_id, concept_id = await _seed_problem(db_session, search_space_id=sid)
     user_id = str(uuid.uuid4())
-    common = {"search_space_id": sid, "concept_id": concept_id, "problem_id": problem_id}
+    common: dict[str, Any] = {
+        "search_space_id": sid,
+        "concept_id": concept_id,
+        "problem_id": problem_id,
+    }
     current = await _seed_attempt(db_session, user_id=user_id, **common)
     empty_attempt = await _seed_attempt(db_session, user_id=user_id, **common)
     shadow_attempt = await _seed_attempt(db_session, user_id=user_id, **common)
@@ -274,13 +300,22 @@ async def test_non_array_payload_yields_no_rows_instead_of_raising(db_session) -
     sid = await seed_search_space(db_session)
     problem_id, concept_id = await _seed_problem(db_session, search_space_id=sid)
     user_id = str(uuid.uuid4())
-    common = {"search_space_id": sid, "concept_id": concept_id, "problem_id": problem_id}
+    common: dict[str, Any] = {
+        "search_space_id": sid,
+        "concept_id": concept_id,
+        "problem_id": problem_id,
+    }
     current = await _seed_attempt(db_session, user_id=user_id, **common)
     object_attempt = await _seed_attempt(db_session, user_id=user_id, **common)
     absent_attempt = await _seed_attempt(db_session, user_id=user_id, **common)
 
-    absent = _artifact(attempt_id=absent_attempt, user_id=user_id, misconceptions=[], **common)
-    absent.grader_payload = {"clarification_trace": []}
+    absent = _artifact(
+        attempt_id=absent_attempt,
+        user_id=user_id,
+        misconceptions=[],
+        grader_payload={"clarification_trace": []},
+        **common,
+    )
     db_session.add_all(
         [
             _artifact(
@@ -307,7 +342,11 @@ async def test_entry_without_a_canonical_key_is_skipped(db_session) -> None:
     sid = await seed_search_space(db_session)
     problem_id, concept_id = await _seed_problem(db_session, search_space_id=sid)
     user_id = str(uuid.uuid4())
-    common = {"search_space_id": sid, "concept_id": concept_id, "problem_id": problem_id}
+    common: dict[str, Any] = {
+        "search_space_id": sid,
+        "concept_id": concept_id,
+        "problem_id": problem_id,
+    }
     current = await _seed_attempt(db_session, user_id=user_id, **common)
     prior = await _seed_attempt(db_session, user_id=user_id, **common)
 
@@ -338,7 +377,12 @@ async def test_soft_fails_to_empty_on_error(caplog: pytest.LogCaptureFixture) ->
 
     with caplog.at_level("WARNING"):
         found = await prior_wrongness_findings(
-            _BrokenSession(), attempt_id=1, problem_id=2, course_id=3
+            # Duck-typed on `.execute` alone, which is the whole point: the read
+            # must soft-fail on ANY session-shaped object that raises.
+            cast("AsyncSession", _BrokenSession()),
+            attempt_id=1,
+            problem_id=2,
+            course_id=3,
         )
 
     assert found == ()
