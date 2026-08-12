@@ -221,6 +221,8 @@
     "campaign/scripts/eval_authored_calc2.py": "campaign/scripts-diff-eval",
     "campaign/scripts/run_s1_s2.py": "campaign/scripts-run-s1-s2",
     "campaign/transcript_replay.py": "campaign/transcript-replay",
+    "campaign/turn_replay.py": "campaign/turn-replay",
+    "campaign/turn_replay_clients.py": "campaign/turn-replay",
     "chats/__init__.py": "chats/service",
     "chats/bundle_cache.py": "chats/bundle-cache",
     "chats/routes.py": "chats/routes",
@@ -1474,11 +1476,20 @@
     "campaign/transcript-replay": {
       "path": "docs/architecture/campaign/transcript-replay.md",
       "kind": "leaf",
-      "description": "Deterministic transcript-grader fixture-replay entrypoint \u2014 the surface A7 kept.",
+      "description": "Deterministic transcript-grader fixture-replay entrypoint plus the shared offline grading core.",
       "owns": [
         "campaign/transcript_replay.py",
         "campaign/__init__.py",
         "campaign/README.md"
+      ]
+    },
+    "campaign/turn-replay": {
+      "path": "docs/architecture/campaign/turn-replay.md",
+      "kind": "leaf",
+      "description": "Turn-level replay of recorded prod attempts through the live questioning engine, with an injectable client seam.",
+      "owns": [
+        "campaign/turn_replay.py",
+        "campaign/turn_replay_clients.py"
       ]
     },
     "chats/_index": {
@@ -2256,7 +2267,8 @@
         "campaign/judges-s5",
         "campaign/scripts-diff-eval",
         "campaign/scripts-run-s1-s2",
-        "campaign/transcript-replay"
+        "campaign/transcript-replay",
+        "campaign/turn-replay"
       ]
     },
     "chats/_index": {
