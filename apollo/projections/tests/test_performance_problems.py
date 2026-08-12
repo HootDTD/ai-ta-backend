@@ -13,6 +13,7 @@ import pytest
 from apollo.ontology import Node, build_node
 from apollo.overseer.rubric import LETTER_BANDS
 from apollo.projections import performance_problems as pp
+from apollo.projections.performance_insights import ProblemAgg
 
 pytestmark = pytest.mark.unit
 
@@ -217,7 +218,14 @@ def test_students_for_orders_by_score_desc_and_resolves_email():
     identities = {"u1": {"email": "u1@e"}, "u2": {"email": "u2@e"}}
     students = pp.students_for(rows, identities)
     assert [s["user_id"] for s in students] == ["u2", "u1", "u3"]  # score desc
-    assert students[0] == {"user_id": "u2", "email": "u2@e", "score": 100.0, "letter": "A+"}
+    assert students[0] == {
+        "user_id": "u2",
+        "email": "u2@e",
+        "score": 100.0,
+        "letter": "A+",
+        "attempts": 1,
+        "median_gap_seconds": None,
+    }
     assert students[2]["email"] is None  # u3 not in identities -> None
 
 
@@ -274,7 +282,16 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
     assert alpha["problem_text"] == "Explain pressure"
     assert (alpha["students_graded"], alpha["avg_best"]) == (1, 55.0)
     assert alpha["nodes"] == []  # no graded reference nodes
-    assert alpha["students"] == [{"user_id": "u1", "email": "u1@e", "score": 55.0, "letter": "D"}]
+    assert alpha["students"] == [
+        {
+            "user_id": "u1",
+            "email": "u1@e",
+            "score": 55.0,
+            "letter": "D",
+            "attempts": 1,
+            "median_gap_seconds": None,
+        }
+    ]
 
     assert beta["problem_text"] == "Explain flow"
     assert (beta["problem_code"], beta["concept_name"]) == ("pb", "Beta")
@@ -283,7 +300,14 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
     assert beta_dist["A-"] == 1 and beta_dist["A+"] == 1 and beta_dist["F"] == 1
     # students: all three distinct students, score desc, u3 email degraded to None.
     assert [s["user_id"] for s in beta["students"]] == ["u2", "u1", "u3"]
-    assert beta["students"][2] == {"user_id": "u3", "email": None, "score": 30.0, "letter": "F"}
+    assert beta["students"][2] == {
+        "user_id": "u3",
+        "email": None,
+        "score": 30.0,
+        "letter": "F",
+        "attempts": 1,
+        "median_gap_seconds": None,
+    }
     # nodes: u3's empty coverage is EXCLUDED, so graded=2 (u1 partial + u2 covered).
     beta_nodes = {n["node_id"]: n for n in beta["nodes"]}
     assert beta_nodes["eq1"]["graded"] == 2
@@ -300,3 +324,68 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
 
 def test_build_problems_empty():
     assert pp.build_problems([], {}, {}, {}) == []
+
+
+# --- P3.3 attempts / median_gap_seconds decoration --------------------------
+
+
+def test_students_for_without_aggregates_defaults_to_one_attempt():
+    """No aggregates threaded in -> the truthful floor: a best-wins row exists
+    only because >= 1 graded attempt does, and no timing is known."""
+    rows = [{"user_id": "u1", "problem_id": 10, "score": 85.0, "letter": "A-"}]
+    assert pp.students_for(rows, {}) == [
+        {
+            "user_id": "u1",
+            "email": None,
+            "score": 85.0,
+            "letter": "A-",
+            "attempts": 1,
+            "median_gap_seconds": None,
+        }
+    ]
+
+
+def test_students_for_decorates_from_the_matching_pair_aggregate():
+    """The decoration is PAIR-grained: u1's problem-10 aggregate supplies
+    attempts + median gap; their problem-20 aggregate must not leak into the
+    problem-10 row, and a student with no aggregate falls back to (1, None)."""
+    rows = [
+        {"user_id": "u1", "problem_id": 10, "score": 85.0, "letter": "A-"},
+        {"user_id": "u2", "problem_id": 10, "score": 30.0, "letter": "F"},
+    ]
+    aggregates = {
+        "u1": [
+            ProblemAgg(10, 3, 40.0, 85.0, False, 120.0, 42.0),
+            ProblemAgg(20, 7, 10.0, 20.0, True, 999.0, 999.0),
+        ]
+    }
+    students = pp.students_for(rows, {"u1": {"email": "u1@e"}}, aggregates)
+    by_user = {s["user_id"]: s for s in students}
+    assert (by_user["u1"]["attempts"], by_user["u1"]["median_gap_seconds"]) == (3, 120.0)
+    assert (by_user["u2"]["attempts"], by_user["u2"]["median_gap_seconds"]) == (1, None)
+
+
+def test_build_problems_threads_aggregates_into_student_rows():
+    best_rows = [
+        {"user_id": "u1", "problem_id": 1, "score": 85.0, "letter": "A-", "coverage": None},
+    ]
+    meta = {
+        1: {
+            "problem_code": "pb",
+            "problem_text": "Explain flow",
+            "concept_id": 7,
+            "concept_name": "Beta",
+        }
+    }
+    aggregates = {"u1": [ProblemAgg(1, 2, 40.0, 85.0, False, 42.0, 42.0)]}
+    block = pp.build_problems(best_rows, meta, {}, {1: []}, aggregates)
+    assert block[0]["students"] == [
+        {
+            "user_id": "u1",
+            "email": None,
+            "score": 85.0,
+            "letter": "A-",
+            "attempts": 2,
+            "median_gap_seconds": 42.0,
+        }
+    ]
