@@ -3,7 +3,7 @@ doc: apollo/overseer/_index
 description: Router for Apollo's grading, scoring, narrative, XP, and selection brains — home of the grading-path invariants.
 owns: []
 related: []
-last_verified: 2026-08-07
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -23,6 +23,7 @@ Done grade is assembled by [done.md](../conversation/handlers/done.md) — recip
 | [diagnostic](diagnostic.md) | Explains the grade (never decides) + verdict-consistency gate + optional remediation pointers | `apollo/overseer/diagnostic.py`, `apollo/overseer/remediation.py`, `apollo/overseer/narrative_consistency.py` |
 | [aside-penalty](aside-penalty.md) | INTERACTION5: pure flat credit-cap for Hoot-assisted rubric nodes | `apollo/overseer/aside_penalty.py` |
 | [grounding](grounding.md) | INTERACTION2: session bundle → one capped, student-safe course-evidence block | `apollo/overseer/grounding.py` |
+| [wrongness](wrongness.md) | P3.2 pure core: the single ladder-flag reader + the S2′ consequence predicate | `apollo/overseer/wrongness.py` |
 | [xp](xp.md) | XP formula + 5-tier level table + progress envelope | `apollo/overseer/xp.py` |
 | [concept-inference](concept-inference.md) | Transcript → one course `concept_id` (selection only) | `apollo/overseer/concept_inference.py` |
 | [problem-selector](problem-selector.md) | Tier-2 bank selection (+ personalization flag) | `apollo/overseer/problem_selector.py`, `apollo/overseer/personalization_flag.py` |
@@ -41,12 +42,11 @@ Done grade is assembled by [done.md](../conversation/handlers/done.md) — recip
 - **Flow:** transcript coverage → rubric + topic score → diagnostic/topic
   narrative → consistency gate (P2.1: prose never praises an uncredited topic;
   every zeroed topic that COUNTED names its gap) → remediation → XP.
-- **Per-node credit is a FOUR-POINT SCALE (2026-08-07 P1.1).** Every credit
-  leaving [transcript-coverage](transcript-coverage.md) is exactly one of
-  `CREDIT_ANCHORS = (0, 0.6, 0.85, 1.0)` (schema enum + code snap, ties down), so
-  both consumers — [topic-score](topic-score.md), axis [rubric](rubric.md) — see
-  only anchors. The one non-anchor value is the later
-  [aside-penalty](aside-penalty.md) cap (0.5).
+- **Per-node credit is a FOUR-POINT SCALE (2026-08-07 P1.1).** Every credit leaving
+  [transcript-coverage](transcript-coverage.md) is exactly one of `CREDIT_ANCHORS =
+  (0, 0.6, 0.85, 1.0)` (schema enum + code snap, ties down), so both consumers —
+  [topic-score](topic-score.md), axis [rubric](rubric.md) — see only anchors. The one
+  non-anchor value is the later [aside-penalty](aside-penalty.md) cap (0.5).
 - **Course grounding is strictly additive (INTERACTION2, default OFF).**
   [grounding](grounding.md) reframes the adjudication + narrative prompts with one
   capped block; `None` reproduces both prompts BYTE FOR BYTE. It truncates only the

@@ -2,7 +2,7 @@
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
   "generated_at": "2026-08-12",
-  "repo": "p32-w1-a",
+  "repo": "p32-integration",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -101,6 +101,7 @@
     "apollo/overseer/topic_score.py": "apollo/overseer/topic-score",
     "apollo/overseer/topic_score_serialize.py": "apollo/overseer/topic-score",
     "apollo/overseer/transcript_coverage.py": "apollo/overseer/transcript-coverage",
+    "apollo/overseer/wrongness.py": "apollo/overseer/wrongness",
     "apollo/overseer/xp.py": "apollo/overseer/xp",
     "apollo/parser/__init__.py": "apollo/conversation/parser/parser-llm",
     "apollo/parser/edge_resolver.py": "apollo/conversation/parser/edge-resolver",
@@ -858,6 +859,14 @@
         "apollo/overseer/__init__.py"
       ]
     },
+    "apollo/overseer/wrongness": {
+      "path": "docs/architecture/apollo/overseer/wrongness.md",
+      "kind": "leaf",
+      "description": "The pure P3.2 wrongness core \u2014 the single ladder-flag reader, ledger\u2192findings, and the S2\u2032 consequence predicate.",
+      "owns": [
+        "apollo/overseer/wrongness.py"
+      ]
+    },
     "apollo/overseer/xp": {
       "path": "docs/architecture/apollo/overseer/xp.md",
       "kind": "leaf",
@@ -875,7 +884,7 @@
     "apollo/persistence/done-write-linkage": {
       "path": "docs/architecture/apollo/persistence/done-write-linkage.md",
       "kind": "leaf",
-      "description": "Two small pure read-side resolvers the Done-time XP/mastery writers call \u2014 prior-graded-attempt detection and durable problem-bank id resolution.",
+      "description": "Small read-side resolvers the Done-time XP/mastery/questioning writers call \u2014 prior-graded-attempt detection, durable problem-bank id resolution, and the cross-attempt wrongness read.",
       "owns": [
         "apollo/persistence/attempt_history.py",
         "apollo/persistence/problem_linkage.py"
@@ -2126,6 +2135,7 @@
         "apollo/overseer/topic-narrative",
         "apollo/overseer/topic-score",
         "apollo/overseer/transcript-coverage",
+        "apollo/overseer/wrongness",
         "apollo/overseer/xp"
       ]
     },

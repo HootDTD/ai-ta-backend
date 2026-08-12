@@ -7,7 +7,8 @@ owns:
 related:
   - platform/http-server
   - rag-pipeline/hybrid-search
-last_verified: 2026-07-28
+  - apollo/overseer/wrongness
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -48,6 +49,13 @@ The single authority on these env-flag getters; `retrieval/`, `apollo/`, and
   default off; gates whether the grading path credit-caps rubric nodes a Hoot
   lookup aside explained for the student (`apollo/conversation/handlers/done`).
   Same truthy parsing as `interaction1/2/3`.
+- Apollo wrongness ladder: `wrongness_level()` reads `APOLLO_WRONGNESS_LEVEL` as
+  an ORDINAL clamped to 0-4, default 0 (P3.2 spec §2.6). Absent, empty, or
+  non-numeric reads as 0; out-of-range clamps rather than raising. Unlike the
+  `interaction*` booleans this is NOT read at the feature's call site — its only
+  caller is `apollo.overseer.wrongness.effective_wrongness_level`, which applies
+  `interaction_allowed_for_concept` on top. See
+  [apollo/overseer/wrongness](../apollo/overseer/wrongness.md).
 
 ## Data flow
 
@@ -71,7 +79,13 @@ gates a one-time subject log line.
 `USE_PGVECTOR_RETRIEVAL`, `EMBEDDING_DIM`, `OPENAI_EMBEDDING_MODEL`,
 `SUPABASE_DB_URL`, `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`/`NEO4J_DATABASE`,
 `RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION1`, `INTERACTION2`, `INTERACTION3`,
-`INTERACTION5`, `INTERACTION_CONCEPTS`.
+`INTERACTION5`, `INTERACTION_CONCEPTS`, `APOLLO_WRONGNESS_LEVEL`.
+
+**Retired flag names — never reuse:** `APOLLO_MISCONCEPTION_DETECTOR`,
+`APOLLO_MISC_STRUCT_COKEY`, `APOLLO_EMERGENT_MISCONCEPTIONS`,
+`APOLLO_EMERGENT_MAP_CAPTURE` have had zero code readers since the detector was
+deleted, but are still set to `1` on Railway staging (2026-07-10). A human must
+delete them before `APOLLO_WRONGNESS_LEVEL >= 1` is set anywhere.
 
 ## Related
 
