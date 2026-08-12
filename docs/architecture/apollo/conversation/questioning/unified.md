@@ -6,6 +6,7 @@ owns:
 related:
   - apollo/conversation/questioning/controller
   - apollo/conversation/questioning/prompts
+  - apollo/conversation/questioning/challenge
   - apollo/conversation/questioning/selection
   - apollo/conversation/questioning/leakage
   - apollo/conversation/agent/output-filter
@@ -20,15 +21,20 @@ stub: false
 
 ## Interface
 
-- `evaluate_and_ask(*, transcript, reference_graph, problem, tally_state, budget, client=None, wrongness=False) -> UnifiedQuestionResult`
+- `evaluate_and_ask(*, transcript, reference_graph, problem, tally_state, budget, client=None,
+  wrongness=False, contested_ids=(), contested_quotes=None, challenge_gate=False) -> UnifiedQuestionResult`
   (async) — imported by `questioning/controller`. `question_cap() -> int`.
+  The last three are the level-2 inputs, all defaulted off: `contested_ids`
+  reorders the askable set, `contested_quotes` maps a graded node to its latest
+  material contradiction, `challenge_gate` arms the done-gate.
 - Value objects: `EvidenceQuote`, `TallyState`, `TallyUpdate`, `Contradiction`,
-  `QuestionBudget`, `UnifiedQuestionResult`, plus the `Wrongness` literal and
+  `QuestionBudget` (with `carried_challenges`), `CarriedChallenge`,
+  `UnifiedQuestionResult`, plus the `Wrongness` literal and
   `WRONGNESS_VALUES` (all in `__all__`). `UnifiedQuestionResult.fallback_served`
   tells the controller the served text is a degenerate public clause, not a probe.
 - The prompt/schema, the target policy and the belt are **imported, not
   re-exported**: `questioning/prompts` / `questioning/selection` /
-  `questioning/leakage` are their authorities.
+  `questioning/leakage` / `questioning/challenge` are their authorities.
 
 ## Data flow
 
@@ -37,15 +43,17 @@ next move. The hard budget check comes first (`questions_asked >= cap` → `done
 `_build_payload` serializes public problem + `_public_question_parts` + private
 reference nodes **ordered graded-first, each flagged `graded`** + edges +
 `_serialize_tally` + budget block
-`{questions_asked, cap, reserved_for_graded, askable_node_ids}` + indexed transcript.
+`{questions_asked, cap, reserved_for_graded, askable_node_ids}` (plus
+`carried_challenges` ONLY when non-empty) + indexed transcript.
 `_call_unified` (`bounded_client()` unless a `client` is injected — `agent/llm-client`;
 `json_schema` = `_schema()` delegating to `questioning/prompts`;
 model from `APOLLO_UNIFIED_QUESTION_MODEL`; `reasoning_effort` for reasoning models
 via `_is_reasoning_model`) runs on a thread. `_decode`/`_decode_updates` validate
 tally updates — every non-`missing` update needs a `_verbatim_span` hit inside the
 cited student turn; a rejected quote is logged (`apollo_question_evidence_rejected`).
-The policy is re-resolved WITH this turn's updates; an empty `askable_ids` forces
-`done`. `_resolve_served_reply` then picks what is served, spending **at most one**
+The policy is re-resolved WITH this turn's updates; `questioning/challenge`'s
+`resolve` then gets first refusal on a self-declared `done` (P3.2 L2b); an empty
+`askable_ids` forces `done`. `_resolve_served_reply` then picks what is served, spending **at most one**
 regenerate on an off-policy target (`_off_policy_feedback` names the askable ids)
 and/or a malformed shape (`_MALFORMED_FEEDBACK`), falling back to
 `_fallback_public_question` for `askable_ids[0]`. `_log_decision`/`_log_debug_cycle`
@@ -108,6 +116,16 @@ emit telemetry.
   exactly `client.chat.completions.create(**kwargs)` → `choices[0].message.content`.
   The single regenerate uses the SAME client — a replay must never fall back to
   the network on a repair turn.
+- **The done-gate can override a SELF-DECLARED `done` only** (P3.2 L2b, level >= 2).
+  It sits between the decode and the done early return, spends no LLM call, and
+  returns an ordinary `ask` with `fallback_served=False` so the ask is charged.
+  A student-initiated Done never reaches this function at all, and the gate is
+  structurally unreachable from the `budget_exhausted` branch. Every guard lives
+  in `questioning/challenge::resolve`, not at this call site.
+- **The L2c prompt clause is derived FROM the payload**, never passed alongside
+  it (`_base_messages` reads `payload['budget']['carried_challenges']`), so the
+  clause and the data it describes cannot disagree. The carried quote rides as
+  labelled untrusted payload data and is never spliced into the system turn.
 - **`budget_exhausted` still discards the final turn's tally updates** (the early
   return precedes the call). Unchanged on purpose; it now emits
   `apollo_tally_updates_discarded` so the campaign can size the undercount. Never
@@ -120,6 +138,7 @@ emit telemetry.
 
 ## Related
 
-Prompt + schema `questioning/prompts`; policy `questioning/selection`; belt
+Prompt + schema `questioning/prompts`; done-gate `questioning/challenge`;
+policy `questioning/selection`; belt
 `questioning/leakage`; persistence `questioning/controller`; dead
 `agent/output-filter`; `ontology/graph`; `schemas/problem`.

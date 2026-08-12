@@ -1,14 +1,15 @@
 ---
 doc: apollo/conversation/questioning/selection
-description: Deterministic question-target policy — graded-first ordering, the 2-asks-per-node cap, and the graded budget reservation.
+description: Deterministic question-target policy — graded-first ordering, contested-first priority, the 2-asks-per-node cap, and the graded budget reservation.
 owns:
   - apollo/smart_questions/selection.py
 related:
   - apollo/conversation/questioning/unified
   - apollo/conversation/questioning/controller
+  - apollo/conversation/questioning/challenge
   - apollo/overseer/topic-score
   - apollo/ontology/graph
-last_verified: 2026-08-07
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -20,8 +21,9 @@ were violated in prod: 31% of graded nodes were never probed (so they were grade
 
 ## Interface
 
-- `build_selection_policy(*, reference_graph, tally_state=(), updates=(), questions_asked=0, cap) -> SelectionPolicy`
-  — the only entry point; imported by `questioning/unified` and `questioning/controller`.
+- `build_selection_policy(*, reference_graph, tally_state=(), updates=(), questions_asked=0, cap, contested_ids=()) -> SelectionPolicy`
+  — the only entry point; imported by `questioning/unified`, `questioning/controller`
+  and (for `SelectionPolicy` alone) `questioning/challenge`.
 - `SelectionPolicy` (frozen): `graded_ids`, `open_graded_ids`, `askable_ids`,
   `reserved_for_graded`, `graded_only`, plus the derived `graded_topic_total` /
   `open_graded_topics` counts the chat response serves to the student-ui coverage meter.
@@ -36,13 +38,21 @@ Statuses come from `tally_state` overlaid with this turn's `updates`; ask counts
 come from `tally_state`. A node is **probeable** when its status is not
 `understood` and `times_asked < MAX_ASKS_PER_NODE`. Graded probeable nodes are
 listed first (`ordered_nodes` = graded, then ungraded, stable within each group);
-`reserved_for_graded` is how many of them remain. When
-`cap - questions_asked <= reserved_for_graded` the policy flips `graded_only` and
+`reserved_for_graded` is how many of them remain. `contested_ids` (P3.2 L2a,
+level >= 2) then stable-partitions the graded block so contested nodes lead it.
+When `cap - questions_asked <= reserved_for_graded` the policy flips `graded_only` and
 `askable_ids` drops every ungraded node — the last questions of a session are
 held for territory the grade is actually computed over.
 
 ## Invariants & gotchas
 
+- **`contested_ids` reorders, it never admits.** A node the questioning engine
+  labelled with a wrongness is ALREADY askable (it is not `understood`); the
+  signal only buys it priority. `MAX_ASKS_PER_NODE` stays 2 — a contradiction
+  consumes the second ask, it never creates a third (P2.4 / #191 confirm-once) —
+  and `reserved_for_graded` / `graded_only` / `graded_ids` are unmoved. An empty
+  `contested_ids` returns the untouched list, so levels 0/1 cannot differ from
+  the pre-P3.2 policy even structurally.
 - **One definition of "graded".** `GRADED_NODE_TYPES` is imported from
   `overseer/topic_score::_GRADED_NODE_TYPES` — the grader's set — never re-declared
   here. Adding a graded node type there changes questioning automatically.
@@ -66,5 +76,6 @@ held for territory the grade is actually computed over.
 ## Related
 
 Engine `questioning/unified` (enforces the policy); persistence
-`questioning/controller` (serves the counts); graded-type authority
-`overseer/topic-score`; `KGGraph` `ontology/graph`.
+`questioning/controller` (serves the counts, derives `contested_ids`); done-gate
+`questioning/challenge`; graded-type authority `overseer/topic-score`; `KGGraph`
+`ontology/graph`.

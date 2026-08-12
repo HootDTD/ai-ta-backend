@@ -7,6 +7,9 @@ owns:
 related:
   - apollo/conversation/questioning/unified
   - apollo/conversation/questioning/selection
+  - apollo/conversation/questioning/challenge
+  - apollo/overseer/wrongness
+  - apollo/persistence/done-write-linkage
   - apollo/conversation/handlers/chat
   - apollo/persistence/models
   - apollo/schemas/problem
@@ -30,7 +33,9 @@ public API.
 Builds the reference graph via `problem.to_kg_graph(attempt_id)`; loads the
 attempt's `QuestionOpportunity` rows; `_build_tally_state` merges rows onto the
 reference nodes (`_node_label`, `_evidence_rows`); `budget.questions_asked =
-sum(times_asked)`. Calls `evaluate_and_ask`. `_apply_tally_updates` writes/updates
+sum(times_asked)`. `_ladder_inputs` then resolves everything
+`APOLLO_WRONGNESS_LEVEL` changes about this turn (see below) and
+`evaluate_and_ask` is called with it. `_apply_tally_updates` writes/updates
 rows (`_new_opportunity_row` for a new node; evidence appended dedup'd).
 `_covered_topics` collects nodes whose merged state is `understood`, and
 `build_selection_policy` (`questioning/selection`) over the post-update rows yields
@@ -68,13 +73,31 @@ AND this is the node's first serve** (`asked_turn` still NULL).
   node at `times_asked == MAX_ASKS_PER_NODE` and still `tentative` keeps counting,
   and no further conversation can clear it. This is the cross-repo contract's pinned
   definition; UI copy must not promise that Apollo will ask about those topics.
-- **The P3.2 producer is not switched on here yet.** `plan_next_question` calls
-  `evaluate_and_ask` without `wrongness=`, so the engine defaults to off and the
-  schema/prompt stay level-0 identical. The level read
-  (`effective_wrongness_level(problem.concept_id) >= 1`, `overseer/wrongness`) is
-  wired at this call site in the level-2 wave, together with `contested_ids`.
-  Until then `_evidence_entry` can only ever write the two-key shape in
-  production — the tagged shape is exercised by tests only.
+- **This is the ONLY place the ladder level is read on the questioning path.**
+  `_ladder_inputs` calls `effective_wrongness_level(problem.concept_id)`
+  (`overseer/wrongness`, the single flag reader, paired with the INTERACTION
+  concept allowlist) and returns the frozen `_LadderInputs`. Rungs, cumulative:
+  level >= 1 sets `wrongness=True` (producer only); level >= 2 additionally
+  derives `contested_ids` (any latest wrongness -> L2a probe priority),
+  `contested_quotes` (`wrongness.candidate_quotes` — material + graded + latest,
+  the SAME filter the at-Done corroborator uses, so the node the gate challenges
+  is exactly the node that could later be corroborated), arms `challenge_gate`
+  (L2b, `questioning/challenge`), and reads ONE prior finding for the carried
+  challenge. Nothing above level 2 changes this turn.
+- **One ledger pass, and the cross-attempt read is a level-2 cost only.** Below
+  level 2 `_ladder_inputs` returns before touching the DB, so the turn issues
+  exactly the one `QuestionOpportunity` SELECT it always did.
+- **L2c carries the QUESTION, never the punishment** (decision D4). `_select_carried`
+  takes AT MOST ONE prior finding — the newest UNRESOLVED one whose node is still
+  askable this attempt and has `times_asked == 0` — from
+  `persistence/done-write-linkage::prior_wrongness_findings` (append-only
+  `internal.grading_runs`; no new table, and specifically not the retired
+  `apollo_misconception_observations`). The span goes through
+  `challenge.clean_quote` (control chars out, whitespace collapsed, 240-char cap)
+  before it can reach a payload. `problem.database_id` is the durable
+  `app.problems.id` that read keys on; without one the read is SKIPPED, and the
+  read owns its own failure domain (log + `()`), because a lost memory must cost
+  one continuity question and never a grade.
 - **The evidence entry has TWO shapes and the boundary is a contract (P3.2 S2).**
   `_evidence_entry` writes exactly `{turn_id, quote}` when
   `TallyUpdate.wrongness == "none"` — byte-identical to every entry written before
@@ -108,6 +131,8 @@ AND this is the node's first serve** (`asked_turn` still NULL).
 
 ## Related
 
-Engine `questioning/unified`; target policy `questioning/selection`; caller
+Engine `questioning/unified`; done-gate `questioning/challenge`; the level +
+predicate authority `overseer/wrongness`; prior-findings read
+`persistence/done-write-linkage`; target policy `questioning/selection`; caller
 `handlers/chat`; `QuestionOpportunity` model `persistence/models`; reference-graph
 source `schemas/problem`.

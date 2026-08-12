@@ -8,13 +8,13 @@ import logging
 import os
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from apollo.agent._llm import bounded_client
 from apollo.ontology import KGGraph
-from apollo.smart_questions import prompts
+from apollo.smart_questions import challenge, prompts
 from apollo.smart_questions.leakage import WORD_RE, BeltVerdict, belt_verdict, normalized
 from apollo.smart_questions.selection import (
     SelectionPolicy,
@@ -92,9 +92,22 @@ class TallyUpdate:
 
 
 @dataclass(frozen=True)
+class CarriedChallenge:
+    """One claim this student made about ``node_id`` in an EARLIER attempt
+    (P3.2 L2c / D4 — *carry the question, never the punishment*). ``prior_quote``
+    is length-capped and control-stripped by the producer (`challenge.clean_quote`)
+    and rides as labelled untrusted data in the payload, never in the prompt."""
+
+    node_id: str
+    prior_quote: str
+
+
+@dataclass(frozen=True)
 class QuestionBudget:
     questions_asked: int
     cap: int
+    #: At most ONE entry (D4). Empty ⇒ payload and system turn byte-identical.
+    carried_challenges: tuple[CarriedChallenge, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -159,8 +172,16 @@ def _call_unified(
 
 
 def _base_messages(payload: dict[str, Any], *, wrongness: bool = False) -> list[dict[str, str]]:
+    """The system + user turn. The L2c prompt clause is derived FROM the payload,
+    never passed alongside it, so the clause and the data it describes can never
+    disagree — no carried challenge, no clause, byte-identical system turn."""
+    budget = payload.get("budget")
+    carried = bool(budget.get("carried_challenges")) if isinstance(budget, dict) else False
     return [
-        {"role": "system", "content": prompts.build_system_prompt(wrongness=wrongness)},
+        {
+            "role": "system",
+            "content": prompts.build_system_prompt(wrongness=wrongness, carried=carried),
+        },
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
@@ -394,6 +415,19 @@ def _build_payload(
     transcript: Sequence[tuple[str, str]],
 ) -> dict[str, Any]:
     """Serialize the call payload with graded nodes first and the askable set named."""
+    # `carried_challenges` appears ONLY when non-empty: an always-present empty
+    # list would change every level-0/1 payload byte-for-byte. `prior_quote` is
+    # untrusted data in a labelled payload field, never in the system turn.
+    carried = (
+        {
+            "carried_challenges": [
+                {"node_id": item.node_id, "prior_quote": item.prior_quote}
+                for item in budget.carried_challenges
+            ]
+        }
+        if budget.carried_challenges
+        else {}
+    )
     return {
         "public_problem": problem_text,
         "public_question_parts": [
@@ -415,6 +449,7 @@ def _build_payload(
             "cap": budget.cap,
             "reserved_for_graded": policy.reserved_for_graded,
             "askable_node_ids": list(policy.askable_ids),
+            **carried,
         },
         "transcript": [
             {"turn_id": turn_id, "role": role, "content": content}
@@ -534,6 +569,9 @@ async def evaluate_and_ask(
     budget: QuestionBudget,
     client: Any | None = None,
     wrongness: bool = False,
+    contested_ids: Collection[str] = (),
+    contested_quotes: Mapping[str, str] | None = None,
+    challenge_gate: bool = False,
 ) -> UnifiedQuestionResult:
     """Apply the hard budget and the selection policy around one call (+ ≤1 regenerate).
 
@@ -541,6 +579,13 @@ async def evaluate_and_ask(
     used by the turn-replay harness. ``wrongness`` turns the P3.2 producer on;
     it is threaded from the caller's `APOLLO_WRONGNESS_LEVEL >= 1` decision, and
     with it off the schema and the system turn are byte-identical to pre-P3.2.
+
+    The three level-2 inputs are all defaulted-off and all resolved by the
+    controller from ONE ledger read: ``contested_ids`` reorders the askable set
+    (L2a), ``contested_quotes`` maps a graded node to its latest material
+    contradiction, and ``challenge_gate`` arms the done-gate (L2b) that spends
+    them. At level 0 and 1 all three are inert and this function behaves exactly
+    as it did before P3.2.
     """
     if budget.questions_asked >= budget.cap:
         # PRESERVED VERBATIM (R2): this branch returns before `_call_unified`,
@@ -579,6 +624,7 @@ async def evaluate_and_ask(
             tally_state=tally_state,
             questions_asked=budget.questions_asked,
             cap=budget.cap,
+            contested_ids=contested_ids,
         ),
         transcript=transcript,
     )
@@ -600,7 +646,39 @@ async def evaluate_and_ask(
         updates=updates,
         questions_asked=budget.questions_asked,
         cap=budget.cap,
+        contested_ids=contested_ids,
     )
+
+    # L2b — the done-gate, deliberately BEFORE the done early return and AFTER
+    # the policy re-resolve. `challenge.resolve` owns every guard (level, budget,
+    # cap, self-declared-done) so this call site cannot forget one.
+    served_challenge = challenge.resolve(
+        armed=challenge_gate,
+        self_declared_done=decoded.get("action") == "done",
+        policy=policy,
+        tally_state=tally_state,
+        updates=updates,
+        transcript=transcript,
+        contested_quotes=contested_quotes or {},
+        reference_graph=reference_graph,
+        problem_text=problem_text,
+        student_messages=student_messages,
+        questions_asked=budget.questions_asked,
+        cap=budget.cap,
+    )
+    if served_challenge is not None:
+        reply = served_challenge.reply
+        _log_decision(
+            tally_counts=_effective_counts(tally_state, updates),
+            action="ask",
+            target=served_challenge.node_id,
+            budget=budget,
+            policy=policy,
+            fallback_reason=None,
+            belt_hit_served=False,
+            repeated_question_served=False,
+        )
+        return UnifiedQuestionResult(updates, "ask", served_challenge.node_id, reply, reply)
 
     if decoded.get("action") == "done" or not policy.askable_ids:
         _log_decision(
@@ -745,6 +823,7 @@ def _log_decision(
 
 __all__ = [
     "WRONGNESS_VALUES",
+    "CarriedChallenge",
     "Contradiction",
     "EvidenceQuote",
     "QuestionBudget",
