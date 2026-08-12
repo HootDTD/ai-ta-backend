@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.errors import ParserCouldNotExtractError
+from apollo.errors import ParserCouldNotExtractError, SessionFrozenError
 from apollo.handlers.intent import (
     INTENT_CONFIDENCE_THRESHOLD,
     classify_intent,
@@ -46,7 +46,12 @@ from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.topic_score import _GRADED_NODE_TYPES
 from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
-from apollo.persistence.models import ProblemAttempt, TutoringMessage, TutoringSession
+from apollo.persistence.models import (
+    ProblemAttempt,
+    SessionPhase,
+    TutoringMessage,
+    TutoringSession,
+)
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import plan_next_question
@@ -133,6 +138,27 @@ async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
     )
     latest = result.scalar_one_or_none()
     return (latest + 1) if latest is not None else 0
+
+
+async def _require_unclaimed(db: AsyncSession, *, session_id: int) -> None:
+    """Refuse a teaching turn while a Done owns the grading claim (M4, P3.4).
+
+    A FRESH read every time. `handle_chat` loads `sess` once and the session
+    factory sets `expire_on_commit=False`, so the in-memory `sess.phase` is a
+    snapshot up to 17s stale by the back half of a turn — useless for this.
+
+    Deliberately NARROWER than `KGStore._ensure_unfrozen`'s
+    {PROBLEM_REVEAL, SOLVING, REPORT} triple: M1 removed the transient
+    PROBLEM_REVEAL write entirely, and REPORT is the post-grade resting phase in
+    which the student can legitimately still be typing, so only the SOLVING
+    CLAIM blocks a turn. Raises `SessionFrozenError` → 409 `session_frozen`,
+    which the FE already handles.
+    """
+    phase = (
+        await db.execute(select(TutoringSession.phase).where(TutoringSession.id == session_id))
+    ).scalar_one_or_none()
+    if phase == SessionPhase.SOLVING.value:
+        raise SessionFrozenError(session_id=str(session_id))
 
 
 async def _load_history(
@@ -671,6 +697,12 @@ async def handle_chat(
     if current_attempt is None:
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
 
+    # M4 (P3.4) — check #1, before ANY LLM spend (concept load, aside lane,
+    # intent classification). A turn that starts inside the grading window is
+    # refused outright instead of being half-written into a transcript that is
+    # already being graded.
+    await _require_unclaimed(db, session_id=session_id)
+
     concept = await load_concept_definition(
         db, concept_id=sess.concept_id, search_space_id=sess.course_id
     )
@@ -733,6 +765,10 @@ async def handle_chat(
     # above, so the transcript handed to the question planner below does not
     # double-count this message. Apollo's reply is appended at the end of the
     # turn by `_persist_apollo_reply`.
+    # M4 — check #2. The intent classifier runs ~1-2s in a thread; a Done can
+    # claim the session inside that window (the documented P0.3 residual). Re-read
+    # before the message becomes durable.
+    await _require_unclaimed(db, session_id=session_id)
     student_turn_index = await _persist_student_message(
         db,
         session_id=session_id,
@@ -799,6 +835,13 @@ async def handle_chat(
     full_transcript = [
         ("student" if item["role"] == "user" else "apollo", item["content"]) for item in history_pre
     ] + [("student", message)]
+    # M4 — check #3, before the LEDGER write. The parse + KG chain runs 10-17s;
+    # a tally row committed after `done._question_ledger`'s single unlocked
+    # SELECT is silently orphaned, and `times_asked` written into a grading
+    # window mis-scopes the P1.2b denominator. The student row persisted above is
+    # deliberately KEPT (the documented dangling-row rule) — it is inside the
+    # transcript the winner grades.
+    await _require_unclaimed(db, session_id=session_id)
     decision = await plan_next_question(
         db,
         course_id=int(sess.course_id),
