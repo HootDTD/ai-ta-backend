@@ -151,6 +151,35 @@ async def _bump_times_asked(db: AsyncSession, *, row: Any) -> None:
     set_committed_value(row, "times_asked", int(new_value))
 
 
+def _evidence_entry(update: TallyUpdate) -> dict[str, Any]:
+    """One entry for the free-form ``question_opportunities.evidence`` array.
+
+    Two shapes, and the boundary between them is a contract (P3.2 seam S2):
+
+    * ``wrongness == "none"`` -> exactly ``{"turn_id", "quote"}``, BYTE-IDENTICAL
+      to every entry ever written before P3.2. Level 0 therefore writes the same
+      bytes it always has, and the dedup rule (``if serialized not in evidence``)
+      keeps matching historical rows.
+    * otherwise -> the tagged entry
+      ``{"turn_id", "quote", "wrongness", "contradicts", "kind"}``.
+
+    No migration: the column is free-form JSONB (`__evidence__array_check` only
+    asserts ``jsonb_typeof = 'array'``). Both shapes must keep reading correctly
+    in `done._latest_student_quote` and `done._probed_node_ids`, which only ever
+    look at ``quote`` — pinned by test.
+    """
+    evidence = cast(EvidenceQuote, update.evidence)
+    entry: dict[str, Any] = {"turn_id": evidence.turn_id, "quote": evidence.quote}
+    if update.wrongness == "none" or update.contradiction is None:
+        return entry
+    return {
+        **entry,
+        "wrongness": update.wrongness,
+        "contradicts": update.contradiction.reference_clause,
+        "kind": update.contradiction.kind,
+    }
+
+
 def _apply_tally_updates(
     db: AsyncSession,
     *,
@@ -169,24 +198,23 @@ def _apply_tally_updates(
     left nodes stuck ``missing`` and made Apollo re-probe covered territory.
     """
     by_id = {str(row.reference_node_id): row for row in rows}
-    for update in updates:
-        row = by_id.get(update.node_id)
+    # `tally_update`, not `update`: the loop name used to shadow the SQLAlchemy
+    # `update()` this module calls in `_bump_times_asked` (ruff F402).
+    for tally_update in updates:
+        row = by_id.get(tally_update.node_id)
         if row is None:
             row = _new_opportunity_row(
                 course_id=course_id,
                 session_id=session_id,
                 attempt_id=attempt_id,
-                node_id=update.node_id,
+                node_id=tally_update.node_id,
             )
             db.add(row)
-            by_id[update.node_id] = row
-        row.state = update.status
-        if update.evidence is not None:
+            by_id[tally_update.node_id] = row
+        row.state = tally_update.status
+        if tally_update.evidence is not None:
             evidence = list(row.evidence or [])
-            serialized = {
-                "turn_id": update.evidence.turn_id,
-                "quote": update.evidence.quote,
-            }
+            serialized = _evidence_entry(tally_update)
             if serialized not in evidence:
                 evidence.append(serialized)
             row.evidence = evidence

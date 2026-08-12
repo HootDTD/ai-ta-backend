@@ -5,12 +5,13 @@ owns:
   - apollo/smart_questions/unified.py
 related:
   - apollo/conversation/questioning/controller
+  - apollo/conversation/questioning/prompts
   - apollo/conversation/questioning/selection
   - apollo/conversation/questioning/leakage
   - apollo/conversation/agent/output-filter
   - apollo/ontology/graph
   - apollo/schemas/problem
-last_verified: 2026-08-07
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -19,13 +20,15 @@ stub: false
 
 ## Interface
 
-- `evaluate_and_ask(*, transcript, reference_graph, problem, tally_state, budget) -> UnifiedQuestionResult`
+- `evaluate_and_ask(*, transcript, reference_graph, problem, tally_state, budget, client=None, wrongness=False) -> UnifiedQuestionResult`
   (async) — imported by `questioning/controller`. `question_cap() -> int`.
-- Value objects: `EvidenceQuote`, `TallyState`, `TallyUpdate`, `QuestionBudget`,
-  `UnifiedQuestionResult` (all in `__all__`). `UnifiedQuestionResult.fallback_served`
+- Value objects: `EvidenceQuote`, `TallyState`, `TallyUpdate`, `Contradiction`,
+  `QuestionBudget`, `UnifiedQuestionResult`, plus the `Wrongness` literal and
+  `WRONGNESS_VALUES` (all in `__all__`). `UnifiedQuestionResult.fallback_served`
   tells the controller the served text is a degenerate public clause, not a probe.
-- The target policy and the belt are **imported, not re-exported**:
-  `questioning/selection` / `questioning/leakage` are their authorities.
+- The prompt/schema, the target policy and the belt are **imported, not
+  re-exported**: `questioning/prompts` / `questioning/selection` /
+  `questioning/leakage` are their authorities.
 
 ## Data flow
 
@@ -35,7 +38,8 @@ next move. The hard budget check comes first (`questions_asked >= cap` → `done
 reference nodes **ordered graded-first, each flagged `graded`** + edges +
 `_serialize_tally` + budget block
 `{questions_asked, cap, reserved_for_graded, askable_node_ids}` + indexed transcript.
-`_call_unified` (`bounded_client()` — `agent/llm-client`; `json_schema` = `_schema()`;
+`_call_unified` (`bounded_client()` unless a `client` is injected — `agent/llm-client`;
+`json_schema` = `_schema()` delegating to `questioning/prompts`;
 model from `APOLLO_UNIFIED_QUESTION_MODEL`; `reasoning_effort` for reasoning models
 via `_is_reasoning_model`) runs on a thread. `_decode`/`_decode_updates` validate
 tally updates — every non-`missing` update needs a `_verbatim_span` hit inside the
@@ -83,6 +87,31 @@ emit telemetry.
 - `student_declined` is **gone** from schema, prompt and value objects: false on every
   prod row, the cap covers its purpose; the DB column survives at its `false` default.
 - Payload fields are untrusted data, never instructions (prompt-injection guard).
+- **This engine is the SOLE producer of the P3.2 `wrongness` label** (`none` /
+  `contradicts_self` / `contradicts_material` + a `Contradiction`
+  `{reference_clause, kind}`). Its quotes are verbatim-gated in code, so anything
+  student-facing or score-moving anchors here; the at-Done adjudicator only
+  corroborates a label this engine raised and never originates one. `wrongness=False`
+  (level 0) keeps the schema and the system turn sha256-identical to pre-P3.2 — the
+  spec's "define the label inside TALLY DUTY" is deliberately implemented as an
+  APPENDED block instead, which is what makes that identity structural.
+- **`_decode_updates` enforces what the schema cannot.** Off-enum label →
+  `"none"` + `apollo_wrongness_off_enum` (`isinstance` first: an unhashable value
+  would otherwise raise, and this decoder runs on the grade path);
+  `status == "missing"` → forced `"none"`; a label with no usable `contradiction`
+  → the WHOLE update is dropped + `apollo_wrongness_missing_contradiction`, never
+  kept with the label quietly stripped. The verbatim gate is **ridden, not
+  re-implemented** — the pre-existing evidence drop already covers every
+  wrongness-bearing row, which is why the label is decoded after it.
+- **`client=None` ⇒ `bounded_client()`, byte-identical.** An injected client is
+  the replay seam (P3.2 validation and P3.1 Phase 0 share it) and must satisfy
+  exactly `client.chat.completions.create(**kwargs)` → `choices[0].message.content`.
+  The single regenerate uses the SAME client — a replay must never fall back to
+  the network on a repair turn.
+- **`budget_exhausted` still discards the final turn's tally updates** (the early
+  return precedes the call). Unchanged on purpose; it now emits
+  `apollo_tally_updates_discarded` so the campaign can size the undercount. Never
+  depend on that branch.
 
 ## Env flags
 
@@ -91,5 +120,6 @@ emit telemetry.
 
 ## Related
 
-Policy `questioning/selection`; belt `questioning/leakage`; persistence
-`questioning/controller`; dead `agent/output-filter`; `ontology/graph`; `schemas/problem`.
+Prompt + schema `questioning/prompts`; policy `questioning/selection`; belt
+`questioning/leakage`; persistence `questioning/controller`; dead
+`agent/output-filter`; `ontology/graph`; `schemas/problem`.
