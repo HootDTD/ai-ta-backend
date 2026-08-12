@@ -106,30 +106,27 @@ Ordered grade assembly (each step delegates to the owner doc):
   legacy grade. A degraded KG never yields a false F (grading reads the transcript).
 - **`_compute_topic_score_safe` is soft-fail**: any exception → `topic_score=None`,
   `served_rubric is rubric` (byte-identical), and `topics` is absent (not null).
-- **Structured feedback is additive and topic-only:** successful topic JSON is
-  served as `student_response["feedback"]`; parse/LLM failure or no topic score
-  leaves that key absent. `diagnostic_narrative` always remains the string
-  back-compat surface (flattened structured output on success, legacy output on
-  soft-fail).
-- **Remediation cannot affect grading:** one `try/except` encloses the complete
-  copy-on-success pass. Any retrieval/shape failure (or a non-matching concept)
-  leaves feedback byte-identical with no `review` keys, and score, letter,
-  narrative, XP and persistence unchanged. A non-null Interaction-1 bundle
-  prevents fresh retrieval.
+- **Structured feedback is additive and topic-only:** successful topic JSON
+  serves as `student_response["feedback"]`; parse/LLM failure or no topic
+  score leaves that key absent. `diagnostic_narrative` stays the string
+  back-compat surface either way (flattened on success, legacy on soft-fail).
+- **Remediation cannot affect grading:** one `try/except` encloses the whole
+  copy-on-success pass; failure leaves feedback byte-identical (no `review`
+  keys) and score/letter/narrative/XP/persistence unchanged. A non-null
+  Interaction-1 bundle skips fresh retrieval.
 - **Artifact write + artifact-derived mastery are own-failure-domain telemetry** —
   each owns its commit and swallows exceptions; neither voids the served grade.
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on.
 - **Course grounding never adds a failure mode** (`overseer/grounding`):
-  `_course_evidence_safe` runs AHEAD of the grading lane and is soft-fail by
-  construction — flag off, concept disallowed, corrupt bundle, or ANY
-  exception → `None` (both prompts byte-identical to pre-feature). Additive
+  `_course_evidence_safe` is soft-fail by construction (flag off / disallowed
+  concept / corrupt bundle / ANY exception → `None`, byte-identical prompts);
   `grading_provenance["grounding"]` is the replay-diff hook.
 - **The Hoot-assist cap owns its failure domain** (`overseer/aside-penalty`):
   the aside fetch and `apply_aside_caps` are wrapped so ANY exception logs and
-  leaves `coverage` UNCAPPED (never half-caps); runs AHEAD of the sole grading
-  lane, never touches the `CoverageGradingError → 503` contract, and can only
-  lower a grade. Additive `grading_provenance["aside_penalty"] = {enabled,
-  cap: 0.5, assisted_node_ids}` when the gate fired; off → key absent.
+  leaves `coverage` UNCAPPED (never half-caps, never touches the
+  `CoverageGradingError → 503` contract). Additive
+  `grading_provenance["aside_penalty"] = {enabled, cap: 0.5,
+  assisted_node_ids}` when the gate fired; off → key absent.
 - The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
   coverage, served_overall}` plus two conditional keys, each absent when it
   does not apply: `auto_done: true` iff the questioning engine (not the
@@ -139,20 +136,23 @@ Ordered grade assembly (each step delegates to the owner doc):
   `coverage` alone. `served_overall` snapshots `served_rubric["overall"]`;
   re-serving surfaces read it first, falling back to `rubric.overall` for
   pre-snapshot rows.
-- The response keeps historical `graph_lane: null` for API compatibility.
-- **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
+- The response keeps historical `graph_lane: null` for API compatibility, and
+  does NOT import `done_turn_order` (the WU-4C1 shadow chain — A7 removed it).
 - **`grading_provenance.reference_question_asides_used`** (additive) reads
-  `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]`, defaulting to 0 — never
-  affects the score, just teacher-facing provenance.
+  `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]` (default 0) — teacher-only.
 - **Claim lifecycle (M1, P3.4; gated in `test_apollo_done_claim_postgres.py`):**
   `_claim_grading_slot` CASes `phase` (`IS DISTINCT FROM 'SOLVING' OR
-  updated_at < now-15min`, NULL-safe) as Done's FIRST Postgres write,
-  replacing the blind phase write + `store.freeze`; `_release_grading_claim`
-  guards on `phase = 'SOLVING'` (stale-reclaim `prior_phase` falls back to
-  `TEACHING`). **The terminal `phase='REPORT'` write is ALSO fenced**
-  (`_fence_grade_commit`, same guard, P3.4 delta): a reclaimed-out Done
-  writes NOTHING and raises `GradingInProgressError`. `_stored_grade_payload`
-  replays with NO side effects (no XP write, no upsert/commit).
+  updated_at < now-15min`, NULL-safe) as Done's FIRST Postgres write and
+  returns its `updated_at` as a fencing STAMP, not a bool.
+  `_release_grading_claim` / `_fence_grade_commit` (the terminal
+  `phase='REPORT'` write) both guard on `phase = 'SOLVING' AND updated_at =
+  claim_stamp` — phase alone can't tell a stale claim from a LIVE reclaim at
+  the same phase; a reclaimed-out Done writes NOTHING and raises
+  `GradingInProgressError`. Release runs under `asyncio.shield` (survives a
+  client-disconnect `CancelledError`). A SECOND `_stored_grade_payload` check
+  right after the claim catches a stale pre-claim hoist (another Done graded
+  the SAME attempt mid-claim) and replays instead of re-grading; the helper
+  itself has NO side effects.
 
 ## Env flags
 

@@ -1,5 +1,6 @@
 """Deterministic collaborators for Done-handler unit tests."""
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from apollo.ontology import KGGraph
@@ -89,6 +90,12 @@ def _old_path_patches():
     # golden `db` double needs it awaitable even though the golden path never
     # takes that branch.
     db.rollback = AsyncMock()
+    # Fix-round-1 (P3.4): the post-claim already-graded re-check calls
+    # `db.refresh(attempt)` unconditionally on every successful claim. It's a
+    # no-op against this plain `_Attempt` double (not a real ORM instance),
+    # which is exactly right for the golden path — `attempt.result` stays
+    # `None` either way.
+    db.refresh = AsyncMock()
     patches = [
         patch("apollo.handlers.done._find_problem", new=AsyncMock(side_effect=_find_problem)),
         # Empty-attempt guard (defect I1): the base golden is a non-empty
@@ -98,9 +105,22 @@ def _old_path_patches():
         # M1 (P3.4): the claim is a Core UPDATE against a real row, which the
         # MagicMock `db` above cannot serve — patch the seam, not the SQL. The
         # golden path is "this Done owns the claim" through to the terminal
-        # fence too (M1b delta's `_fence_grade_commit`).
-        patch("apollo.handlers.done._claim_grading_slot", new=AsyncMock(return_value=True)),
+        # fence too (M1b delta's `_fence_grade_commit`). Fix-round-1: the
+        # claim now returns a fencing-token TIMESTAMP, not a bool.
+        patch(
+            "apollo.handlers.done._claim_grading_slot",
+            new=AsyncMock(return_value=datetime.now(UTC)),
+        ),
         patch("apollo.handlers.done._release_grading_claim", new=AsyncMock()),
+        # Fix-round-1 (Minor #4): `set_committed_value` requires a real
+        # SQLAlchemy-mapped instance (it reaches into `instance_state`), which
+        # the plain `_Sess` double above is not. Stand in with the equivalent
+        # observable effect for the golden path — real ORM instances are
+        # exercised for real by the Docker-backed `tests/database/` gates.
+        patch(
+            "apollo.handlers.done.set_committed_value",
+            new=lambda instance, key, value: setattr(instance, key, value),
+        ),
         patch("apollo.handlers.done._fence_grade_commit", new=AsyncMock(return_value=True)),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
         # Transcript grader is the sole (unconditional) grading lane.
