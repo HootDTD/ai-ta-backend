@@ -48,6 +48,40 @@ def _unprobed_keys(topic_score: TopicScoreResult | None) -> frozenset[str]:
     )
 
 
+def _artifact_misconceptions(topic_score: TopicScoreResult | None) -> list[dict[str, Any]]:
+    """The canonical ``misconceptions`` array, derived from the ONE scored result.
+
+    Apollo P3.2 level >= 3 fills `topic_score`'s S7 containers
+    (`topics[].misconceptions`) with the corroborated wrongness findings; this
+    flattens them into the artifact array every downstream reader ALREADY
+    consumes: `projections/scorecard._watch_out` (`canonical_key` +
+    `evidence_span`), `projections/classroom.top_misconceptions`
+    (`misc ->> 'canonical_key'`), and
+    `persistence.attempt_history.prior_wrongness_findings` (all three keys).
+
+    DERIVED rather than passed in, deliberately: the array and the served
+    `topics[]` then cannot disagree, and the data rides the one object that
+    already crosses the `handlers/artifact_writer` boundary — so lighting the
+    surfaces up needs no change to a file P3.2 wave 2 does not own. Levels 0-2
+    (and a soft-failed topic score) leave every `misconceptions` tuple empty, so
+    this returns `[]` and the artifact stays byte-identical to pre-P3.2.
+
+    Always a LIST: `grader_payload -> 'misconceptions'` is read through a
+    `jsonb_typeof(...) = 'array'` guard, and an object there yields zero rows.
+    """
+    if topic_score is None:
+        return []
+    return [
+        {
+            "canonical_key": misconception.canonical_key,
+            "resolved": misconception.resolved,
+            "evidence_span": misconception.evidence_span,
+        }
+        for topic in topic_score.topics
+        for misconception in topic.misconceptions
+    ]
+
+
 def build_llm_artifact(
     *,
     coverage: dict,
@@ -117,7 +151,7 @@ def build_llm_artifact(
         },
         "node_ledger": node_ledger,
         "edge_ledger": [],
-        "misconceptions": [],
+        "misconceptions": _artifact_misconceptions(topic_score),
         "clarification_trace": list(clarification_trace),
         "scores": {
             "node_coverage": node_coverage,
