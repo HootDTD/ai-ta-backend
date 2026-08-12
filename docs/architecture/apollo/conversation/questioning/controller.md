@@ -10,7 +10,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/persistence/models
   - apollo/schemas/problem
-last_verified: 2026-08-11
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -68,6 +68,23 @@ AND this is the node's first serve** (`asked_turn` still NULL).
   node at `times_asked == MAX_ASKS_PER_NODE` and still `tentative` keeps counting,
   and no further conversation can clear it. This is the cross-repo contract's pinned
   definition; UI copy must not promise that Apollo will ask about those topics.
+- **The P3.2 producer is not switched on here yet.** `plan_next_question` calls
+  `evaluate_and_ask` without `wrongness=`, so the engine defaults to off and the
+  schema/prompt stay level-0 identical. The level read
+  (`effective_wrongness_level(problem.concept_id) >= 1`, `overseer/wrongness`) is
+  wired at this call site in the level-2 wave, together with `contested_ids`.
+  Until then `_evidence_entry` can only ever write the two-key shape in
+  production — the tagged shape is exercised by tests only.
+- **The evidence entry has TWO shapes and the boundary is a contract (P3.2 S2).**
+  `_evidence_entry` writes exactly `{turn_id, quote}` when
+  `TallyUpdate.wrongness == "none"` — byte-identical to every entry written before
+  P3.2, so level 0 leaves the column untouched and dedup keeps matching historical
+  rows — and `{turn_id, quote, wrongness, contradicts, kind}` otherwise. **No
+  migration:** `evidence` is free-form JSONB (`__evidence__array_check` asserts
+  only `jsonb_typeof = 'array'`) and `state` has no CHECK constraint. Dedup stays
+  on the WHOLE dict. Every downstream reader (`done._latest_student_quote`,
+  `done._probed_node_ids`, `_evidence_rows`) keys on `quote` alone and is
+  shape-agnostic — pinned in `test_controller_wrongness_persistence.py`.
 - **One evidence validator (P2.4).** The raw case/punctuation-sensitive
   `_valid_update_evidence` re-check is DELETED: `unified._decode_updates` already
   rejects (and logs) a quote that is not a normalized verbatim match in the cited
