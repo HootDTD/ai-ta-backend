@@ -2,7 +2,7 @@
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
   "generated_at": "2026-08-12",
-  "repo": "p32-w2-a",
+  "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
