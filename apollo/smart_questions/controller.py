@@ -6,8 +6,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from apollo.persistence.models import QuestionOpportunity
 from apollo.schemas.problem import Problem
@@ -119,6 +120,35 @@ def _new_opportunity_row(
         evidence=[],
         times_asked=0,
     )
+
+
+async def _bump_times_asked(db: AsyncSession, *, row: Any) -> None:
+    """Atomically increment ONE ledger row's ``times_asked`` (M5, P3.4).
+
+    Replaces the Python read-modify-write that lost an increment whenever two
+    turns of the same attempt overlapped (a double-send): both read N, both
+    wrote N+1. A lost increment is GRADE-VISIBLE — ``done._probed_node_ids``
+    reads ``times_asked > 0`` as engagement, so it mis-scopes the P1.2b
+    denominator, and the per-node ask cap stops binding.
+
+    ``flush()`` first because the row may have been minted THIS turn by
+    ``_apply_tally_updates`` and not exist in the database yet. The returned
+    value is written back with ``set_committed_value`` and NEVER by plain
+    assignment: assigning would mark the attribute dirty and re-emit a blind
+    ``SET times_asked = <our value>`` at the next flush, reintroducing the exact
+    lost update this exists to remove.
+    """
+    await db.flush()
+    new_value = (
+        await db.execute(
+            update(QuestionOpportunity)
+            .where(QuestionOpportunity.id == row.id)
+            .values(times_asked=QuestionOpportunity.times_asked + 1)
+            .returning(QuestionOpportunity.times_asked)
+            .execution_options(synchronize_session=False)
+        )
+    ).scalar_one()
+    set_committed_value(row, "times_asked", int(new_value))
 
 
 def _apply_tally_updates(
@@ -296,7 +326,7 @@ async def plan_next_question(
             # forever and `budget_exhausted` never gets any closer. The free pass
             # is per node and once, which is all the original harm needs — a node
             # already probed once is not "never actually probed".
-            target_row.times_asked = int(target_row.times_asked) + 1
+            await _bump_times_asked(db, row=target_row)
         target_row.last_asked_turn = turn_index + 1
 
     _write_opportunity_audit(

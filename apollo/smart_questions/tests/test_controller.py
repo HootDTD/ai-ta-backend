@@ -68,6 +68,11 @@ class _Result:
     def scalars(self):
         return _Scalars(self.rows)
 
+    def scalar_one(self):
+        # M5 (P3.4): `_bump_times_asked` reads the UPDATE ... RETURNING scalar
+        # this way. Queue the new int value as the next `_DB(...)` result.
+        return self.rows
+
 
 class _DB:
     def __init__(self, *results):
@@ -82,6 +87,12 @@ class _DB:
     def add(self, row):
         self.added.append(row)
 
+    async def flush(self):
+        # M5 (P3.4): `_bump_times_asked` flushes before the atomic UPDATE so a
+        # row minted this turn exists in the database. No-op here — nothing in
+        # this fake tracks pending-insert state.
+        pass
+
 
 def _ask(*updates):
     return UnifiedQuestionResult(
@@ -95,7 +106,8 @@ def _ask(*updates):
 
 @pytest.mark.asyncio
 async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monkeypatch):
-    db = _DB([])
+    # Second queued result: the M5 atomic-increment UPDATE...RETURNING scalar.
+    db = _DB([], 1)
 
     async def evaluate(**kwargs):
         assert kwargs["tally_state"][0].status == "missing"
@@ -122,7 +134,8 @@ async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monk
     assert opportunity.times_asked == 1
     assert opportunity.last_asked_turn == 1
     assert opportunity.question == "What do you mean by x?"
-    assert len(db.statements) == 1
+    # SELECT (scoped query) + the M5 atomic-increment UPDATE.
+    assert len(db.statements) == 2
     scoped_query = str(db.statements[0])
     assert "question_opportunities.course_id" in scoped_query
     assert "question_opportunities.learning_activity_id" in scoped_query
@@ -131,7 +144,10 @@ async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monk
 
 @pytest.mark.asyncio
 async def test_confirm_once_round_trip_increments_target_to_two(monkeypatch):
-    target = SimpleNamespace(
+    # M5 (P3.4): a real ORM instance, not a SimpleNamespace — `_bump_times_asked`
+    # writes the new value back with `set_committed_value`, which requires a
+    # mapped instance's `_sa_instance_state`.
+    target = QuestionOpportunity(
         reference_node_id="def_x",
         state="missing",
         evidence=[],
@@ -142,7 +158,8 @@ async def test_confirm_once_round_trip_increments_target_to_two(monkeypatch):
         asked_turn=3,
         answered_turn=4,
     )
-    db = _DB([target])
+    # Second queued result: the M5 atomic-increment UPDATE...RETURNING scalar.
+    db = _DB([target], 2)
 
     async def evaluate(**kwargs):
         state = kwargs["tally_state"][0]
@@ -307,7 +324,9 @@ async def test_a_repeat_fallback_on_an_already_served_node_does_spend_a_probe(mo
     node would re-serve the same clipped clause forever and never get closer to
     `budget_exhausted`. The free pass is once per node — `asked_turn` already
     stamped means Apollo has served this node before, so this one charges."""
-    row = SimpleNamespace(
+    # M5 (P3.4): a real ORM instance — this row gets bumped, and
+    # `_bump_times_asked` requires a mapped instance for `set_committed_value`.
+    row = QuestionOpportunity(
         reference_node_id="def_x",
         state="missing",
         evidence=[],
@@ -317,7 +336,8 @@ async def test_a_repeat_fallback_on_an_already_served_node_does_spend_a_probe(mo
         asked_turn=3,
         answered_turn=None,
     )
-    db = _DB([row])
+    # Second queued result: the M5 atomic-increment UPDATE...RETURNING scalar.
+    db = _DB([row], 1)
 
     async def evaluate(**kwargs):
         return UnifiedQuestionResult(
@@ -342,7 +362,9 @@ async def test_a_fallback_on_a_node_already_probed_for_real_spends_a_probe(monke
     """ "Never actually probed" is what buys the free pass, and it is false here:
     the node carries a real earlier probe, so the degenerate turn is charged and
     the global budget keeps advancing."""
-    row = SimpleNamespace(
+    # M5 (P3.4): a real ORM instance — this row gets bumped, and
+    # `_bump_times_asked` requires a mapped instance for `set_committed_value`.
+    row = QuestionOpportunity(
         reference_node_id="def_x",
         state="missing",
         evidence=[],
@@ -352,7 +374,8 @@ async def test_a_fallback_on_a_node_already_probed_for_real_spends_a_probe(monke
         asked_turn=1,
         answered_turn=2,
     )
-    db = _DB([row])
+    # Second queued result: the M5 atomic-increment UPDATE...RETURNING scalar.
+    db = _DB([row], 2)
 
     async def evaluate(**kwargs):
         return UnifiedQuestionResult(
@@ -376,7 +399,8 @@ async def test_a_fallback_on_a_node_already_probed_for_real_spends_a_probe(monke
 async def test_decision_reports_graded_topic_counts_for_the_coverage_meter(monkeypatch):
     """Cross-repo contract: chat.py serves `graded_topic_total` /
     `open_graded_topics` from these counts."""
-    db = _DB([])
+    # Second queued result: the M5 atomic-increment UPDATE...RETURNING scalar.
+    db = _DB([], 1)
 
     async def evaluate(**kwargs):
         return UnifiedQuestionResult(
@@ -409,7 +433,10 @@ async def _async_result(value):
 
 @pytest.mark.asyncio
 async def test_reference_opportunity_state_is_not_input_but_still_written(monkeypatch):
-    audit = SimpleNamespace(
+    # M5 (P3.4): a real ORM instance — this row gets bumped (the default
+    # `_ask()` result asks `def_x` again), and `_bump_times_asked` requires a
+    # mapped instance for `set_committed_value`.
+    audit = QuestionOpportunity(
         reference_node_id="def_x",
         state="asked_waiting",
         question="Old question?",
@@ -420,7 +447,8 @@ async def test_reference_opportunity_state_is_not_input_but_still_written(monkey
         times_asked=1,
         last_asked_turn=1,
     )
-    db = _DB([audit])
+    # Second queued result: the M5 atomic-increment UPDATE...RETURNING scalar.
+    db = _DB([audit], 2)
 
     async def evaluate(**kwargs):
         assert "question_history" not in kwargs
@@ -515,7 +543,10 @@ async def test_advancing_target_closes_previous_question(monkeypatch):
         times_asked=1,
         last_asked_turn=1,
     )
-    db = _DB([previous])
+    # `previous` (node "old") is never bumped — the ask targets a fresh "def_x"
+    # row. Second queued result: that new row's M5 atomic-increment
+    # UPDATE...RETURNING scalar.
+    db = _DB([previous], 1)
 
     async def evaluate(**kwargs):
         return _ask()
@@ -578,7 +609,8 @@ async def test_covered_topics_snapshot_includes_node_understood_this_turn(monkey
 @pytest.mark.asyncio
 async def test_covered_topics_excludes_non_understood_nodes(monkeypatch):
     """A node that is only ``tentative`` (or ``missing``) is never celebrated."""
-    db = _DB([])
+    # Second queued result: the M5 atomic-increment UPDATE...RETURNING scalar.
+    db = _DB([], 1)
 
     async def evaluate(**kwargs):
         return _ask(TallyUpdate("def_x", "tentative", EvidenceQuote(0, "x matters")))
@@ -602,7 +634,10 @@ async def test_covered_topics_is_a_cumulative_snapshot_not_just_this_turn(monkey
     """A node already ``understood`` from a prior turn stays in the snapshot even
     with no new update, so the backend sends the full covered set each turn and
     the UI diffs it."""
-    prior = SimpleNamespace(
+    # M5 (P3.4): a real ORM instance — this row gets bumped (the default
+    # `_ask()` result asks `def_x` again), and `_bump_times_asked` requires a
+    # mapped instance for `set_committed_value`.
+    prior = QuestionOpportunity(
         reference_node_id="def_x",
         state="understood",
         evidence=[{"turn_id": 0, "quote": "x matters"}],
@@ -613,7 +648,8 @@ async def test_covered_topics_is_a_cumulative_snapshot_not_just_this_turn(monkey
         asked_turn=1,
         answered_turn=2,
     )
-    db = _DB([prior])
+    # Second queued result: the M5 atomic-increment UPDATE...RETURNING scalar.
+    db = _DB([prior], 2)
 
     async def evaluate(**kwargs):
         return _ask()
