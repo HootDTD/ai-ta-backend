@@ -1,0 +1,300 @@
+{
+  "fixture_version": 1,
+  "attempt_ref": "prod-2026-08-11/attempt-124",
+  "pii_scrubbed": true,
+  "concept": {
+    "id": 20,
+    "slug": "ethics"
+  },
+  "problem": {
+    "authored": {
+      "solution": "Answer: Mason describes information as intellectual capital because information is the means through which the mind expands and increases its capacity to achieve its goals — it is the foundation from which human beings craft their lives and secure their dignity. That capital is vulnerable in several specific ways: people's intellectual capital is impaired whenever they lose their personal information without being compensated for it, when they are precluded from access to information that is of value to them, when they have revealed information they hold intimate, or when they discover that the information upon which their living depends is in error. Because each of these threats is a threat to human dignity itself, Mason argues that the social contract among people in the information age must deal with them — and PAPA organizes the resulting ethical issues into four areas.",
+      "completeness": "answer_only",
+      "worked_procedure": null
+    },
+    "verification": "faithfulness_only",
+    "layer1_seeded": true,
+    "declared_paths": [
+      [
+        "define_intellectual_capital",
+        "q2_four_impairments",
+        "q2_connect_to_dignity",
+        "define_papa_framework"
+      ]
+    ],
+    "id": "authored.77e89ffa71a5806aab30d41f9223e036",
+    "concept_id": "ethics",
+    "difficulty": "intro",
+    "problem_text": "Why does Mason describe information as 'intellectual capital', and in what ways is a person's intellectual capital vulnerable in the information age?",
+    "given_values": {},
+    "target_unknown": "",
+    "reference_solution": [
+      {
+        "id": "define_intellectual_capital",
+        "step": 1,
+        "content": {
+          "concept": "intellectual capital",
+          "meaning": "Information is the means through which the mind expands and increases its capacity to achieve its goals; it forms the intellectual capital from which human beings craft their lives and secure dignity."
+        },
+        "depends_on": [],
+        "entity_key": "def.define_intellectual_capital",
+        "entry_type": "definition"
+      },
+      {
+        "id": "q2_four_impairments",
+        "step": 2,
+        "content": {
+          "label": "Intellectual capital is impaired when personal information is lost without compensation, when access to valuable information is precluded, when intimate information is revealed, or when the information one's living depends on is in error.",
+          "applies_when": "Enumerating the ways the information age threatens a person's intellectual capital."
+        },
+        "depends_on": [
+          "define_intellectual_capital"
+        ],
+        "entity_key": "cond.q2_four_impairments",
+        "entry_type": "condition"
+      },
+      {
+        "id": "q2_connect_to_dignity",
+        "step": 3,
+        "content": {
+          "order": 1,
+          "action": "Explain that because these impairments threaten human dignity itself, the social contract of the information age must address them — which is what motivates the PAPA issues.",
+          "purpose": "Link intellectual capital to the ethical agenda of PAPA.",
+          "uses_equations": []
+        },
+        "depends_on": [
+          "q2_four_impairments"
+        ],
+        "entity_key": "proc.q2_connect_to_dignity",
+        "entry_type": "procedure_step"
+      },
+      {
+        "id": "define_papa_framework",
+        "step": 4,
+        "content": {
+          "concept": "PAPA framework",
+          "meaning": "PAPA is Richard Mason's 1986 framework naming the four major ethical issues of the information age — Privacy, Accuracy, Property, and Accessibility — posed as questions society must answer so that the information society being created is the one we actually want."
+        },
+        "depends_on": [
+          "q2_connect_to_dignity"
+        ],
+        "entity_key": "def.define_papa_framework",
+        "entry_type": "definition"
+      }
+    ]
+  },
+  "messages": [
+    {
+      "turn_index": 0,
+      "role": "student",
+      "content": "Information gets spread with every detail ou upload online and AI and other people can build a general idea of who you are/ what you do and where you live just from a few informations they have of you. With this information they can put all of it together and they can gain a bigger picture of who you are",
+      "intent": null
+    },
+    {
+      "turn_index": 1,
+      "role": "apollo",
+      "content": "That makes sense about details adding up into a bigger picture of someone. When Mason calls information “intellectual capital,” what do you think he means by that—how does having information actually help a person grow their abilities or shape their life goals?",
+      "intent": null
+    },
+    {
+      "turn_index": 2,
+      "role": "student",
+      "content": "He could mean that having intellectual capital means that you have the ability to understand information and more complex information because of critical thinking skills",
+      "intent": null
+    },
+    {
+      "turn_index": 3,
+      "role": "apollo",
+      "content": "He's pointing in the right direction, but you’ll want to tighten the wording. [Module 9 Ethics Slides, p. 2]\n\nIn this context, *intellectual capital* is the information that forms the foundation from which people craft their lives and secure their dignity . Information is the means through which the mind expands and increases its capacity to achieve its goals, often based on input from others [Mason 1986, p. 2].\n\nTo make use of that information, a person must have *intellectual skills* such as reading, writing, reasoning, and calculating, which are developed through education . So critical thinking (reasoning) is one of the skills needed to deal with intellectual capital, but the capital itself is the information, not the skill. [Mason 1986, p. 2]\n\nYou might coach Apollo to say that intellectual capital is the information that underlies our lives and dignity, and that we need literacy and reasoning skills to use it well. [Mason 1986, p. 7]",
+      "intent": "reference_question_aside"
+    },
+    {
+      "turn_index": 4,
+      "role": "apollo",
+      "content": "Okay, so how does that fit into what you were teaching me?",
+      "intent": null
+    },
+    {
+      "turn_index": 5,
+      "role": "student",
+      "content": "with intellectual capital he means information. And nowadays to understand information and so we can gain profit from it people need intellectual skills like reading, etc. but nowadays we also need other skills like knowing how to find information online and how to use a computer",
+      "intent": null
+    },
+    {
+      "turn_index": 6,
+      "role": "apollo",
+      "content": "Got it—so you’re separating the information itself from the skills needed to use it. When you think about that information a person relies on, what are a few different ways it can be harmed in the information age (for example, taken from you, kept from you, exposed when it’s private, or wrong in a way that hurts you)?",
+      "intent": null
+    },
+    {
+      "turn_index": 7,
+      "role": "student",
+      "content": "There is the danger that you could interpret information wrong which can harm you or your company. But you also need to pay attention of what you post because like I said before Information gets spread with every detail ou upload online and AI and other people can build a general idea of who you are/ what you do and where you live just from a few informations they have of you. With this information they can put all of it together and they can gain a bigger picture of who you are",
+      "intent": null
+    },
+    {
+      "turn_index": 8,
+      "role": "apollo",
+      "content": "That helps—you're pointing to both harmful errors and harmful exposure. In the reading, what are the four big ethical problem areas about information (like access, errors, ownership, and private details)?",
+      "intent": null
+    },
+    {
+      "turn_index": 9,
+      "role": "student",
+      "content": "It is Privacy, Accucracy, Property, Accessibility",
+      "intent": null
+    },
+    {
+      "turn_index": 10,
+      "role": "apollo",
+      "content": "Okay, I think I’ve got the four areas now. How do Privacy, Accuracy, Property, and Accessibility connect back to why information is tied to a person’s dignity in the first place?",
+      "intent": null
+    },
+    {
+      "turn_index": 11,
+      "role": "student",
+      "content": "for privacy nowadays the value and the importance of information increases for companies but at the same time this means that the privacy decreases. So companies have to decided if the profit is worth is even if it might be morally wrong. Accuracy is important because if information is not accurate it can conclude in financial losses or unfair behaviour decisions. Property is an ethical issue because Information gets spread with every detail ou upload online and AI and other people can build a general idea of who you are/ what you do and where you live just from a few informations they have of you. With this information they can put all of it together and they can gain a bigger picture of who you are. And accessibility ia about who is able or should be allowed to access the information. Especially nowadays when you give some one an information yxou dont loss it but at the same time it can spread really fast all over the world",
+      "intent": null
+    },
+    {
+      "turn_index": 12,
+      "role": "apollo",
+      "content": "I follow how you linked each area to concrete harms like exposure, unfair decisions, and information spreading fast. How do those harms connect to a person’s dignity—like their ability to shape their own life and be treated fairly?",
+      "intent": null
+    },
+    {
+      "turn_index": 13,
+      "role": "student",
+      "content": "It can be a problem because peoples life are all over the internet or on social media even if that person wasnt the one who posted it but because of a lot of different information people can find out where your from, how much money you earn etc. which makes it hard to shape your own life and to actually life in privacy. At the same time it could be a problem when you for example have a job interview and they looked you up before so they already think they know who you are so you might be treated unfairly",
+      "intent": null
+    },
+    {
+      "turn_index": 14,
+      "role": "apollo",
+      "content": "I think I’m following your point about online details shaping how others treat you. If you had to break it into four different kinds of harm to a person’s information (like it being taken from them, being kept out of reach, private stuff getting exposed, or it being wrong in a way that hurts them), what would your four be?",
+      "intent": null
+    },
+    {
+      "turn_index": 15,
+      "role": "student",
+      "content": "Lose of Privacy, Manipulation, Discrimination and loss of autonomy",
+      "intent": null
+    },
+    {
+      "turn_index": 16,
+      "role": "apollo",
+      "content": "I see what you’re going for with privacy, manipulation, discrimination, and autonomy as the big harms. When the reading calls information a kind of “capital,” what makes information function like a resource a person can build up and use to reach goals and live with dignity?",
+      "intent": null
+    }
+  ],
+  "question_opportunities": [
+    {
+      "reference_node_id": "q2_four_impairments",
+      "state": "conflicting",
+      "times_asked": 2,
+      "last_asked_turn": 14,
+      "asked_turn": 14,
+      "answered_turn": 15,
+      "question": "If you had to break it into four different kinds of harm to a person’s information (like it being taken from them, being kept out of reach, private stuff getting exposed, or it being wrong in a way that hurts them), what would your four be?",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Information gets spread with every detail ou upload online and AI and other people can build a general idea of who you are/ what you do and where you live just from a few informations they have of you."
+        },
+        {
+          "turn_id": 7,
+          "quote": "There is the danger that you could interpret information wrong which can harm you or your company. But you also need to pay attention of what you post because like I said before Information gets spread with every detail ou upload online"
+        },
+        {
+          "turn_id": 11,
+          "quote": "Accuracy is important because if information is not accurate it can conclude in financial losses or unfair behaviour decisions."
+        },
+        {
+          "turn_id": 15,
+          "quote": "Lose of Privacy, Manipulation, Discrimination and loss of autonomy"
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_intellectual_capital",
+      "state": "tentative",
+      "times_asked": 2,
+      "last_asked_turn": 16,
+      "asked_turn": 16,
+      "answered_turn": null,
+      "question": "When the reading calls information a kind of “capital,” what makes information function like a resource a person can build up and use to reach goals and live with dignity?",
+      "evidence": [
+        {
+          "turn_id": 5,
+          "quote": "with intellectual capital he means information."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_papa_framework",
+      "state": "understood",
+      "times_asked": 1,
+      "last_asked_turn": 8,
+      "asked_turn": 8,
+      "answered_turn": 9,
+      "question": "In the reading, what are the four big ethical problem areas about information (like access, errors, ownership, and private details)?",
+      "evidence": [
+        {
+          "turn_id": 9,
+          "quote": "It is Privacy, Accucracy, Property, Accessibility"
+        }
+      ]
+    },
+    {
+      "reference_node_id": "q2_connect_to_dignity",
+      "state": "tentative",
+      "times_asked": 2,
+      "last_asked_turn": 12,
+      "asked_turn": 12,
+      "answered_turn": 13,
+      "question": "How do those harms connect to a person’s dignity—like their ability to shape their own life and be treated fairly?",
+      "evidence": [
+        {
+          "turn_id": 11,
+          "quote": "for privacy nowadays the value and the importance of information increases for companies but at the same time this means that the privacy decreases. So companies have to decided if the profit is worth is even if it might be morally wrong."
+        }
+      ]
+    }
+  ],
+  "adjudicator_output": {
+    "verdicts": [
+      {
+        "node_id": "q2_four_impairments",
+        "covered": false,
+        "credit": 0.3,
+        "confidence": 0.7,
+        "evidence_span": null,
+        "prompted": false,
+        "corrected_later": false,
+        "contradicted": false,
+        "basis": "stated",
+        "hoot_assisted": false
+      },
+      {
+        "node_id": "q2_connect_to_dignity",
+        "covered": true,
+        "credit": 0.9,
+        "confidence": 0.86,
+        "evidence_span": null,
+        "prompted": false,
+        "corrected_later": false,
+        "contradicted": false,
+        "basis": "stated",
+        "hoot_assisted": false
+      }
+    ]
+  },
+  "recorded": {
+    "served_score": 60,
+    "served_letter": "C",
+    "topic_credits": {
+      "q2_four_impairments": 0.3,
+      "q2_connect_to_dignity": 0.9
+    }
+  }
+}
