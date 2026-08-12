@@ -10,7 +10,7 @@ related:
   - apollo/persistence/models
   - apollo/projections/mastery
   - apollo/projections/scorecard
-last_verified: 2026-08-06
+last_verified: 2026-08-11
 stub: false
 ---
 
