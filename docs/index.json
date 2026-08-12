@@ -1,8 +1,8 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-08-08",
-  "repo": "ai-ta-backend",
+  "generated_at": "2026-08-12",
+  "repo": "p32-w1-a",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -180,6 +180,7 @@
     "apollo/smart_questions/__init__.py": "apollo/conversation/questioning/controller",
     "apollo/smart_questions/controller.py": "apollo/conversation/questioning/controller",
     "apollo/smart_questions/leakage.py": "apollo/conversation/questioning/leakage",
+    "apollo/smart_questions/prompts.py": "apollo/conversation/questioning/prompts",
     "apollo/smart_questions/selection.py": "apollo/conversation/questioning/selection",
     "apollo/smart_questions/unified.py": "apollo/conversation/questioning/unified",
     "apollo/solver/__init__.py": "apollo/solver/sympy-exec",
@@ -585,6 +586,14 @@
       "description": "Log-only private-atom leakage belt for the questioning reply, plus the loop's single text normalizer.",
       "owns": [
         "apollo/smart_questions/leakage.py"
+      ]
+    },
+    "apollo/conversation/questioning/prompts": {
+      "path": "docs/architecture/apollo/conversation/questioning/prompts.md",
+      "kind": "leaf",
+      "description": "Model-facing contract for the unified questioning call \u2014 system prompt, optional WRONGNESS DUTY block, JSON response schema, repair feedback strings.",
+      "owns": [
+        "apollo/smart_questions/prompts.py"
       ]
     },
     "apollo/conversation/questioning/selection": {
@@ -2064,6 +2073,7 @@
         "apollo/conversation/parser/parser-llm",
         "apollo/conversation/questioning/controller",
         "apollo/conversation/questioning/leakage",
+        "apollo/conversation/questioning/prompts",
         "apollo/conversation/questioning/selection",
         "apollo/conversation/questioning/unified",
         "apollo/conversation/routing/auth-deps",

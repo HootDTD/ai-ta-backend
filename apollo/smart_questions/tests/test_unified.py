@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from apollo.ontology import KGGraph, build_node
-from apollo.smart_questions import unified
+from apollo.smart_questions import prompts, unified
 
 
 @pytest.fixture(autouse=True)
@@ -209,7 +209,7 @@ async def test_last_questions_are_reserved_for_open_graded_nodes(monkeypatch, ca
 
     assert len(calls) == 2
     assert calls[1]["messages"][:2] == calls[0]["messages"]
-    assert calls[1]["messages"][3]["content"] == unified._off_policy_feedback(("b",))
+    assert calls[1]["messages"][3]["content"] == prompts.off_policy_feedback(("b",))
     assert "b" in calls[1]["messages"][3]["content"]
     assert result.target_node_id == "b"
     assert result.question == "What do you do with the area?"
@@ -256,8 +256,8 @@ async def test_a_draft_that_is_both_off_policy_and_malformed_gets_both_correctio
         result = await unified.evaluate_and_ask(**_kwargs(budget=unified.QuestionBudget(7, 8)))
 
     feedback = calls[1]["messages"][3]["content"]
-    assert unified._off_policy_feedback(("b",)) in feedback
-    assert unified._MALFORMED_FEEDBACK in feedback
+    assert prompts.off_policy_feedback(("b",)) in feedback
+    assert prompts.MALFORMED_FEEDBACK in feedback
     assert result.target_node_id == "b"
     assert result.reply == "What do you do with the area?"
     assert result.fallback_served is False
@@ -371,7 +371,7 @@ async def test_malformed_gets_one_regenerate_with_append_only_prefix(monkeypatch
     assert len(calls) == 2
     assert calls[1]["messages"][:2] == calls[0]["messages"]
     assert calls[1]["messages"][2] == {"role": "assistant", "content": json.dumps(drafts[0])}
-    assert calls[1]["messages"][3]["content"] == unified._MALFORMED_FEEDBACK
+    assert calls[1]["messages"][3]["content"] == prompts.MALFORMED_FEEDBACK
     assert result.reply == "What happens next?"
     assert "fallback_reason=malformed_regenerated" in caplog.text
     assert "belt_hit_served=False" in caplog.text
@@ -484,7 +484,7 @@ def test_prompt_hygiene_schema_and_model_call(monkeypatch):
 
 
 def test_prompt_encodes_graded_priority_and_the_code_enforced_askable_set():
-    prompt = unified._SYSTEM_PROMPT
+    prompt = prompts.SYSTEM_PROMPT
     # Re-probing must lean on the durable counter and vary the wording.
     assert "times_asked" in prompt
     assert "different angle" in prompt
