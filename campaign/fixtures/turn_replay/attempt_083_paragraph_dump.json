@@ -1,0 +1,198 @@
+{
+  "fixture_version": 1,
+  "attempt_ref": "prod-2026-08-11/attempt-083",
+  "pii_scrubbed": true,
+  "concept": {
+    "id": 20,
+    "slug": "ethics"
+  },
+  "problem": {
+    "authored": {
+      "solution": "Answer: Mason describes information as intellectual capital because information is the means through which the mind expands and increases its capacity to achieve its goals — it is the foundation from which human beings craft their lives and secure their dignity. That capital is vulnerable in several specific ways: people's intellectual capital is impaired whenever they lose their personal information without being compensated for it, when they are precluded from access to information that is of value to them, when they have revealed information they hold intimate, or when they discover that the information upon which their living depends is in error. Because each of these threats is a threat to human dignity itself, Mason argues that the social contract among people in the information age must deal with them — and PAPA organizes the resulting ethical issues into four areas.",
+      "completeness": "answer_only",
+      "worked_procedure": null
+    },
+    "verification": "faithfulness_only",
+    "layer1_seeded": true,
+    "declared_paths": [
+      [
+        "define_intellectual_capital",
+        "q2_four_impairments",
+        "q2_connect_to_dignity",
+        "define_papa_framework"
+      ]
+    ],
+    "id": "authored.77e89ffa71a5806aab30d41f9223e036",
+    "concept_id": "ethics",
+    "difficulty": "intro",
+    "problem_text": "Why does Mason describe information as 'intellectual capital', and in what ways is a person's intellectual capital vulnerable in the information age?",
+    "given_values": {},
+    "target_unknown": "",
+    "reference_solution": [
+      {
+        "id": "define_intellectual_capital",
+        "step": 1,
+        "content": {
+          "concept": "intellectual capital",
+          "meaning": "Information is the means through which the mind expands and increases its capacity to achieve its goals; it forms the intellectual capital from which human beings craft their lives and secure dignity."
+        },
+        "depends_on": [],
+        "entity_key": "def.define_intellectual_capital",
+        "entry_type": "definition"
+      },
+      {
+        "id": "q2_four_impairments",
+        "step": 2,
+        "content": {
+          "label": "Intellectual capital is impaired when personal information is lost without compensation, when access to valuable information is precluded, when intimate information is revealed, or when the information one's living depends on is in error.",
+          "applies_when": "Enumerating the ways the information age threatens a person's intellectual capital."
+        },
+        "depends_on": [
+          "define_intellectual_capital"
+        ],
+        "entity_key": "cond.q2_four_impairments",
+        "entry_type": "condition"
+      },
+      {
+        "id": "q2_connect_to_dignity",
+        "step": 3,
+        "content": {
+          "order": 1,
+          "action": "Explain that because these impairments threaten human dignity itself, the social contract of the information age must address them — which is what motivates the PAPA issues.",
+          "purpose": "Link intellectual capital to the ethical agenda of PAPA.",
+          "uses_equations": []
+        },
+        "depends_on": [
+          "q2_four_impairments"
+        ],
+        "entity_key": "proc.q2_connect_to_dignity",
+        "entry_type": "procedure_step"
+      },
+      {
+        "id": "define_papa_framework",
+        "step": 4,
+        "content": {
+          "concept": "PAPA framework",
+          "meaning": "PAPA is Richard Mason's 1986 framework naming the four major ethical issues of the information age — Privacy, Accuracy, Property, and Accessibility — posed as questions society must answer so that the information society being created is the one we actually want."
+        },
+        "depends_on": [
+          "q2_connect_to_dignity"
+        ],
+        "entity_key": "def.define_papa_framework",
+        "entry_type": "definition"
+      }
+    ]
+  },
+  "messages": [
+    {
+      "turn_index": 0,
+      "role": "student",
+      "content": "In his seminal 1986 paper \"Four Ethical Issues of the Information Age,\" Richard O. Mason describes information as intellectual capital because it constitutes the fundamental asset from which human beings craft their lives, exercise agency, and secure personal dignity. In an information-driven society, a person’s economic livelihood, social standing, self-determination, and ability to make informed decisions depend directly on their access to accurate, actionable data. Information is not merely passive content; it is the functional resource needed to navigate modern institutions and fulfill individual potential.  Mason asserts that an individual's intellectual capital is inherently vulnerable in the digital age across four specific threat dimensions (commonly known as the PAPA framework: Privacy, Accuracy, Property, and Accessibility):  Property (Uncompensated Loss): A person’s intellectual capital is impaired when their personal information, creative works, or behavioral data are extracted and commodified by corporations or third parties without their knowledge, explicit consent, or fair compensation.  Accessibility (Denial of Information): Intellectual capital is constrained when individuals are precluded from accessing essential knowledge or distribution channels due to paywalls, technical barriers, or information illiteracy, creating structural inequality.  Privacy (Forced Exposure): Intellectual capital is compromised when intimate, confidential information about a person’s identity or associations is exposed, tracked, or forced into public view without adequate safeguards.  Accuracy (Reliance on Errors): A person’s intellectual capital is severely damaged when the data relied upon to make critical life decisions—such as credit history, legal records, or medical status—is incorrect. When automated systems disseminate errors, individuals often lack the institutional power to correct the misinformation that degrades their lives.",
+      "intent": null
+    },
+    {
+      "turn_index": 1,
+      "role": "apollo",
+      "content": "Thanks — I have enough to grade what you taught me.",
+      "intent": null
+    }
+  ],
+  "question_opportunities": [
+    {
+      "reference_node_id": "define_intellectual_capital",
+      "state": "understood",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "describes information as intellectual capital because it constitutes the fundamental asset from which human beings craft their lives, exercise agency, and secure personal dignity."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "q2_four_impairments",
+      "state": "understood",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Mason asserts that an individual's intellectual capital is inherently vulnerable in the digital age across four specific threat dimensions (commonly known as the PAPA framework: Privacy, Accuracy, Property, and Accessibility)"
+        }
+      ]
+    },
+    {
+      "reference_node_id": "q2_connect_to_dignity",
+      "state": "tentative",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "secure personal dignity."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_papa_framework",
+      "state": "understood",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "the PAPA framework: Privacy, Accuracy, Property, and Accessibility"
+        }
+      ]
+    }
+  ],
+  "adjudicator_output": {
+    "verdicts": [
+      {
+        "node_id": "q2_four_impairments",
+        "covered": true,
+        "credit": 1.0,
+        "confidence": 0.98,
+        "evidence_span": null,
+        "prompted": false,
+        "corrected_later": false,
+        "contradicted": false,
+        "basis": "stated",
+        "hoot_assisted": false
+      },
+      {
+        "node_id": "q2_connect_to_dignity",
+        "covered": true,
+        "credit": 0.95,
+        "confidence": 0.93,
+        "evidence_span": null,
+        "prompted": false,
+        "corrected_later": false,
+        "contradicted": false,
+        "basis": "stated",
+        "hoot_assisted": false
+      }
+    ]
+  },
+  "recorded": {
+    "served_score": 98,
+    "served_letter": "A+",
+    "topic_credits": {
+      "q2_four_impairments": 1.0,
+      "q2_connect_to_dignity": 0.95
+    }
+  }
+}
