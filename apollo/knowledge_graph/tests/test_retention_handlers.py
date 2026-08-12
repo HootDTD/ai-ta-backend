@@ -150,8 +150,13 @@ async def test_done_stamps_graded_at():
     with (
         patch("apollo.handlers.done._find_problem", new=AsyncMock(return_value=fake_problem)),
         patch("apollo.handlers.done.KGStore.read_graph", new_callable=AsyncMock) as read_graph,
-        patch("apollo.handlers.done.KGStore.freeze", new_callable=AsyncMock),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", stamp_spy),
+        # M1 (P3.4): the claim + terminal fence are Core UPDATEs against a real
+        # row, which `_StubDB`'s queued-result stand-in cannot serve — patch the
+        # seams, not the SQL, same as the golden unit-test harness.
+        patch("apollo.handlers.done._claim_grading_slot", new=AsyncMock(return_value=True)),
+        patch("apollo.handlers.done._release_grading_claim", new=AsyncMock()),
+        patch("apollo.handlers.done._fence_grade_commit", new=AsyncMock(return_value=True)),
         patch(
             "apollo.handlers.done.compute_transcript_coverage_with_spans",
             new_callable=AsyncMock,

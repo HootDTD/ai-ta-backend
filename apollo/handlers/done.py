@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import (
     EmptyAttemptError,
-    GradingInProgressError,  # noqa: F401 — consumed by the M1b wiring (Task 5)
+    GradingInProgressError,
     KGUnavailableError,
     RetentionError,
 )
@@ -600,6 +600,38 @@ async def _release_grading_claim(
         _LOG.exception("apollo_done_claim_release_failed session_id=%s", session_id)
 
 
+async def _fence_grade_commit(db: AsyncSession, *, session_id: int) -> bool:
+    """Terminal fencing CAS (P3.4 controller delta on M1) — Done's LAST
+    Postgres write, executed in the SAME transaction as the grade commit that
+    follows it in `_grade_claimed_attempt`.
+
+    A blind `sess.phase = REPORT` assignment here would let a STALE Done —
+    one whose claim was legitimately reclaimed by another Done via
+    `_claim_grading_slot`'s `_STALE_CLAIM_AFTER` disjunct while this one was
+    still grading — stomp the grade of the Done that now owns the attempt, if
+    the stale Done ever finishes anyway. Guarding the write on
+    `phase = _CLAIM_PHASE` closes that: once the reclaiming Done has landed on
+    REPORT, this statement matches zero rows.
+
+    Returns True when this Done still owns the claim — the caller may go on to
+    write `attempt.result` / `diagnostic_report` and commit, in the SAME
+    transaction as this statement. Returns False when it has been fenced out —
+    the caller must roll back and raise `GradingInProgressError` WITHOUT
+    writing anything grade-visible (no `attempt.result`, no
+    `diagnostic_report`, no XP — see `_grade_claimed_attempt`). Same style as
+    `_claim_grading_slot`: `synchronize_session=False`, one-statement CAS, the
+    caller commits.
+    """
+    result = await db.execute(
+        update(TutoringSession)
+        .where(TutoringSession.id == session_id)
+        .where(TutoringSession.phase == _CLAIM_PHASE)
+        .values(phase=SessionPhase.REPORT.value, updated_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount > 0
+
+
 def _progress_block(envelope: Any) -> dict[str, Any]:
     """The structured progress envelope served on every Done response.
 
@@ -725,11 +757,29 @@ async def handle_done(
     if await _student_message_count(db, attempt_id=int(attempt.id)) == 0:
         raise EmptyAttemptError(session_id=session_id, attempt_id=int(attempt.id))
 
-    # Read the student graph before freezing so the frozen subgraph is still
+    # Already-graded short-circuit (M1). A re-clicked Done used to re-run the
+    # whole pipeline: a second large LLM call, a possibly DIFFERENT letter, and
+    # a last-writer-wins overwrite of the report the student was already shown.
+    # Replay the persisted grade instead — and note this is also what makes the
+    # claim-loss branch below purely "still grading": the grade commit sets
+    # `result='graded'` and `phase='REPORT'` in the SAME transaction, so a loser
+    # can never observe a held claim on an already-graded attempt.
+    stored = await _stored_grade_payload(db, sess=sess, attempt=attempt)
+    if stored is not None:
+        _LOG.info(
+            "apollo_done_served_stored_grade session_id=%s attempt_id=%s auto_done=%s",
+            session_id,
+            int(attempt.id),
+            auto_done,
+        )
+        return stored
+
+    # Read the student graph before claiming so the frozen subgraph is still
     # persisted; a degraded KG is tolerated (log-and-continue) rather than
     # 500-ing. The result is not used for grading — the transcript grader
     # (below) grades from the transcript, so an unavailable KG never yields a
-    # false F.
+    # false F. This is a Neo4j READ, so it does not break "the claim is Done's
+    # first POSTGRES write".
     try:
         await store.read_graph(attempt_id=attempt.id)
     except KG_DEGRADED_ERRORS as exc:
@@ -738,12 +788,57 @@ async def handle_done(
             attempt.id,
             exc,
         )
-    await store.freeze(session_id)
 
+    # M1 — the claim, and Done's FIRST Postgres write. It replaces BOTH the
+    # blind `sess.phase = SOLVING` assignment and `store.freeze`'s transient
+    # `PROBLEM_REVEAL` write, so there is no longer a window in which the
+    # session sits in a phase `restart_problem._FROZEN_PHASES` does not cover.
+    prior_phase = sess.phase
+    if not await _claim_grading_slot(db, session_id=session_id):
+        _LOG.info(
+            "apollo_done_claim_lost session_id=%s attempt_id=%s auto_done=%s",
+            session_id,
+            int(attempt.id),
+            auto_done,
+        )
+        raise GradingInProgressError(session_id=session_id, attempt_id=int(attempt.id))
+
+    # Every pre-grade failure path must release the claim (spec §5): a 503 out
+    # of the sole grading lane would otherwise leave the claim held and the
+    # student's retry would find the attempt permanently owned by a dead Done.
+    try:
+        return await _grade_claimed_attempt(
+            db=db,
+            store=store,
+            sess=sess,
+            problem=problem,
+            attempt=attempt,
+            auto_done=auto_done,
+        )
+    except Exception:
+        await _release_grading_claim(db, session_id=session_id, prior_phase=prior_phase)
+        raise
+
+
+async def _grade_claimed_attempt(
+    *,
+    db: AsyncSession,
+    store: KGStore,
+    sess: TutoringSession,
+    problem: Problem,
+    attempt: ProblemAttempt,
+    auto_done: bool,
+) -> dict[str, Any]:
+    """The grading pipeline proper — run ONLY by the Done that owns the claim.
+
+    Split out of `handle_done` so the claim wrapper can release on any failure
+    without re-indenting (and therefore re-writing) the whole pipeline. Every
+    write from here to the grade commit (`attempt.result` / `diagnostic_report`
+    / `phase=REPORT`, one transaction) is protected by the M1 claim, and the
+    `phase=REPORT` write is itself a fenced CAS (`_fence_grade_commit`, P3.4
+    controller delta) — see its call below.
+    """
     reference_graph = problem.to_kg_graph(attempt_id=attempt.id)
-
-    sess.phase = SessionPhase.SOLVING.value
-    await db.commit()
 
     # Task A3 — grading-latency clock. Captured before grading runs so the
     # persisted artifact's `grading_latency_ms` covers the WHOLE grading
@@ -951,6 +1046,24 @@ async def handle_done(
         is_reattempt=is_reattempt,
     )
 
+    # M1b fence (P3.4 controller delta) — the terminal phase transition is
+    # itself a CAS, checked BEFORE any grade-visible write (spec: "Order the
+    # fence check BEFORE apply_xp and the report write") so a fenced-out Done
+    # writes NOTHING. A Done that claimed the slot >15 min ago
+    # (`_STALE_CLAIM_AFTER`) may have been legitimately reclaimed by another
+    # Done while this one was still grading; if that Done has ALREADY landed
+    # the grade (`phase='REPORT'`), this stale Done must lose here rather than
+    # overwrite the grade of record — `attempt.result` / `diagnostic_report` /
+    # XP / artifacts belong to the winner alone.
+    if not await _fence_grade_commit(db, session_id=int(sess.id)):
+        _LOG.info(
+            "apollo_done_fenced_out session_id=%s attempt_id=%s",
+            int(sess.id),
+            int(attempt.id),
+        )
+        await db.rollback()
+        raise GradingInProgressError(session_id=int(sess.id), attempt_id=int(attempt.id))
+
     attempt.result = "graded"
     attempt.solver_trace = None
     diagnostic_report = {
@@ -987,6 +1100,10 @@ async def handle_done(
     if auto_done:
         diagnostic_report = {**diagnostic_report, "auto_done": True}
     attempt.diagnostic_report = diagnostic_report
+    # `_fence_grade_commit` already wrote `phase='REPORT'` durably (guarded on
+    # `phase = _CLAIM_PHASE`, above); this keeps the in-memory `sess` object
+    # consistent for the rest of this function and for any caller that reads
+    # `sess.phase` after a successful Done.
     sess.phase = SessionPhase.REPORT.value
     await db.commit()
 
@@ -1044,17 +1161,7 @@ async def handle_done(
         # Item #9: structured progress envelope is the single source of
         # truth for level / threshold display. Flat fields stay during
         # the FE migration window so older clients still render.
-        "progress": {
-            "xp_earned": envelope.xp_earned,
-            "xp_before": envelope.xp_before,
-            "xp_after": envelope.xp_after,
-            "level_before": envelope.level_before,
-            "level_after": envelope.level_after,
-            "level_up": envelope.level_up,
-            "title_after": envelope.title_after,
-            "level_progress_pct": envelope.level_progress_pct,
-            "xp_to_next_level": envelope.xp_to_next_level,
-        },
+        "progress": _progress_block(envelope),
         "xp_earned": envelope.xp_earned,
         "xp_before": envelope.xp_before,
         "xp_after": envelope.xp_after,

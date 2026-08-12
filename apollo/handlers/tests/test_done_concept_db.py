@@ -53,7 +53,10 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         search_space_id=sid,
         concept_id=cid,
         status=SessionStatus.active.value,
-        phase=SessionPhase.SOLVING.value,
+        # M1 (P3.4): SOLVING is now the CLAIM marker — seeding it would make this
+        # Done lose the claim to a phantom winner. TEACHING is the real pre-Done
+        # phase anyway.
+        phase=SessionPhase.TEACHING.value,
         current_problem_id=current_problem_id,
     )
     db_session.add(sess)
@@ -111,7 +114,6 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
 
     with (
         patch("apollo.handlers.done.KGStore.read_graph", new=AsyncMock(return_value=KGGraph())),
-        patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
         patch(
             "apollo.handlers.done.compute_transcript_coverage_with_spans",

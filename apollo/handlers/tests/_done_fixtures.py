@@ -84,13 +84,24 @@ def _old_path_patches():
 
     db.execute = AsyncMock(side_effect=_execute)
     db.commit = AsyncMock()
+    # M1b (P3.4 delta): `_grade_claimed_attempt`'s fence-loss branch calls
+    # `db.rollback()` directly (not via a separately-mockable helper), so the
+    # golden `db` double needs it awaitable even though the golden path never
+    # takes that branch.
+    db.rollback = AsyncMock()
     patches = [
         patch("apollo.handlers.done._find_problem", new=AsyncMock(side_effect=_find_problem)),
         # Empty-attempt guard (defect I1): the base golden is a non-empty
         # attempt. The guard test overrides this with 0.
         patch("apollo.handlers.done._student_message_count", new=AsyncMock(return_value=1)),
         patch("apollo.handlers.done.KGStore.read_graph", new=AsyncMock(return_value=KGGraph())),
-        patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
+        # M1 (P3.4): the claim is a Core UPDATE against a real row, which the
+        # MagicMock `db` above cannot serve — patch the seam, not the SQL. The
+        # golden path is "this Done owns the claim" through to the terminal
+        # fence too (M1b delta's `_fence_grade_commit`).
+        patch("apollo.handlers.done._claim_grading_slot", new=AsyncMock(return_value=True)),
+        patch("apollo.handlers.done._release_grading_claim", new=AsyncMock()),
+        patch("apollo.handlers.done._fence_grade_commit", new=AsyncMock(return_value=True)),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
         # Transcript grader is the sole (unconditional) grading lane.
         patch("apollo.handlers.done._full_transcript", new=AsyncMock(return_value=())),

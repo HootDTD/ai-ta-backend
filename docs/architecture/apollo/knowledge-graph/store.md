@@ -12,7 +12,7 @@ related:
   - apollo/conversation/handlers/done
   - apollo/conversation/handlers/chat
   - apollo/conversation/handlers/negotiate
-last_verified: 2026-07-25
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -35,7 +35,11 @@ Method catalog, grouped by concern (all `async` unless noted):
 
 **Postgres freeze / metadata**
 - `freeze(session_id)` / `unfreeze(session_id)` — flip `TutoringSession.phase`
-  (`PROBLEM_REVEAL` ↔ `TEACHING`), commit.
+  (`PROBLEM_REVEAL` ↔ `TEACHING`), commit. **Done no longer calls `freeze`**
+  (M1/P3.4): its blind read-modify-write left the session in `PROBLEM_REVEAL`,
+  which `restart_problem._FROZEN_PHASES` does NOT cover, so a restart could slip
+  in and wipe the transcript mid-grade. `handlers/done`'s single CAS claim
+  writes `SOLVING` directly and provides the same `_ensure_unfrozen` guarantee.
 - `_session_id_for_attempt(attempt_id)` · `_ensure_unfrozen(session_id)` —
   raise `SessionFrozenError` when phase is a frozen state.
 
@@ -75,7 +79,7 @@ dynamic labels, so one template per label, each applying the type label + the
 secondary `:_KGNode` label). Reads flow Neo4j record → `_record_to_node` →
 `KGGraph`. `_ensure_unfrozen` gates every mutation. Equation display LaTeX is
 rendered via `solver.sympy_exec.parse_zero_form` + `_tidy_floats`
-(`_equation_latex`). At Done, `handlers/done.md` calls `freeze` → `read_graph`
+(`_equation_latex`). At Done, `handlers/done.md` claims (CAS) → `read_graph`
 → (grade) → `stamp_graded_at`.
 
 ## Invariants & gotchas

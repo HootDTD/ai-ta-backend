@@ -4,6 +4,7 @@ description: apollo/handlers/done.py — handle_done, the grade-of-record orches
 owns:
   - apollo/handlers/done.py
 related:
+  - apollo/conversation/routing/errors
   - apollo/overseer/_index
   - apollo/overseer/transcript-coverage
   - apollo/overseer/rubric
@@ -37,10 +38,10 @@ score→letter→narrative) live in `overseer/_index`, not restated here.
   intent/questioning gate decides "done"; the questioning gate passes
   `auto_done=True`). Returns the student grade payload (`rubric`, `topics`,
   `progress`, `scorecard`, `grading_provenance`, `transcript`, …).
-- **M1 (P3.4) claim primitives** (built, NOT yet wired into `handle_done` —
-  see Invariants): `_CLAIM_PHASE`, `_STALE_CLAIM_AFTER`,
-  `_claim_grading_slot`, `_release_grading_claim`, `_progress_block`,
-  `_stored_grade_payload`.
+- **M1 (P3.4) claim primitives** (wired into `handle_done`; see Invariants
+  "Claim lifecycle"): `_CLAIM_PHASE`, `_STALE_CLAIM_AFTER`,
+  `_claim_grading_slot`, `_release_grading_claim`, `_fence_grade_commit`,
+  `_progress_block`, `_stored_grade_payload`.
 
 ## Data flow
 
@@ -51,8 +52,9 @@ Ordered grade assembly (each step delegates to the owner doc):
    messages (`_student_message_count`) → `EmptyAttemptError` (409 `empty_attempt`,
    `routing/errors`) BEFORE any mutation — no freeze/phase change/XP/narrative,
    attempt row untouched (marking it flips `is_reattempt_in_session` and docks XP
-   on the real Done). Then read the student graph (degraded Neo4j tolerated) and
-   `store.freeze(session_id)`.
+   on the real Done). An already-graded attempt short-circuits to its stored
+   report; otherwise Done CASes the claim (Invariants "Claim lifecycle") then
+   reads the graph (degraded Neo4j tolerated).
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
 2a. **Question ledger** (`_question_ledger`, P1.2b/P1.3): ONE read of this
    attempt's `QuestionOpportunity` rows (by `id`), feeding the adjudicator's
@@ -115,9 +117,8 @@ Ordered grade assembly (each step delegates to the owner doc):
   narrative, XP and persistence unchanged. A non-null Interaction-1 bundle
   prevents fresh retrieval.
 - **Artifact write + artifact-derived mastery are own-failure-domain telemetry** —
-  each owns its commit and swallows exceptions; neither can void the served grade.
-  `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
-  dormant Bayesian path would double-apply evidence).
+  each owns its commit and swallows exceptions; neither voids the served grade.
+  `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on.
 - **Course grounding never adds a failure mode** (`overseer/grounding`):
   `_course_evidence_safe` runs AHEAD of the grading lane and is soft-fail by
   construction — flag off, concept disallowed, corrupt bundle, or ANY
@@ -144,14 +145,14 @@ Ordered grade assembly (each step delegates to the owner doc):
   `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]`, defaulting to 0 — never
   affects the score, just teacher-facing provenance.
 - **Claim lifecycle (M1, P3.4; gated in `test_apollo_done_claim_postgres.py`):**
-  Done's 6-7 commits rule out any transaction-scoped lock, so
   `_claim_grading_slot` CASes `phase` (`IS DISTINCT FROM 'SOLVING' OR
-  updated_at < now-15min`, NULL-safe, self-healing on a crashed claim).
-  `_release_grading_claim` guards on `phase = 'SOLVING'` (never clobbers a
-  later claim); a stale reclaim's `prior_phase` falls back to `TEACHING`
-  instead of re-bricking. `prior_phase` must come from the `sess` read
-  preceding the claim call. `_stored_grade_payload` replays with NO side
-  effects (no XP write, no `load_progress` upsert/commit).
+  updated_at < now-15min`, NULL-safe) as Done's FIRST Postgres write,
+  replacing the blind phase write + `store.freeze`; `_release_grading_claim`
+  guards on `phase = 'SOLVING'` (stale-reclaim `prior_phase` falls back to
+  `TEACHING`). **The terminal `phase='REPORT'` write is ALSO fenced**
+  (`_fence_grade_commit`, same guard, P3.4 delta): a reclaimed-out Done
+  writes NOTHING and raises `GradingInProgressError`. `_stored_grade_payload`
+  replays with NO side effects (no XP write, no upsert/commit).
 
 ## Env flags
 

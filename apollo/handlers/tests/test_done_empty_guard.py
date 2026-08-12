@@ -67,11 +67,11 @@ async def test_zero_student_messages_raises_and_mutates_nothing():
     assert isinstance(result, EmptyAttemptError)
     assert result.session_id == 11
     assert result.attempt_id == attempt.id
-    # No mutation of any kind before the guard: no commit, no freeze, no
+    # No mutation of any kind before the guard: no commit, no claim, no
     # phase change, attempt row untouched (a marked row would flip
     # is_reattempt_in_session and dock XP on the real Done later).
     assert db.commit.await_count == 0
-    assert started["freeze"].await_count == 0
+    assert started["_claim_grading_slot"].await_count == 0
     assert sess.phase == "TEACHING"
     assert attempt.result is None
     assert attempt.diagnostic_report is None
