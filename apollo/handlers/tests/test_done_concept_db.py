@@ -98,8 +98,9 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
 
     captured = {}
 
-    # `tally_context` (bimodal-fix P1.3) is passed by `done.py` on the sole
-    # grading lane, so a double that omits it fails every Done in this test.
+    # `tally_context` (bimodal-fix P1.3) and `wrongness_candidates` (P3.2 seam
+    # S5) are both passed by `done.py` on the sole grading lane, so a double
+    # that omits either fails every Done in this test.
     async def _coverage(
         *,
         transcript,
@@ -108,6 +109,7 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         course_evidence=None,
         hoot_asides=(),
         tally_context=None,
+        wrongness_candidates=None,
     ):
         captured["reference_nodes"] = list(reference_graph.nodes)
         return {}, {}

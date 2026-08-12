@@ -9,7 +9,7 @@ related:
   - apollo/projections/scorecard
   - apollo/grading/event-model
   - apollo/conversation/handlers/grading-artifact-writer
-last_verified: 2026-08-08
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -39,8 +39,8 @@ From `coverage.per_step` it derives `node_coverage` and a `node_ledger`
 `rubric["overall"]["score"]/100`; `scores.llm_rubric` carries the whole rubric.
 When a `TopicScoreResult` is passed, `scores.topic_score =
 serialize_topic_score(topic_score)` (the single serializer). The dict also carries
-`versions`, empty `edge_ledger` / `misconceptions`, `clarification_trace`, an
-`abstention` block, and `grading_latency_ms`.
+`versions`, an empty `edge_ledger`, `clarification_trace`, an `abstention`
+block, `grading_latency_ms`, and the `misconceptions` array below.
 
 ## Invariants & gotchas
 
@@ -84,5 +84,21 @@ serialize_topic_score(topic_score)` (the single serializer). The dict also carri
   graph lane emits none; every artifact written before 2026-08-08 has none), so a
   key with no basis lands as `None` rather than failing the write. Nothing scores
   on it — see [transcript-coverage](../overseer/transcript-coverage.md).
-- `misconceptions` / `edge_ledger` are always empty; `abstention.abstained` is
-  `None` (an LLM-only concept, lifted to `false` by the writer).
+- **`misconceptions` is DERIVED from `topic_score`, never passed in (P3.2, W2-B).**
+  `_artifact_misconceptions` flattens `topic_score.topics[].misconceptions` into
+  `[{canonical_key, resolved, evidence_span}]` — the exact keys
+  [scorecard](../projections/scorecard.md)`._watch_out`,
+  [classroom](../projections/classroom.md)`.top_misconceptions` and
+  `persistence/attempt_history.prior_wrongness_findings` already read. Deriving
+  rather than taking a second argument means the array and the served `topics[]`
+  can never disagree, the `APOLLO_WRONGNESS_LEVEL >= 3` gate is INHERITED (levels
+  0-2 leave every container empty, so the array is `[]` and the payload is
+  byte-identical to pre-P3.2), and no change to
+  [artifact_writer](../conversation/handlers/grading-artifact-writer.md) was
+  needed. `kind` is deliberately NOT carried: nothing reads it, and the only way
+  to supply it would be a second source that could drift from `topics[]` — it
+  lives in `done.py`'s `apollo_wrongness_observed` shadow log instead. Always a
+  LIST (`prior_wrongness_findings` unrolls it through a
+  `jsonb_typeof(...) = 'array'` guard).
+- `edge_ledger` is always empty; `abstention.abstained` is `None` (an LLM-only
+  concept, lifted to `false` by the writer).
