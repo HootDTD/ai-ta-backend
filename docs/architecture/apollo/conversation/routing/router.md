@@ -10,7 +10,7 @@ related:
   - apollo/conversation/agent/persona-reply
   - apollo/persistence/neo4j-client
   - apollo/provisioning/_index
-last_verified: 2026-08-07
+last_verified: 2026-08-11
 stub: false
 ---
 
@@ -26,6 +26,7 @@ stub: false
 - `require_neo4j_client(...) -> Neo4jClient` — dep for KG-native routes; raises `KGUnavailableError` when the client is None.
 - `close_neo4j_client()` — closes + clears the singleton (shutdown hook).
 - `register_exception_handlers(app)` — installs every `apollo.errors` → JSON handler (incl. `EmptyAttemptError` → 409 `empty_attempt`, 2026-08-07).
+- `GradingInProgressError` → 409 `grading_in_progress` (`grading_in_progress_handler`).
 - Request models: `FromHootRequest`, `SessionCreateRequest`, `ChatRequest`,
   `NextRequest`. `ChatRequest` is `{message: str, ask_hoot: bool = false}`;
   omitting `ask_hoot` preserves the ordinary teaching-turn contract.

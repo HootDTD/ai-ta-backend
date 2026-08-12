@@ -9,7 +9,7 @@ related:
   - apollo/conversation/routing/errors
   - apollo/overseer/problem-selector
   - apollo/knowledge-graph/store
-last_verified: 2026-08-07
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -42,6 +42,11 @@ attempt `result="abandoned"` before selecting the next problem.
 
 - **Both are blocked during `SOLVING`** (`SessionFrozenError`); `INIT`/`BETWEEN`
   raise `InvalidPhaseError`.
+- **The restart-vs-Done window is closed** (M1/P3.4): a lock only excludes
+  parties that take it, and Done takes none — the phase check does the work.
+  The hole was `store.freeze`'s transient `PROBLEM_REVEAL`, which is not in
+  `_FROZEN_PHASES`; Done's claim now writes `SOLVING` as its first write, so
+  restart 409s for the whole grading window. `_FROZEN_PHASES` is unchanged.
 - `handle_restart_problem` is **KG-native with no silent skip**: because the wipe
   targets the SAME `attempt_id`, a `KG_DEGRADED_ERRORS` is re-raised as
   `KGUnavailableError` (503) so stale nodes can't resurface — the Postgres

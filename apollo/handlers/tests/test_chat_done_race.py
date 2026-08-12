@@ -217,6 +217,40 @@ async def test_engine_decided_done_grades_with_auto_done_stamp(db_session_attemp
 
 
 @pytest.mark.asyncio
+async def test_auto_done_that_loses_the_claim_never_errors_the_turn(db_session_attempt):
+    """M1 (P3.4): the questioning engine's auto-done is not a student action, so
+    losing the grading claim to a Done the student clicked a moment earlier must
+    NOT surface as a 409. Skip the dispatch, log it, and serve the ordinary
+    teaching reply without `intent_executed`."""
+    from apollo.errors import GradingInProgressError
+
+    db, session_id, attempt_id = db_session_attempt
+    planner = AsyncMock(
+        return_value=QuestionDecision(action="done", question=None, target_node_id=None)
+    )
+    ps = _base_patches(_fake_store(), planner)
+    done_mock = AsyncMock(
+        side_effect=GradingInProgressError(session_id=session_id, attempt_id=attempt_id)
+    )
+    done_patch = patch("apollo.handlers.done.handle_done", new=done_mock)
+    from apollo.handlers.chat import handle_chat
+
+    with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], done_patch:
+        result = await handle_chat(
+            db=db, neo=MagicMock(), session_id=session_id, message="that is everything I know"
+        )
+
+    done_mock.assert_awaited_once()
+    assert "intent_executed" not in result
+    assert result["apollo_reply"] == "Thanks — I have enough to grade what you taught me."
+    # The turn still persisted its (student, apollo) pair.
+    assert await _messages(db, attempt_id) == [
+        ("student", "that is everything I know", 0),
+        ("apollo", "Thanks — I have enough to grade what you taught me.", 1),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_failed_turn_keeps_student_message(db_session_attempt):
     """A mid-chain failure after the early persist keeps the student row —
     the message is never lost to the transcript again."""
@@ -231,4 +265,108 @@ async def test_failed_turn_keeps_student_message(db_session_attempt):
                 db=db, neo=MagicMock(), session_id=session_id, message="my explanation"
             )
 
+    assert await _messages(db, attempt_id) == [("student", "my explanation", 0)]
+
+
+@pytest.mark.asyncio
+async def test_a_done_landing_during_intent_classification_refuses_the_turn(
+    db_session_attempt,
+):
+    """M4 (P3.4): the residual done-race window was the ~1-2s intent-classify
+    call before the early persist. A Done that claims the session inside that
+    window must refuse the turn cleanly rather than have it half-write.
+
+    `classify_intent` runs through `asyncio.to_thread` (a real worker thread),
+    so `patch(..., side_effect=<async def>)` here does NOT work the way it
+    would for an ordinary awaited call: `to_thread` invokes the mock
+    synchronously inside the thread, which just returns an un-awaited
+    coroutine object instead of running `_claim_mid_classification`'s body —
+    the update/commit never happens and `verdict` ends up being that bare
+    coroutine (`AttributeError: 'coroutine' object has no attribute 'intent'`).
+    The side_effect has to be a plain sync callable that bridges the claim
+    back onto the main loop with `run_coroutine_threadsafe` (deviation from
+    the task-7 brief's verbatim test code, 2026-08-12)."""
+    import asyncio as _asyncio
+
+    from sqlalchemy import update as _update
+
+    from apollo.errors import SessionFrozenError
+
+    db, session_id, attempt_id = db_session_attempt
+    main_loop = _asyncio.get_running_loop()
+
+    async def _claim_mid_classification_async() -> IntentVerdict:
+        await db.execute(
+            _update(TutoringSession)
+            .where(TutoringSession.id == session_id)
+            .values(phase=SessionPhase.SOLVING.value)
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+        return IntentVerdict(intent="teaching", confidence=1.0, reason="")
+
+    def _claim_mid_classification(**_kwargs) -> IntentVerdict:
+        return _asyncio.run_coroutine_threadsafe(
+            _claim_mid_classification_async(), main_loop
+        ).result()
+
+    planner = AsyncMock(
+        return_value=QuestionDecision(action="ask", question="go on", target_node_id=None)
+    )
+    ps = _base_patches(_fake_store(), planner)
+    ps[3] = patch("apollo.handlers.chat.classify_intent", side_effect=_claim_mid_classification)
+    from apollo.handlers.chat import handle_chat
+
+    with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5]:
+        with pytest.raises(SessionFrozenError):
+            await handle_chat(
+                db=db, neo=MagicMock(), session_id=session_id, message="my best explanation"
+            )
+
+    # The message was refused BEFORE the early persist — nothing half-written.
+    assert await _messages(db, attempt_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_done_landing_during_the_parse_chain_refuses_the_ledger_write(
+    db_session_attempt,
+):
+    """The last guard sits before `plan_next_question` — the ledger write.
+
+    The claim lands mid-turn (driven from the KG-write mock, which runs between
+    guard #2 and guard #3), so the student row is already persisted. That row is
+    deliberately KEPT — it is inside the transcript the winner grades, and the
+    dangling-row rule is documented — but no tally/ledger row is written into
+    the grading window."""
+    from sqlalchemy import update as _update
+
+    from apollo.errors import SessionFrozenError
+
+    db, session_id, attempt_id = db_session_attempt
+
+    async def _claim_during_kg_write(**_kwargs) -> int:
+        await db.execute(
+            _update(TutoringSession)
+            .where(TutoringSession.id == session_id)
+            .values(phase=SessionPhase.SOLVING.value)
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+        return 0
+
+    store = _fake_store()
+    store.write_nodes = AsyncMock(side_effect=_claim_during_kg_write)
+    planner = AsyncMock(
+        return_value=QuestionDecision(action="ask", question="go on", target_node_id=None)
+    )
+    ps = _base_patches(store, planner)
+    from apollo.handlers.chat import handle_chat
+
+    with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5]:
+        with pytest.raises(SessionFrozenError):
+            await handle_chat(
+                db=db, neo=MagicMock(), session_id=session_id, message="my explanation"
+            )
+
+    planner.assert_not_awaited()
     assert await _messages(db, attempt_id) == [("student", "my explanation", 0)]

@@ -64,6 +64,10 @@ async def write_artifacts(
     topic_score: TopicScoreResult | None = None,
 ) -> dict | None:
     """Write one canonical artifact without affecting the served grade on failure."""
+    # Captured BEFORE any failure can expire ORM instances: reading
+    # `attempt.id` after a failed flush would re-enter the broken session and
+    # raise (PendingRollbackError in prod, 2026-08-05) out of the soft-fail path.
+    attempt_id = int(attempt.id)
     try:
         payload = build_llm_artifact(
             coverage=coverage,
@@ -72,14 +76,25 @@ async def write_artifacts(
             clarification_trace=[],
             topic_score=topic_score,
         )
-        db.add(_artifact_row(attempt=attempt, sess=sess, payload=payload))
-        await db.flush()
+        # The INSERT runs inside a SAVEPOINT: on failure (e.g. a re-clicked
+        # Done violating the append-only UNIQUE(attempt_id, role,
+        # grader_version)) only the savepoint rolls back and the failed row is
+        # expunged. The outer transaction stays healthy and `attempt`/`sess`
+        # stay UNEXPIRED — done.py keeps reading them after this returns, and
+        # a full rollback here would expire them into lazy-load failures.
+        async with db.begin_nested():
+            db.add(_artifact_row(attempt=attempt, sess=sess, payload=payload))
+            await db.flush()
+    except Exception:
+        _LOG.exception("artifact_write_failed attempt_id=%s", attempt_id)
+        return None
+    try:
         await db.commit()
         return payload
     except Exception:
-        _LOG.exception("artifact_write_failed attempt_id=%s", int(attempt.id))
+        _LOG.exception("artifact_commit_failed attempt_id=%s", attempt_id)
         try:
             await db.rollback()
         except Exception:  # pragma: no cover - defensive
-            _LOG.exception("artifact_write_rollback_failed attempt_id=%s", int(attempt.id))
+            _LOG.exception("artifact_write_rollback_failed attempt_id=%s", attempt_id)
         return None

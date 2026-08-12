@@ -10,7 +10,7 @@ related:
   - apollo/persistence/progress-repo
   - apollo/conversation/handlers/done
   - apollo/projections/mastery
-last_verified: 2026-07-25
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -48,6 +48,10 @@ gates the re-attempt XP branch; `resolve_problem_id` supplies the
   excluded.
 - A legacy/fixture code with no bank row resolves to `None` — the mastery event
   stays valid with a **NULL linkage**.
+- **The `has_prior_graded_attempt` TOCTOU is closed upstream** (M1/P3.4): it is
+  an unlocked `SELECT COUNT`, so two concurrent Dones both used to read "no
+  prior graded attempt" and both award first-attempt XP. Done's CAS claim now
+  serializes them, so only one caller can be inside this read at a time.
 
 ## Related
 

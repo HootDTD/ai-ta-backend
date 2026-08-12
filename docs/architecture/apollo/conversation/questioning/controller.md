@@ -10,7 +10,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/persistence/models
   - apollo/schemas/problem
-last_verified: 2026-08-08
+last_verified: 2026-08-11
 stub: false
 ---
 
@@ -80,6 +80,14 @@ AND this is the node's first serve** (`asked_turn` still NULL).
 - `CoveredTopic` is the full `understood` snapshot each turn; the UI diffs `node_id`s
   to celebrate a topic once per attempt. Grading is untouched — this only reads the
   tally the questioning call already produced.
+- **`times_asked` is incremented ATOMICALLY** (`_bump_times_asked`, M5/P3.4):
+  `db.flush()` (the row may have been minted this turn), then
+  `UPDATE … SET times_asked = times_asked + 1 … RETURNING`, then
+  `set_committed_value` — never a dirty assignment, which would re-emit a blind
+  write at flush and restore the lost update. The old Python RMW dropped one
+  increment on overlapping turns, which is grade-visible through
+  `done._probed_node_ids` → the P1.2b denominator, and unbound the per-node cap.
+  Gate: `tests/database/test_apollo_question_ledger_concurrency_postgres.py`.
 
 ## Related
 

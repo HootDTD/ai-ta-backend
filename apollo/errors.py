@@ -134,6 +134,32 @@ class EmptyAttemptError(ApolloError):
         )
 
 
+class GradingInProgressError(ApolloError):
+    """Another Done already owns this attempt's grading claim (M1, P3.4).
+
+    `handle_done` spans 6-7 independent Postgres commits, so it serializes on a
+    DURABLE compare-and-swap claim (`phase='SOLVING'`) rather than a
+    transaction-scoped lock. A Done that loses that CAS must not run a second
+    grading pipeline: the winner would otherwise be double-XP'd, its
+    `diagnostic_report` overwritten by a last-writer-wins race, and the loser
+    would only be stopped at the very end by the artifact's unique constraint —
+    after phase, grade and XP were already durable.
+
+    RETRYABLE and student-correctable (the winner finishes in seconds), so this
+    is a 409 `grading_in_progress`, not the 503 infrastructure family. An
+    already-GRADED attempt never reaches here — `handle_done` short-circuits to
+    the stored `diagnostic_report` before it tries to claim.
+    """
+
+    def __init__(self, *, session_id: int, attempt_id: int) -> None:
+        self.session_id = session_id
+        self.attempt_id = attempt_id
+        super().__init__(
+            f"attempt {attempt_id} of session {session_id} is already being graded "
+            "by another request"
+        )
+
+
 class CoverageGradingError(ApolloError):
     """Coverage matcher exhausted retries on a transient failure.
 
