@@ -835,7 +835,9 @@ async def handle_chat(
     full_transcript = [
         ("student" if item["role"] == "user" else "apollo", item["content"]) for item in history_pre
     ] + [("student", message)]
-    # M4 — check #3, before the LEDGER write. The parse + KG chain runs 10-17s;
+    # M4 — check #3, before the question-planner call (and therefore before its
+    # ledger write, modulo the planner's own LLM latency — a residual sub-window,
+    # see chat.md). The parse + KG chain runs 10-17s;
     # a tally row committed after `done._question_ledger`'s single unlocked
     # SELECT is silently orphaned, and `times_asked` written into a grading
     # window mis-scopes the P1.2b denominator. The student row persisted above is
@@ -884,9 +886,7 @@ async def handle_chat(
         # response; re-raising here would 409 a turn the student did not
         # initiate.
         try:
-            done_result = await handle_done(
-                db=db, neo=neo, session_id=session_id, auto_done=True
-            )
+            done_result = await handle_done(db=db, neo=neo, session_id=session_id, auto_done=True)
         except GradingInProgressError:
             _LOG.info(
                 "apollo_auto_done_claim_lost session_id=%s attempt_id=%s",

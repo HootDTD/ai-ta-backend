@@ -64,15 +64,11 @@ async def test_chat_refuses_a_turn_while_a_done_holds_the_claim(pg_committing_se
     aside lane, intent classify), which is exactly the point — the turn is
     refused BEFORE the LLM spend, not half-written after it."""
     maker, slug_prefix = pg_committing_sessions
-    session_id, attempt_id = await _seed(
-        maker, slug_prefix, phase=SessionPhase.SOLVING.value
-    )
+    session_id, attempt_id = await _seed(maker, slug_prefix, phase=SessionPhase.SOLVING.value)
 
     async with maker() as db:
         with pytest.raises(SessionFrozenError):
-            await handle_chat(
-                db=db, neo=None, session_id=session_id, message="one more thing"
-            )
+            await handle_chat(db=db, neo=None, session_id=session_id, message="one more thing")
 
     async with maker() as db:
         count = (

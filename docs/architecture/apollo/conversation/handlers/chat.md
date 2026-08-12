@@ -144,10 +144,10 @@ every other in-flight Apollo request on that worker.
   walk — sit inside one guard that soft-fails to `0/0`
   (`apollo_graded_topic_counts_failed`): a display-only meter must never 500 a
   teaching turn, including on a `QuestionDecision` shape change.
-- **The residual done-race window is CLOSED** (M4/P3.4): `_require_unclaimed`
-  does a FRESH `phase` read at three points — before any LLM spend, before
-  `_persist_student_message`, and before the `plan_next_question` ledger write —
-  and raises `SessionFrozenError` (409) when a Done holds the `SOLVING` claim.
+- **The done-race window is NARROWED, not closed** (M4/P3.4): `_require_unclaimed`
+  FRESH-reads `phase` before any LLM spend, `_persist_student_message`, and the
+  `plan_next_question` call — `SessionFrozenError` 409 on a held `SOLVING` claim.
+  Residual sub-windows: `plan_next_question`'s LLM latency, `_persist_apollo_reply`.
 - **Neo4j is optional**: every KG read/write degrades on `KG_DEGRADED_ERRORS`
   (`_read_graph_or_empty` → empty `KGGraph`; `_write_kg_or_skip` → `nodes_added=0`); the Postgres + LLM reply always ships.
 - `_handle_pending_done` / the questioning `done` branch import `handle_done`

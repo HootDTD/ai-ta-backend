@@ -725,7 +725,9 @@ async def _stored_grade_payload(
     so a double-clicked Done is shown exactly the grade that is persisted rather
     than a freshly re-adjudicated one that last-writer-wins would then overwrite.
     Awards NO XP: `xp_earned` is 0 and the envelope is a zero-delta read of the
-    current progress row.
+    current progress row. A Done that dies between the grade commit and
+    `apply_xp` therefore forfeits that attempt's XP permanently — the replay
+    serves `xp_earned: 0`; the student recovers only via `/retry` (new attempt).
 
     Returns `None` when the attempt is not gradable-from-storage (`result` is
     not `"graded"`, or the report is missing/malformed), which is the caller's
@@ -872,7 +874,8 @@ async def handle_done(
     # `asyncio.CancelledError`, which is NOT an `Exception` subclass — missing
     # it would leak the claim for up to `_STALE_CLAIM_AFTER`. The release is
     # wrapped in `asyncio.shield` so a cancellation delivered WHILE we are
-    # compensating cannot interrupt the compensation itself; the outer
+    # compensating cannot interrupt it (a SECOND cancellation detaches the
+    # release rather than awaiting it — accepted residual); the outer
     # `raise` below still propagates the original (or a second) cancellation
     # to the caller once the shielded release has run. The CRITICAL post-claim
     # re-check just below lives INSIDE this try too (P3.4 fix-round-2 review

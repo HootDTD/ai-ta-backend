@@ -21,10 +21,11 @@ check-then-insert, so the FIRST graded attempt in a course raced into an
 `(user_id, course_id)`, a bare mutable counter), and it commits BEFORE the
 artifact's unique constraint fires, so that constraint cannot shield it. Both
 fixes are local and migration-free."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,10 +67,7 @@ async def _ensure_row(db: AsyncSession, *, user_id: str, course_id: int) -> None
     )
 
 
-async def load_progress(
-    *, db: AsyncSession, user_id: str, course_id: int
-) -> StudentProgress:
-    row = None
+async def load_progress(*, db: AsyncSession, user_id: str, course_id: int) -> StudentProgress:
     await _ensure_row(db, user_id=user_id, course_id=course_id)
     await db.commit()
     # `populate_existing` so a row already in this session's identity map (e.g.
@@ -95,7 +93,7 @@ async def apply_xp(
     user_id: str,
     course_id: int,
     xp_delta: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if xp_delta < 0:
         raise ValueError(f"xp_delta must be non-negative; got {xp_delta}")
 
