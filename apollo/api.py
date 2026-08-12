@@ -28,6 +28,7 @@ from apollo.errors import (
     CoverageGradingError,
     EmptyAttemptError,
     FilterRejectedError,
+    GradingInProgressError,
     InvalidPhaseError,
     KGEntryNotFoundError,
     KGUnavailableError,
@@ -601,6 +602,23 @@ async def empty_attempt_handler(request: Request, exc: EmptyAttemptError) -> JSO
     )
 
 
+async def grading_in_progress_handler(
+    request: Request, exc: GradingInProgressError
+) -> JSONResponse:
+    """M1 (P3.4): a second Done landed while the first still owns the claim.
+    Retryable within seconds and student-correctable, so 409 — not the 503
+    infrastructure family."""
+    return JSONResponse(
+        status_code=409,
+        content=_err_payload(
+            "grading_in_progress",
+            "We're still grading this attempt — give it a moment and try again.",
+            session_id=exc.session_id,
+            attempt_id=exc.attempt_id,
+        ),
+    )
+
+
 async def coverage_grading_handler(request: Request, exc: CoverageGradingError) -> JSONResponse:
     """Item #10: 503 surfaces the no-fallback contract — the UI shows
     "grading unavailable, try again" instead of receiving a downgraded
@@ -693,6 +711,7 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(PoolExhaustedError, pool_exhausted_handler)
     app.add_exception_handler(CoverageGradingError, coverage_grading_handler)
     app.add_exception_handler(EmptyAttemptError, empty_attempt_handler)
+    app.add_exception_handler(GradingInProgressError, grading_in_progress_handler)
     app.add_exception_handler(KGUnavailableError, kg_unavailable_handler)
     # ContextOverflowError lives in apollo.agent.apollo_llm; import lazily
     # to avoid a circular import in api.py's top-level module load.
