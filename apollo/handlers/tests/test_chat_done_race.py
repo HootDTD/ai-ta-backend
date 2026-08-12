@@ -217,6 +217,40 @@ async def test_engine_decided_done_grades_with_auto_done_stamp(db_session_attemp
 
 
 @pytest.mark.asyncio
+async def test_auto_done_that_loses_the_claim_never_errors_the_turn(db_session_attempt):
+    """M1 (P3.4): the questioning engine's auto-done is not a student action, so
+    losing the grading claim to a Done the student clicked a moment earlier must
+    NOT surface as a 409. Skip the dispatch, log it, and serve the ordinary
+    teaching reply without `intent_executed`."""
+    from apollo.errors import GradingInProgressError
+
+    db, session_id, attempt_id = db_session_attempt
+    planner = AsyncMock(
+        return_value=QuestionDecision(action="done", question=None, target_node_id=None)
+    )
+    ps = _base_patches(_fake_store(), planner)
+    done_mock = AsyncMock(
+        side_effect=GradingInProgressError(session_id=session_id, attempt_id=attempt_id)
+    )
+    done_patch = patch("apollo.handlers.done.handle_done", new=done_mock)
+    from apollo.handlers.chat import handle_chat
+
+    with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], done_patch:
+        result = await handle_chat(
+            db=db, neo=MagicMock(), session_id=session_id, message="that is everything I know"
+        )
+
+    done_mock.assert_awaited_once()
+    assert "intent_executed" not in result
+    assert result["apollo_reply"] == "Thanks — I have enough to grade what you taught me."
+    # The turn still persisted its (student, apollo) pair.
+    assert await _messages(db, attempt_id) == [
+        ("student", "that is everything I know", 0),
+        ("apollo", "Thanks — I have enough to grade what you taught me.", 1),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_failed_turn_keeps_student_message(db_session_attempt):
     """A mid-chain failure after the early persist keeps the student row —
     the message is never lost to the transcript again."""

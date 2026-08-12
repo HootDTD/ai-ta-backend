@@ -15,7 +15,7 @@ related:
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
   - apollo/persistence/neo4j-client
-last_verified: 2026-08-10
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -151,7 +151,9 @@ every other in-flight Apollo request on that worker.
   (`_read_graph_or_empty` → empty `KGGraph`; `_write_kg_or_skip` → `nodes_added=0`);
   the Postgres + LLM reply always ships.
 - `_handle_pending_done` / the questioning `done` branch import `handle_done`
-  lazily to break the `handle_done ← store ← chat` import cycle.
+  lazily to break the `handle_done ← store ← chat` import cycle. The auto-done
+  branch swallows `GradingInProgressError` (log + no `intent_executed` key) —
+  an engine-decided Done must never 409 a turn the student did not initiate.
 - `_find_problem` now runs unconditionally near the top of `handle_chat`
   (previously resolved later, only on the teaching path) because an explicit
   Ask Hoot request needs it before intent classification.

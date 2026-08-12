@@ -826,21 +826,42 @@ async def handle_chat(
         apollo_msg=validated,
     )
     if decision.action == "done":
+        from apollo.errors import GradingInProgressError  # noqa: PLC0415
         from apollo.handlers.done import handle_done  # noqa: PLC0415
 
         # This Done was decided by the questioning engine (budget exhaustion /
         # coverage-sufficient), not clicked by the student — stamp it for
         # grade forensics (bimodal-fix P0.4).
-        done_result = await handle_done(db=db, neo=neo, session_id=session_id, auto_done=True)
-        return {
+        #
+        # M1 (P3.4): the student may have clicked Done a moment earlier, in
+        # which case that request owns the grading claim and this one loses it.
+        # An auto-done is not a student action, so it must NEVER surface an
+        # error: skip the dispatch, log it, and serve the ordinary teaching
+        # reply. The winner's grade reaches the student through its own
+        # response; re-raising here would 409 a turn the student did not
+        # initiate.
+        try:
+            done_result = await handle_done(
+                db=db, neo=neo, session_id=session_id, auto_done=True
+            )
+        except GradingInProgressError:
+            _LOG.info(
+                "apollo_auto_done_claim_lost session_id=%s attempt_id=%s",
+                session_id,
+                int(current_attempt.id),
+            )
+            done_result = None
+        payload = {
             "apollo_reply": validated,
             "kg_entries_added": nodes_added,
             "kg": student_graph.model_dump(mode="json"),
             "covered_topics": covered_topics,
             "graded_topic_total": graded_topic_total,
             "open_graded_topics": open_graded_topics,
-            "intent_executed": {"intent": "done", "result": done_result},
         }
+        if done_result is not None:
+            payload["intent_executed"] = {"intent": "done", "result": done_result}
+        return payload
     return {
         "apollo_reply": validated,
         "kg_entries_added": nodes_added,
