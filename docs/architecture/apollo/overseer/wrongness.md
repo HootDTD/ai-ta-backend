@@ -92,12 +92,16 @@ Producer → ledger → here → consumers:
 - **No double jeopardy.** INTERACTION5's flat 0.5 aside cap lands below
   `MIN_CORROBORATED_CREDIT`, so a capped node can never also carry a
   corroborated finding.
-- **Import-light on purpose.** stdlib + `config.settings` only. Importing
-  `topic_score` here would close the cycle `unified → selection → topic_score →
-  wrongness → settings`, so `CEILING_UNCORRECTED` is a duplicated constant
-  pinned equal to `topic_score`'s by
+- **Import-light on purpose.** stdlib + `config.settings` only, asserted by
+  `test_wrongness_predicate.test_wrongness_core_stays_import_light` (zero
+  `apollo.*` imports). Importing `topic_score` for the one shared integer would
+  not close a cycle *today*, but it would drag `apollo.ontology` and
+  `overseer.rubric` in behind it and put the scorer on the questioning hot
+  path's import graph once W2-A wires `controller → wrongness` — the chain the
+  design is protecting is `unified → selection → topic_score`. So
+  `CEILING_UNCORRECTED` is a duplicated constant pinned **unconditionally** equal
+  to `topic_score`'s (the authority) by
   `test_wrongness_predicate.test_ceiling_constant_agrees_with_topic_score`.
-  `topic_score` remains the authority.
 - **Every function is total.** `evidence` is free-form JSONB (`__evidence__array_check`
   asserts only `jsonb_typeof = 'array'`); a malformed row is logged
   (`apollo_wrongness_ledger_row_skipped`) and skipped, never raised — this feeds
