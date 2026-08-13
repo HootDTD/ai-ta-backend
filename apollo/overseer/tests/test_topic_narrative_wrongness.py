@@ -235,14 +235,17 @@ def test_only_corroborated_findings_are_nameable():
     ]
     assert passed, "done._grade_claimed_attempt no longer passes misconceptions= at all"
     for value in passed:
-        assert isinstance(value, ast.Name), ast.dump(value)
-        sources = [
-            assign.value
-            for assign in ast.walk(grade_fn)
-            if isinstance(assign, ast.Assign)
-            and any(isinstance(t, ast.Name) and t.id == value.id for t in assign.targets)
-        ]
-        assert sources, f"{value.id} is passed but never assigned in the function"
+        # Either inlined, or a local name — resolve a name to its assignment(s).
+        if isinstance(value, ast.Name):
+            sources = [
+                assign.value
+                for assign in ast.walk(grade_fn)
+                if isinstance(assign, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == value.id for t in assign.targets)
+            ]
+            assert sources, f"{value.id} is passed but never assigned in the function"
+        else:
+            sources = [value]
         for expr in sources:
             assert isinstance(expr, ast.DictComp), ast.dump(expr)
             guards = {
