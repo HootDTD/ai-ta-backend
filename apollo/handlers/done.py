@@ -538,6 +538,18 @@ def _evaluate_wrongness(
     return findings
 
 
+# The marker every entry persisted BELOW level 3 carries. S10 puts the teacher
+# surfaces on rung 3, but the array itself is persisted from rung 1 (see
+# `_shadow_misconceptions`), and `projections/classroom.top_misconceptions` +
+# the `repeated_misconception` attention flag both LATERAL over that same
+# column — so without a marker they would light up two rungs early, on a corpus
+# whose whole purpose is to be invisible. Teacher-facing readers exclude marked
+# entries; the S9 cross-attempt read
+# (`attempt_history.prior_wrongness_findings`, which powers the LEVEL-2 carried
+# challenge and the XP dedup) is deliberately marker-AGNOSTIC and must stay so.
+SHADOW_MISCONCEPTION_KEY = "shadow"
+
+
 def _shadow_misconceptions(
     findings: Sequence[wrongness.WrongnessFinding],
     *,
@@ -574,6 +586,11 @@ def _shadow_misconceptions(
     list, ``topics[].misconceptions`` and the narrative all still start at level
     3 exactly as W2-B built them, and this array is a SUPERSET of the served one
     that agrees with it entry for entry on the corroborated nodes.
+
+    Below level 3 every entry additionally carries ``SHADOW_MISCONCEPTION_KEY``
+    so the TEACHER surfaces — which read this column, not the payload — can
+    stay on S10's rung 3 while the internal record starts at rung 1. At level
+    >= 3 the marker is absent, which is what turns those surfaces on.
     """
     if level < wrongness.LEVEL_PRODUCE:
         return None
@@ -583,11 +600,13 @@ def _shadow_misconceptions(
     for finding in findings:
         if finding.node_id not in keep and finding.resolved and finding.apollo_elicited:
             keep[finding.node_id] = finding
+    shadow = level < wrongness.LEVEL_SURFACE
     return [
         {
             "canonical_key": finding.node_id,
             "resolved": finding.resolved,
             "evidence_span": finding.quote,
+            **({SHADOW_MISCONCEPTION_KEY: True} if shadow else {}),
         }
         for finding in sorted(keep.values(), key=lambda f: f.node_id)
     ]
