@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -45,10 +46,19 @@ from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.ontology import KGGraph
+from apollo.overseer.topic_score import _GRADED_NODE_TYPES
+from apollo.overseer.wrongness import (
+    LEVEL_PRODUCE,
+    candidate_quotes,
+    effective_wrongness_level,
+    ledger_findings,
+)
 from apollo.schemas.problem import Problem
 from apollo.smart_questions.controller import (
     _apply_tally_updates,
     _build_tally_state,
+    _ladder_inputs,
     _write_opportunity_audit,
 )
 from apollo.smart_questions.selection import SelectionPolicy, build_selection_policy
@@ -262,6 +272,10 @@ class TurnRecord:
     fixture: str
     sample: int
     turn_index: int
+    #: `APOLLO_WRONGNESS_LEVEL` as `effective_wrongness_level` resolved it for
+    #: THIS fixture's concept — recorded per row so a JSONL file can never be
+    #: mistaken for an arm it was not run at.
+    level: int
     producer_calls: int
     raw_response: str
     #: What the MODEL asked for, straight out of the raw response.
@@ -295,6 +309,7 @@ class FixtureReplay:
     turns: tuple[TurnRecord, ...]
     grade: ReplayOutcome | None
     recorded: dict[str, Any]
+    level: int = 0
     ledger: tuple[dict[str, Any], ...] = ()
 
     @property
@@ -367,6 +382,23 @@ def _model_action(raw: str) -> str | None:
 # --------------------------------------------------------------------------- #
 
 
+def _wrongness_candidates(
+    rows: Sequence[Any], *, graph: KGGraph, level: int
+) -> dict[str, str] | None:
+    """The S5 corroborator candidates for the at-Done half, or ``None``.
+
+    Mirrors `done._grade_claimed_attempt` exactly — the same two `wrongness`
+    functions over the same graded-node set — so the replayed adjudication asks
+    the same question production would. ``None`` (not ``{}``) below level 1, and
+    ``None`` when nothing was flagged, because an empty map still changes the
+    adjudicator's prompt.
+    """
+    if level < LEVEL_PRODUCE:
+        return None
+    graded = frozenset(node.node_id for node in graph.nodes if node.node_type in _GRADED_NODE_TYPES)
+    return candidate_quotes(ledger_findings(rows), graded_node_ids=graded) or None
+
+
 async def _replay(
     fixture: TurnReplayFixture,
     *,
@@ -374,6 +406,13 @@ async def _replay(
     sample: int,
     grade: bool,
 ) -> FixtureReplay:
+    # The ladder level is NOT a harness argument: it is read from
+    # `APOLLO_WRONGNESS_LEVEL` through `effective_wrongness_level`, the single
+    # reader, exactly as production reads it — concept allowlist included. An
+    # arm is therefore selected the same way it is deployed (`--level`, or the
+    # env var), and a harness-local level could never disagree with the one the
+    # controller actually applied.
+    level = effective_wrongness_level(fixture.problem.concept_id)
     if not fixture.student_turn_ids:
         return FixtureReplay(
             fixture=fixture.name,
@@ -383,6 +422,7 @@ async def _replay(
             turns=(),
             grade=None,
             recorded=fixture.recorded,
+            level=level,
         )
 
     graph = fixture.problem.to_kg_graph(attempt_id=_REPLAY_ATTEMPT_ID)
@@ -396,9 +436,31 @@ async def _replay(
     for ordinal, turn_id in enumerate(fixture.student_turn_ids):
         transcript = list(fixture.messages[: turn_id + 1])
         tally_state = _build_tally_state(graph, list(rows))
+        questions_asked = sum(int(row.times_asked or 0) for row in rows)
+        cap = question_cap()
+        # The four level-2 inputs come from `controller._ladder_inputs`, the
+        # production resolver, IMPORTED rather than reimplemented — the same rule
+        # the tally-state rebuild follows. Without this the harness is
+        # level-blind: `evaluate_and_ask` would keep taking its pre-P3.2
+        # defaults, the done-gate could never fire, and every arm would replay
+        # identically no matter what the flag said. `_ladder_inputs` skips its
+        # cross-attempt SELECT when `problem.database_id is None`, which every
+        # PII-scrubbed fixture is, so `_NullSession` is never queried.
+        ladder = await _ladder_inputs(
+            session,
+            problem=fixture.problem,
+            attempt_id=_REPLAY_ATTEMPT_ID,
+            course_id=_REPLAY_COURSE_ID,
+            reference_graph=graph,
+            rows=list(rows),
+            tally_state=tally_state,
+            questions_asked=questions_asked,
+            cap=cap,
+        )
         budget = QuestionBudget(
-            questions_asked=sum(int(row.times_asked or 0) for row in rows),
-            cap=question_cap(),
+            questions_asked=questions_asked,
+            cap=cap,
+            carried_challenges=ladder.carried_challenges,
         )
         client = make_client(ordinal)
         before = client.calls
@@ -409,6 +471,10 @@ async def _replay(
             tally_state=tally_state,
             budget=budget,
             client=client,
+            wrongness=ladder.wrongness,
+            contested_ids=ladder.contested_ids,
+            contested_quotes=ladder.contested_quotes,
+            challenge_gate=ladder.challenge_gate,
         )
         raw = client.recorded[before] if client.calls > before else ""
         by_id = _apply_tally_updates(
@@ -438,6 +504,7 @@ async def _replay(
             tally_state=_build_tally_state(graph, list(rows)),
             questions_asked=budget.questions_asked,
             cap=budget.cap,
+            contested_ids=ladder.contested_ids,
         )
         model_action = _model_action(raw)
         records.append(
@@ -445,6 +512,7 @@ async def _replay(
                 fixture=fixture.name,
                 sample=sample,
                 turn_index=turn_id,
+                level=level,
                 producer_calls=client.calls - before,
                 raw_response=raw,
                 model_action=model_action,
@@ -465,6 +533,11 @@ async def _replay(
             transcript=fixture.messages,
             adjudicator_output=fixture.adjudicator_output,
             rows=rows,
+            # S5: at level >= 1 the at-Done corroborator is offered the tally's
+            # candidates, built by the same two `wrongness` functions `done.py`
+            # calls, off the ledger this replay just minted. `None` below level
+            # 1 leaves the adjudication prompts and verdict byte-identical.
+            wrongness_candidates=_wrongness_candidates(rows, graph=graph, level=level),
             name=fixture.name,
         )
         if grade
@@ -478,6 +551,7 @@ async def _replay(
         turns=tuple(records),
         grade=outcome,
         recorded=fixture.recorded,
+        level=level,
         ledger=tuple(_serialize_row(row) for row in rows),
     )
 
@@ -547,6 +621,7 @@ def turn_row(record: TurnRecord) -> dict[str, Any]:
         "fixture": record.fixture,
         "sample": record.sample,
         "turn_index": record.turn_index,
+        "level": record.level,
         "producer_calls": record.producer_calls,
         "raw_response": record.raw_response,
         "model_action": record.model_action,
@@ -570,6 +645,7 @@ def summary_row(replay: FixtureReplay) -> dict[str, Any]:
         "fixture": replay.fixture,
         "attempt_ref": replay.attempt_ref,
         "sample": replay.sample,
+        "level": replay.level,
         "refusal": replay.refusal,
         "turns": len(replay.turns),
         "asks": sum(1 for turn in replay.turns if turn.action == "ask"),
@@ -684,6 +760,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=("recorded", "live"), default="recorded")
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument(
+        "--level",
+        type=int,
+        default=None,
+        help=(
+            "run this arm at APOLLO_WRONGNESS_LEVEL=N (spec 4 arms: 0 = the noise floor, "
+            "2 = probe priority + done-gate, 4 = the ceiling). Sets the env var for this "
+            "process only; omit it to use the ambient environment"
+        ),
+    )
+    parser.add_argument(
         "--allow-single-draw",
         action="store_true",
         help=f"permit a live run with fewer than {LIVE_SAMPLE_MINIMUM} samples (dry runs only)",
@@ -703,6 +789,13 @@ def _run_cli(args: argparse.Namespace) -> tuple[str, ...]:
     if args.compare:
         baseline, candidate = args.compare
         return (json.dumps(compare_arms(load_jsonl(baseline), load_jsonl(candidate)), indent=2),)
+    if args.level is not None:
+        # The one place the flag is WRITTEN. Everything downstream still READS it
+        # through `wrongness.effective_wrongness_level`, so `--level` selects an
+        # arm exactly the way a deployment selects a rung — clamp, concept
+        # allowlist and all — rather than through a harness-only switch that
+        # could disagree with what production would have done.
+        os.environ["APOLLO_WRONGNESS_LEVEL"] = str(args.level)
     live = args.mode == "live"
     samples = max(1, int(args.samples))
     if live and samples < LIVE_SAMPLE_MINIMUM and not args.allow_single_draw:

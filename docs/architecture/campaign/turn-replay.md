@@ -55,13 +55,15 @@ the client plumbing is its most self-contained piece.
   `run(fixtures, *, live, samples)` → `FixtureReplay` (`refusal`, `turns`,
   `grade`, `ledger`).
 - `turn_row` / `summary_row` / `to_jsonl` / `load_jsonl` / `compare_arms`.
-- `main(argv)` — CLI (`--fixtures`, `--mode {recorded,live}`, `--samples`,
-  `--allow-single-draw`, `--out`, `--compare A B`).
+- `main(argv)` — CLI (`--fixtures`, `--mode {recorded,live}`, `--level N`,
+  `--samples`, `--allow-single-draw`, `--out`, `--compare A B`).
 
 ## Data flow
 
 `campaign/fixtures/turn_replay/*.json` → `TurnReplayFixture` → per student turn:
-`controller._build_tally_state` → `unified.evaluate_and_ask(client=…)` →
+`controller._build_tally_state` → `controller._ladder_inputs` →
+`unified.evaluate_and_ask(client=…, wrongness=…, contested_ids=…,
+contested_quotes=…, challenge_gate=…)` →
 `controller._apply_tally_updates` → `_charge_ask` →
 `controller._write_opportunity_audit` → `selection.build_selection_policy` →
 `TurnRecord`. After the last turn: `transcript_replay.grade_replay` over the
@@ -77,6 +79,18 @@ kinds. `test_jsonl_row_schema_is_the_p31_contract` pins both key sets.
 
 ## Invariants & gotchas
 
+- **The ladder level is READ, never passed.** `--level N` sets
+  `APOLLO_WRONGNESS_LEVEL` for the process and everything downstream resolves it
+  through `wrongness.effective_wrongness_level`, the single reader — clamp and
+  concept allowlist included — so an arm is selected exactly the way a deployment
+  selects a rung. `controller._ladder_inputs` (imported, not reimplemented)
+  supplies the four level-2 kwargs and the carried challenge; the at-Done half
+  gets `wrongness_candidates` from the same `ledger_findings` +
+  `candidate_quotes` pair `done.py` calls. Without this the harness is
+  level-blind and every arm replays identically no matter what the flag says.
+  `_ladder_inputs` skips its cross-attempt SELECT when `problem.database_id is
+  None`, which every PII-scrubbed fixture is, so the null session is never
+  queried.
 - **Imports the production writers, never a copy.** `_build_tally_state`,
   `_apply_tally_updates` and `_write_opportunity_audit` are the controller's own;
   a private rebuild would drift silently the moment the tally-state enum or the
@@ -109,8 +123,15 @@ kinds. `test_jsonl_row_schema_is_the_p31_contract` pins both key sets.
   harness artifact: recorded-ledger, replayed-ledger and ledger-less grading all
   agree with each other.
 - **`done_gate_fired` is read off the seam** ("the model said done and the engine
-  served ask"), never by importing W2-A gate internals, so it stays correct before
-  and after the level-2 done-gate lands.
+  served ask"), never by importing gate internals. Measured on the four committed
+  fixtures: it fires only on `attempt_083_paragraph_dump`, only at level ≥2
+  (shape (b), the unprobed single-turn claim). 124/167 are never gated (their
+  first turn is an `ask`), and 086 refuses as `empty_attempt` at every level.
+- **Playback carries no wrongness labels, by construction.** The reconstructed
+  producer JSON is rebuilt from what prod PERSISTED, and prod ran pre-P3.2, so
+  every replayed update is `wrongness: "none"` and gate shape (a) can never fire
+  offline. Shape (b) is state-based and does. A wrongness-bearing arm needs a
+  LIVE draw first, which the level-≥1 producer schema now makes possible.
 - **A live arm needs ≥4 samples** (`LIVE_SAMPLE_MINIMUM`, spec §4); fewer is a
   `SystemExit` unless `--allow-single-draw`. Nondeterminism at temp 0 moves 7-18%
   of letters between identical runs.
