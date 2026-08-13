@@ -12,7 +12,7 @@ related:
   - apollo/overseer/aside-penalty
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-08-08
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -128,9 +128,21 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
   surfaces name the same nodes — and the next-step fallback spends from that
   same budget. Past it the gap is still NAMED, with a wording-free sentence (the
   note hangs off its own `canonical_key`, so the topic is still identifiable).
-  Uncapped, a wholly-failed attempt appended one quoted reference clause per
-  zeroed node and the narrative handed back the whole graded reference solution
-  while `topics[]` was capped at two.
+  Uncapped, a wholly-failed attempt handed back the whole graded reference
+  solution — one quoted clause per zeroed node — while `topics[]` was capped at two.
+  **P3.2 L3 (2026-08-12) made it a THREE-channel budget:** `_quotable_keys`
+  subtracts `topic_narrative.nameable_misconception_keys(topics)` from the quota
+  AND drops those keys from its candidates, so the union never exceeds the budget
+  in reveals or in distinct nodes. It recomputes that allocation instead of
+  receiving it — same pure function, same `topics`. Empty below wrongness level 3,
+  restoring the pre-P3.2 selection exactly.
+- **`_is_uncredited` is deliberately NOT taught about the wrongness ceiling.** A
+  corroborated finding requires `credit >= 0.6`, so a flagged topic is a CREDITED
+  topic: it stays out of `uncredited` and keeps its praise and its untouched note,
+  while [topic-narrative](topic-narrative.md) narrates the finding as its own
+  separate line. Level 4's `min(raw, 84)` moves the attempt SCORE, never a topic's
+  credit — reading the ceiling as "not credited" would strip praise the
+  adjudicator's own verdict awards.
 - **Headline/next-step praise is deleted only on strong evidence.** Emptying a
   one-sentence headline replaces the whole thing, so the sentence must share at
   least two topic-name words that appear in NO credited topic (one of them 6+
