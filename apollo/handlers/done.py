@@ -533,6 +533,48 @@ def _evaluate_wrongness(
     return findings
 
 
+def _shadow_misconceptions(
+    corroborated: Mapping[str, wrongness.WrongnessFinding],
+    *,
+    level: int,
+) -> list[dict[str, Any]] | None:
+    """The level-1/2 SHADOW persistence of the corroborated findings, or ``None``.
+
+    Spec §2.3 level 1 is "produce + persist + shadow-log", and L2c
+    (cross-attempt question memory) is a level-**2** feature that reads what an
+    EARLIER attempt persisted, via
+    ``attempt_history.prior_wrongness_findings`` over
+    ``grader_payload -> 'misconceptions'``. Deriving that array only from
+    ``topics[].misconceptions`` — which is populated at level >= 3 — therefore
+    starves L2c: at level 2 every prior attempt wrote ``[]``, so
+    ``controller._select_carried`` has nothing to carry and the rung silently
+    no-ops at the level it ships at.
+
+    So levels 1-2 persist the array explicitly here. It is written to the DB
+    column ONLY (`artifact_writer._artifact_row`): the served payload keeps
+    deriving from the ONE scored result, so the student's scorecard *Watch out*
+    list, ``topics[].misconceptions`` and the narrative all still start at level
+    3 exactly as W2-B built them. ``None`` at level 0 (byte-identical) and at
+    level >= 3 (one producer, the scored result).
+
+    Keys are exactly the three every reader consumes (`canonical_key`,
+    `resolved`, `evidence_span`); node-keyed and therefore already deduped past
+    F-06's per-evidence-entry rungs, and sorted so the array is deterministic.
+    ``kind`` is deliberately absent: ``TopicMisconception`` has no such field, so
+    carrying it here would make the level-2 and level-3 arrays different shapes.
+    """
+    if not (wrongness.LEVEL_PRODUCE <= level < wrongness.LEVEL_SURFACE):
+        return None
+    return [
+        {
+            "canonical_key": finding.node_id,
+            "resolved": finding.resolved,
+            "evidence_span": finding.quote or None,
+        }
+        for finding in sorted(corroborated.values(), key=lambda f: f.node_id)
+    ]
+
+
 async def _wrongness_bonus_xp(
     db: AsyncSession,
     *,
@@ -1496,6 +1538,10 @@ async def _grade_claimed_attempt(
         rubric=rubric,
         latency_ms=artifact_latency_ms,
         topic_score=topic_score,
+        # Internal-only at levels 1-2: the persisted array feeds the NEXT
+        # attempt's L2c carried challenge; the returned payload (and so the
+        # scorecard rendered below) is untouched. See `_shadow_misconceptions`.
+        shadow_misconceptions=_shadow_misconceptions(corroborated, level=level),
     )
     if canonical_payload is not None:
         student_response["scorecard"] = render_scorecard(canonical_payload)

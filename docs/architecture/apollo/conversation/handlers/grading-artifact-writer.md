@@ -10,7 +10,7 @@ related:
   - apollo/persistence/models
   - apollo/projections/mastery
   - apollo/projections/scorecard
-last_verified: 2026-08-11
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -21,12 +21,13 @@ transcript/topic `GradingRun` row per Done click (DB-14 shape).
 
 ## Interface
 
-- `write_artifacts(db, *, attempt, sess, coverage, rubric, latency_ms, topic_score=None) -> dict | None`
-  — builds the payload via `build_llm_artifact` (`grading/artifact-build`), maps
-  it onto a `GradingRun` row, flushes + commits, and **returns the canonical
-  payload** (or `None` on failure). Called only by `handlers/done`.
-- `_artifact_row(*, attempt, sess, payload) -> GradingRun` — the internal
-  payload-dict → typed-column mapping.
+- `write_artifacts(db, *, attempt, sess, coverage, rubric, latency_ms, topic_score=None,
+  shadow_misconceptions=None) -> dict | None` — builds the payload via
+  `build_llm_artifact` (`grading/artifact-build`), maps it onto a `GradingRun`
+  row, flushes + commits, and **returns the canonical payload** (or `None` on
+  failure). Called only by `handlers/done`.
+- `_artifact_row(*, attempt, sess, payload, shadow_misconceptions=None) -> GradingRun`
+  — the internal payload-dict → typed-column mapping.
 
 ## Data flow
 
@@ -36,6 +37,18 @@ scalars lifted into typed columns. `misconceptions` + `clarification_trace` have
 no dedicated columns in the target DDL, so they nest under the catch-all
 `grader_payload` JSONB. The reciprocal reader is
 `campaign/cast-student`'s `SqlArtifactReader._row_to_payload`.
+
+- **`shadow_misconceptions` is the ONLY thing that may differ between the row
+  written and the payload returned** (Apollo P3.2). The persisted
+  `grader_payload -> 'misconceptions'` array and the served one have different
+  gates: the returned payload becomes the student's scorecard *Watch out* list
+  (wrongness level >= 3), while the persisted column is what the NEXT attempt
+  reads back via `persistence/done-write-linkage`'s `prior_wrongness_findings`
+  for L2c cross-attempt question memory — a level-**2** rung. `done.py`
+  therefore passes the corroborated array explicitly at levels 1-2 and `None`
+  at level 0 (byte-identical) and level >= 3 (the scored result stays the one
+  producer). Always stored as a LIST: both readers unroll it with
+  `jsonb_array_elements`.
 
 ## Invariants & gotchas
 
