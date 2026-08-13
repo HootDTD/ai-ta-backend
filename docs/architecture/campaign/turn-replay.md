@@ -132,6 +132,11 @@ kinds. `test_jsonl_row_schema_is_the_p31_contract` pins both key sets.
   every replayed update is `wrongness: "none"` and gate shape (a) can never fire
   offline. Shape (b) is state-based and does. A wrongness-bearing arm needs a
   LIVE draw first, which the level-≥1 producer schema now makes possible.
+- **Size debt:** `turn_replay.py` is **857 lines**, back over the 800-line
+  convention the `turn_replay_clients.py` split bought (764 at W2-C) after the
+  ladder wiring landed. P3.1 Phase 0 adds `credit`/`basis` to the turn rows —
+  extract the JSONL/`compare_arms` reporting block to a third file in this leaf
+  at that point rather than growing it further.
 - **A live arm needs ≥4 samples** (`LIVE_SAMPLE_MINIMUM`, spec §4); fewer is a
   `SystemExit` unless `--allow-single-draw`. Nondeterminism at temp 0 moves 7-18%
   of letters between identical runs.

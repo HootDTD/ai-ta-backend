@@ -131,6 +131,19 @@ emit telemetry.
   `apollo_tally_updates_discarded` so the campaign can size the undercount. Never
   depend on that branch.
 
+## Known debt — file size
+
+`unified.py` is **836 lines** (717 on `origin/staging`, +40 for the P3.2
+producer, +79 for the level-2 wiring), over the repo's 800-line convention.
+The done-gate was already extracted to `questioning/challenge` and the residue
+is genuinely cohesive: one call, one decode, one repair/regenerate loop, one
+policy re-resolve. It stays whole ON PURPOSE for now — this is the questioning
+hot path and every level-0 byte-identity gate in P3.2 is anchored to it, so a
+split is a re-verification cost with no correctness return. The next author who
+needs a line here should take the repair/regenerate block out first. Nine other
+non-test modules in this repo are already over the same convention and CI does
+not gate on it.
+
 ## Env flags
 
 `APOLLO_UNIFIED_QUESTION_MODEL`, `APOLLO_UNIFIED_QUESTION_REASONING_EFFORT`,
