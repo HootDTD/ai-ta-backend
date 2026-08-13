@@ -132,23 +132,36 @@ async def prior_wrongness_findings(
     **Its own failure domain.** Any exception logs
     ``apollo_prior_findings_failed`` and returns ``()``: a missing memory costs
     one continuity question, while a raise here would reach the Done grade path.
+
+    The read runs inside a **SAVEPOINT**, and that is what makes the sentence
+    above true. Swallowing a DB-level error without one leaves the outer
+    transaction in a failed state, so the next statement raises
+    ``PendingRollbackError`` — and both callers keep using the session
+    immediately: ``controller._ladder_inputs`` on EVERY teaching turn at level
+    >= 2 (then ``_apply_tally_updates`` / ``_bump_times_asked`` / commit) and
+    ``done._wrongness_bonus_xp`` at level >= 3 (then ``apply_xp`` and the fenced
+    grade commit, AFTER the grading claim is taken). Without the savepoint this
+    handler converts "a lost memory" into exactly the 500 it exists to prevent.
+    Same convention, same reason, as ``projections/performance._identities`` and
+    ``handlers/artifact_writer.write_artifacts``.
     """
     try:
-        rows = (
-            (
-                await db.execute(
-                    _PRIOR_WRONGNESS_FINDINGS_SQL,
-                    {
-                        "attempt_id": attempt_id,
-                        "problem_id": problem_id,
-                        "course_id": course_id,
-                        "limit": max(0, int(limit)),
-                    },
+        async with db.begin_nested():
+            rows = (
+                (
+                    await db.execute(
+                        _PRIOR_WRONGNESS_FINDINGS_SQL,
+                        {
+                            "attempt_id": attempt_id,
+                            "problem_id": problem_id,
+                            "course_id": course_id,
+                            "limit": max(0, int(limit)),
+                        },
+                    )
                 )
+                .mappings()
+                .all()
             )
-            .mappings()
-            .all()
-        )
     except Exception as exc:  # a lost memory must never cost the student a grade
         _LOG.warning(
             "apollo_prior_findings_failed attempt_id=%s problem_id=%s err=%s",

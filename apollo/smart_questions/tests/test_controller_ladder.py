@@ -92,12 +92,35 @@ class _Result:
         return 1
 
 
+class _Savepoint:
+    """`AsyncSession.begin_nested()`'s async-CM shape.
+
+    Modelled rather than stubbed away because `prior_wrongness_findings` runs
+    its read inside a SAVEPOINT on purpose: swallowing a DB error without one
+    leaves the outer transaction failed, and this fake's whole job is to prove
+    the turn survives a failing cross-attempt read."""
+
+    def __init__(self, db):
+        self._db = db
+
+    async def __aenter__(self):
+        self._db.savepoints += 1
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
 class _DB:
     """Fake session: the ledger SELECT, then any raw-SQL reads, in order."""
 
     def __init__(self, ledger_rows, *later):
         self._queued = [ledger_rows, *later]
         self.calls: list[tuple] = []
+        self.savepoints = 0
+
+    def begin_nested(self):
+        return _Savepoint(self)
 
     async def execute(self, statement, params=None):
         self.calls.append((statement, params))
@@ -323,6 +346,11 @@ async def test_a_failing_cross_attempt_read_never_breaks_the_turn(monkeypatch):
     seen = await _plan(db, monkeypatch)
     assert seen["budget"].carried_challenges == ()
     assert seen["challenge_gate"] is True
+    # ...and it failed INSIDE a savepoint, which is what makes "never breaks the
+    # turn" true rather than merely logged: without one the swallowed error
+    # leaves the transaction failed and the very next statement — the tally
+    # write this turn is about to do — raises `PendingRollbackError`.
+    assert db.savepoints == 1
 
 
 @pytest.mark.asyncio

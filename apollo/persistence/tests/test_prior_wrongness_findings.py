@@ -19,8 +19,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.persistence import attempt_history
 from apollo.persistence.attempt_history import prior_wrongness_findings
 from apollo.persistence.models import (
     GradingRun,
@@ -367,23 +369,104 @@ async def test_entry_without_a_canonical_key_is_skipped(db_session) -> None:
     assert found[0]["evidence_span"] is None
 
 
-async def test_soft_fails_to_empty_on_error(caplog: pytest.LogCaptureFixture) -> None:
-    """Its own failure domain: a missing memory costs one continuity question,
-    while a raise here would reach the Done grade path."""
+@pytest.mark.integration
+async def test_a_failed_read_leaves_the_session_usable(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A REAL server-side Postgres error soft-fails to `()` and leaves the
+    session usable.
 
-    class _BrokenSession:
-        async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
-            raise RuntimeError("connection reset")
+    Honest scope: this asserts the soft-fail against a genuine aborted-statement
+    error rather than a fake `RuntimeError`, which is worth having. It does NOT
+    prove the savepoint — `tests/conftest.db_session` uses
+    `join_transaction_mode="create_savepoint"`, so the session recovers here with
+    or without it (verified by mutation). The savepoint's discriminating pin is
+    `test_the_failing_read_is_wrapped_in_a_savepoint`."""
+    sid = await seed_search_space(db_session)
+    problem_id, _concept_id = await _seed_problem(db_session, search_space_id=sid)
+    await db_session.commit()
+
+    # The failure must come from the SERVER — a client-side raise would never
+    # abort the transaction and the test would pass without proving anything.
+    # Division by zero is evaluated by Postgres, which aborts the transaction
+    # exactly the way a statement timeout or a revoked `internal` grant does.
+    monkeypatch.setattr(
+        attempt_history,
+        "_PRIOR_WRONGNESS_FINDINGS_SQL",
+        text(
+            "SELECT (1/0)::text AS canonical_key, NULL AS evidence_span, "
+            "NULL AS resolved, :attempt_id AS attempt_id "
+            "WHERE :problem_id > 0 AND :course_id > 0 LIMIT :limit"
+        ),
+    )
 
     with caplog.at_level("WARNING"):
         found = await prior_wrongness_findings(
-            # Duck-typed on `.execute` alone, which is the whole point: the read
-            # must soft-fail on ANY session-shaped object that raises.
-            cast("AsyncSession", _BrokenSession()),
-            attempt_id=1,
-            problem_id=2,
-            course_id=3,
+            db_session, attempt_id=1, problem_id=problem_id, course_id=sid
         )
 
     assert found == ()
     assert "apollo_prior_findings_failed" in caplog.text
+    assert (await db_session.execute(text("SELECT 1"))).scalar_one() == 1
+
+
+class _BrokenSession:
+    """A session whose read always fails, with a REAL ``begin_nested`` shape.
+
+    Modelling the savepoint rather than omitting it is deliberate. If this fake
+    only had ``.execute``, the production ``async with db.begin_nested()`` would
+    raise ``AttributeError`` and the soft-fail below would pass for entirely the
+    wrong reason — green while proving nothing about the error it names."""
+
+    def __init__(self) -> None:
+        self.savepoints = 0
+
+    def begin_nested(self) -> _BrokenSession:
+        self.savepoints += 1
+        return self
+
+    async def __aenter__(self) -> _BrokenSession:
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> bool:
+        return False
+
+    async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("connection reset")
+
+
+async def test_soft_fails_to_empty_on_error(caplog: pytest.LogCaptureFixture) -> None:
+    """Its own failure domain: a missing memory costs one continuity question,
+    while a raise here would reach the Done grade path."""
+    session = _BrokenSession()
+
+    with caplog.at_level("WARNING"):
+        found = await prior_wrongness_findings(
+            cast("AsyncSession", session), attempt_id=1, problem_id=2, course_id=3
+        )
+
+    assert found == ()
+    assert "apollo_prior_findings_failed" in caplog.text
+
+
+async def test_the_failing_read_is_wrapped_in_a_savepoint(caplog: pytest.LogCaptureFixture) -> None:
+    """The DISCRIMINATING pin for the savepoint, and the only one that can be.
+
+    In production a swallowed DB error without a savepoint leaves the outer
+    transaction aborted, so the next statement raises ``PendingRollbackError``
+    — and both callers use the session immediately afterwards (the turn's tally
+    write at level >= 2; ``apply_xp`` and the fenced grade commit at level >= 3,
+    AFTER the grading claim is taken). That end state is **not reproducible in
+    this repo's Postgres harness**: ``tests/conftest.db_session`` binds the
+    session with ``join_transaction_mode="create_savepoint"``, so every test is
+    already inside a savepoint and recovers on its own. Asserting "the session
+    still works" there is therefore vacuous — it passes with the savepoint
+    removed, which is exactly why it is asserted structurally here instead."""
+    session = _BrokenSession()
+
+    with caplog.at_level("WARNING"):
+        await prior_wrongness_findings(
+            cast("AsyncSession", session), attempt_id=1, problem_id=2, course_id=3
+        )
+
+    assert session.savepoints == 1

@@ -81,6 +81,13 @@ dedup the decision-7 XP bonus once per user × problem × node).
   an unlocked `SELECT COUNT`, so two concurrent Dones both used to read "no
   prior graded attempt" and both award first-attempt XP. Done's CAS claim now
   serializes them, so only one caller can be inside this read at a time.
+- **The cross-attempt read runs inside a SAVEPOINT** (`db.begin_nested()`),
+  not merely a `try/except`. Both callers use the session immediately
+  afterwards — the turn's tally write at wrongness level >= 2, and `apply_xp`
+  plus the fenced grade commit at level >= 3, AFTER the grading claim is taken
+  — so swallowing a DB error without one would leave the transaction aborted
+  and turn "a lost memory" into a `PendingRollbackError` 500. Same convention
+  as `projections/performance._identities` and the artifact writer.
 
 ## Related
 

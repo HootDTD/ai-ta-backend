@@ -196,12 +196,27 @@ class _Row:
         self.question = ""
 
 
+class _Savepoint:
+    """`AsyncSession.begin_nested()`'s async-CM shape — the S9 read runs inside
+    a SAVEPOINT so a swallowed DB error cannot leave the Done transaction in a
+    failed state (`apply_xp` and the fenced grade commit both follow it)."""
+
+    async def __aenter__(self) -> _Savepoint:
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> bool:
+        return False
+
+
 class _DB:
     """Fake session: the ledger SELECT first, then the S9 raw-SQL read."""
 
     def __init__(self, *results: list[Any]) -> None:
         self._queued = list(results)
         self.statements: list[Any] = []
+
+    def begin_nested(self) -> _Savepoint:
+        return _Savepoint()
 
     async def execute(self, statement: Any, params: Any = None) -> Any:
         self.statements.append(statement)
