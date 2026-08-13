@@ -50,11 +50,18 @@ def _artifact_kwargs(started: dict[str, Any]) -> dict[str, Any]:
 
 async def test_level_1_done_persists_the_corroborated_array(monkeypatch):
     """The array reaches `write_artifacts` as `shadow_misconceptions`, node-keyed
-    and carrying exactly the three keys every reader consumes."""
+    and carrying exactly the three keys every reader consumes — plus, below level
+    3, the `shadow` marker that keeps the TEACHER surfaces on S10's rung 3 while
+    the internal record starts at rung 1 (W3-B)."""
     _out, started = await wf.run_done(monkeypatch, level=1, real_artifact=True)
 
     assert _artifact_kwargs(started)["shadow_misconceptions"] == [
-        {"canonical_key": _NODE, "resolved": False, "evidence_span": wf.MATERIAL_QUOTE}
+        {
+            "canonical_key": _NODE,
+            "resolved": False,
+            "evidence_span": wf.MATERIAL_QUOTE,
+            "shadow": True,
+        }
     ]
 
 

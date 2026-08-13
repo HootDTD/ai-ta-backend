@@ -3,7 +3,9 @@
 
 PURE READ-SIDE aggregation over already-durable rows (``app.problem_attempts``
 / ``app.course_memberships`` / ``app.student_progress`` / ``app.problems`` /
-``app.concepts``) — no new grading, no inference, no LLM/Neo4j calls.
+``app.concepts``, plus — through ``performance_insights`` — the canonical
+grading artifacts in ``internal.grading_runs``) — no new grading, no inference,
+no LLM/Neo4j calls.
 
 Unlike ``classroom.mastery_heatmap`` (which reads ``app.learner_state``, empty
 until ``APOLLO_GRAPH_SIM_LAYER3_ENABLED`` is flipped), everything here reads
@@ -398,8 +400,17 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
     roster = await _roster_counts(db, search_space_id=search_space_id)
     progress = await _progress_rows(db, search_space_id=search_space_id)
     engagement = await performance_insights.load_engagement(db, search_space_id=search_space_id)
+    # P3.2 teacher surface: the `repeated_misconception` attention flag. Read as
+    # its own side map off the canonical artifact rows and threaded into the
+    # aggregates — an empty set (nothing persisted, or everything still marked
+    # `shadow` below wrongness level 3) reproduces today's five flags exactly.
     aggregates = await performance_insights.load_problem_aggregates(
-        db, search_space_id=search_space_id, score_expr=_SCORE_EXPR
+        db,
+        search_space_id=search_space_id,
+        score_expr=_SCORE_EXPR,
+        repeated_pairs=await performance_insights.load_repeated_misconception_pairs(
+            db, search_space_id=search_space_id
+        ),
     )
 
     active_ids = {row["user_id"] for row in totals}

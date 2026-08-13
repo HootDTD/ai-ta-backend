@@ -51,6 +51,32 @@ _TOP_MISCONCEPTIONS_LIMIT: int = 10
 # the teacher can tell "the class got this wrong" from "Apollo never asked".
 _LEDGER_STATUSES_WITH_REFERENCE_KEY = ("credited", "misconception", LEDGER_STATUS_UNPROBED)
 
+# Apollo P3.2 §2.5 / S10 — which ``grader_payload -> 'misconceptions'`` entries a
+# TEACHER is allowed to see. The array is persisted from wrongness level 1 (see
+# ``apollo.handlers.done._shadow_misconceptions``) so cross-attempt question
+# memory and the XP dedup have a record to read, but the teacher surfaces only
+# serve from level 3. Two exclusions, for two different reasons:
+#
+# - ``shadow``: the marker every entry written BELOW level 3 carries. Without
+#   this predicate this aggregate would light up at level >= 1 — a deviation
+#   from S10, on exactly the corpus that exists to be invisible.
+# - ``resolved``: a contradiction the student FIXED. It is persisted only so the
+#   decision-7 XP bonus can dedup itself once per (user x problem x node); it is
+#   a success, not a struggle signal, and counting it inflates the very list a
+#   teacher reads as "what is the class getting wrong".
+#
+# The key is RE-SPELLED here rather than imported, to keep this pure projection
+# out of the ``done`` -> Neo4j import chain (same convention as
+# ``projections/scorecard``'s status markers); the spellings are pinned equal by
+# ``tests/test_misconception_surfaces_light_up.py``. Both markers render through
+# ``->>`` as TEXT, so an absent key is NULL and ``IS DISTINCT FROM 'true'``
+# KEEPS it — every pre-P3.2 row stays counted.
+SHADOW_MISCONCEPTION_KEY = "shadow"
+_TEACHER_VISIBLE_MISCONCEPTION_SQL = """
+                  AND (misc ->> 'shadow') IS DISTINCT FROM 'true'
+                  AND (misc ->> 'resolved') IS DISTINCT FROM 'true'
+"""
+
 
 async def mastery_heatmap(db: AsyncSession, *, search_space_id: int) -> list[dict[str, Any]]:
     """Roster x concept mastery grid (spec §2): one row per ``(user_id,
@@ -109,6 +135,12 @@ async def struggle_signals(
     most frequently asserted misconceptions. Pure aggregation via
     ``jsonb_array_elements`` lateral expansion over ``node_ledger`` /
     ``grader_payload -> 'misconceptions'`` -- no new inference.
+
+    ``top_misconceptions`` counts only TEACHER-VISIBLE misconception entries
+    (see ``_TEACHER_VISIBLE_MISCONCEPTION_SQL``): the array is persisted from
+    Apollo P3.2 wrongness level 1 for internal readers, so entries below level 3
+    carry a ``shadow`` marker and are excluded here, as are ``resolved`` ones
+    (a contradiction the student fixed is not a struggle signal).
 
     ``abstention_count`` and ``fallback_count`` read different row shapes
     (see ``apollo.handlers.artifact_writer.write_artifacts`` /
@@ -227,7 +259,7 @@ async def struggle_signals(
         (
             await db.execute(
                 text(
-                    """
+                    f"""
                 SELECT
                     misc ->> 'canonical_key' AS key,
                     count(*) AS n
@@ -237,6 +269,7 @@ async def struggle_signals(
                   AND a.role = 'canonical'
                   AND a.created_at >= :window_start
                   AND misc ->> 'canonical_key' IS NOT NULL
+                  {_TEACHER_VISIBLE_MISCONCEPTION_SQL}
                 GROUP BY misc ->> 'canonical_key'
                 ORDER BY n DESC, key ASC
                 LIMIT :limit

@@ -6,8 +6,9 @@ owns:
 related:
   - apollo/projections/mastery
   - apollo/grading/artifact-build
+  - apollo/conversation/handlers/done
   - apollo/conversation/routing/router
-last_verified: 2026-08-08
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -49,6 +50,20 @@ over `internal.grading_runs` for the course window: `FILTER`ed counts plus
   status is matched explicitly (constant IMPORTED, never re-spelled) and still
   contributes 0.0, with an additive per-key `n_unprobed` count so the teacher can
   read "the class got this wrong" apart from "Apollo never asked".
+- **`top_misconceptions` counts only TEACHER-VISIBLE entries** (P3.2 §2.5/S10,
+  `_TEACHER_VISIBLE_MISCONCEPTION_SQL`). The array is persisted from wrongness
+  level 1 for INTERNAL readers (cross-attempt question memory, the XP dedup —
+  [done](../conversation/handlers/done.md)), so without a predicate this teacher
+  aggregate would light up two rungs below the ≥3 S10 names. Two exclusions:
+  entries marked `shadow` (written below level 3), and `resolved` ones (a
+  contradiction the student FIXED — persisted only for the XP dedup; a success,
+  not a struggle signal). `IS DISTINCT FROM 'true'` is load-bearing, NOT
+  `!= 'true'`: `->>` on an absent key is NULL and `NULL != 'true'` is NULL, which
+  would silently drop every pre-P3.2 row. The marker key is re-spelled here
+  rather than imported (keeping this pure projection out of the `done` → Neo4j
+  chain, the same convention [scorecard](scorecard.md) uses) and pinned equal by
+  `tests/test_misconception_surfaces_light_up.py`; the SQL itself is gated on real
+  Postgres by `tests/database/test_wrongness_teacher_surfaces_postgres.py`.
 - **Dual-grader SQL, LLM-only reality.** The `abstention_count` /`fallback_count`
   filters model a graph/shadow grader (`grader_used='graph'`, `role='pair'`) and
   the docstrings reference `build_graph_artifact` / ledger helpers that no longer

@@ -7,12 +7,14 @@ rows the live tutoring / grading paths already persist:
   student teaching turns — the Apollo side is ``role='apollo'``);
 - retry / first-vs-best over graded attempts (first = lowest ``pa.id``, best =
   the best-wins row, the same served-grade semantics `performance.py` uses
-  everywhere).
+  everywhere);
+- repeated misconceptions (``internal.grading_runs.grader_payload ->
+  'misconceptions'``, the canonical artifact array — read-only, never re-graded).
 
 The stat helpers (`pearson`, `spearman`, `median`, …) and the aggregation /
 flag / insight builders are **pure functions on plain lists**, so the validity
 anchors (`tests/`) exercise them with hand-computed fixtures and no database.
-Only the two thin ``load_*`` coroutines touch the session; they own no grading
+Only the three thin ``load_*`` coroutines touch the session; they own no grading
 logic — they read rows and hand them to the pure functions. `performance.py`
 passes its own ``_SCORE_EXPR`` into `load_problem_aggregates` so the served-grade
 expression is defined in exactly one place (no import cycle, no duplication).
@@ -21,6 +23,7 @@ expression is defined in exactly one place (no import cycle, no duplication).
 from __future__ import annotations
 
 import math
+from collections.abc import Collection, Mapping
 from datetime import datetime
 from typing import Any, NamedTuple
 
@@ -58,6 +61,18 @@ RAPID_RETRY_MAX_SECONDS = 300
 # changes no stored data.
 RAPID_RETRY_MIN_GAIN = 30.0
 
+# repeated_misconception (Apollo P3.2 §2.5): the SAME canonical_key stood
+# uncorrected in at least this many of a student's GRADED attempts at one
+# problem — they are not converging on the thing they keep getting wrong.
+REPEATED_MISCONCEPTION_MIN_ATTEMPTS = 2
+
+# The marker an entry persisted BELOW wrongness level 3 carries
+# (``apollo.handlers.done.SHADOW_MISCONCEPTION_KEY``). Re-spelled rather than
+# imported to keep this pure module out of the ``done`` -> Neo4j import chain
+# (same convention as ``projections/scorecard``'s status markers); the spellings
+# are pinned equal by ``tests/test_misconception_surfaces_light_up.py``.
+SHADOW_MISCONCEPTION_KEY = "shadow"
+
 
 class ProblemAgg(NamedTuple):
     """One (student, problem) pair's graded-attempt shape."""
@@ -74,6 +89,12 @@ class ProblemAgg(NamedTuple):
     median_gap_seconds: float | None = None
     min_gap_seconds: float | None = None
     first_to_best_seconds: float | None = None
+    # P3.2: this pair carried the SAME uncorrected misconception across
+    # >= REPEATED_MISCONCEPTION_MIN_ATTEMPTS graded attempts. Filled only when
+    # the `repeated_misconception_pairs` side map is threaded in; defaulted so
+    # every pre-P3.2 construction and fixture stays valid and yields today's
+    # five flags exactly.
+    repeated_misconception: bool = False
 
 
 def _round1(value: float) -> float:
@@ -209,10 +230,63 @@ def _pair_timings(
     return timings
 
 
+def _marked_true(value: Any) -> bool:
+    """JSON ``true``, whichever projection delivered it. ``jsonb_array_elements``
+    hands Python a real ``bool``; the ``->>`` text projection the S9 reader uses
+    hands back the STRING ``"true"``. Anything else — absent key, ``False``,
+    ``"false"``, a number — is not a mark."""
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
+def teacher_visible_misconception(entry: Mapping[str, Any]) -> bool:
+    """Whether ONE ``grader_payload -> 'misconceptions'`` entry may reach a
+    teacher surface — the pure twin of
+    ``classroom._TEACHER_VISIBLE_MISCONCEPTION_SQL``, and the reason the flag
+    below is a level-3 surface even though the array is written from level 1.
+
+    Excluded: entries marked ``shadow`` (written below wrongness level 3, where
+    S10 serves nothing) and ``resolved`` ones (a contradiction the student
+    FIXED, persisted only for the decision-7 XP dedup — a success, not an
+    attention signal). An entry with neither key is KEPT, so every pre-P3.2 row
+    still counts."""
+    return (
+        bool(entry.get("canonical_key"))
+        and not _marked_true(entry.get(SHADOW_MISCONCEPTION_KEY))
+        and not _marked_true(entry.get("resolved"))
+    )
+
+
+def repeated_misconception_pairs(
+    entry_rows: list[tuple[str, int, int, Mapping[str, Any]]],
+    min_attempts: int = REPEATED_MISCONCEPTION_MIN_ATTEMPTS,
+) -> set[tuple[str, int]]:
+    """Fold ``(user_id, problem_id, attempt_id, misconception_entry)`` rows into
+    the set of ``(user_id, problem_id)`` pairs where ONE ``canonical_key`` stood
+    teacher-visible across >= ``min_attempts`` DISTINCT graded attempts.
+
+    Distinct ATTEMPTS, never rows: an attempt whose array happened to repeat a
+    key, or a second artifact row for the same attempt, must not look like a
+    second attempt. Pure — the loader below only supplies rows."""
+    attempts_by_key: dict[tuple[str, int, str], set[int]] = {}
+    for user_id, problem_id, attempt_id, entry in entry_rows:
+        if not teacher_visible_misconception(entry):
+            continue
+        key = (user_id, problem_id, str(entry["canonical_key"]))
+        attempts_by_key.setdefault(key, set()).add(attempt_id)
+    return {
+        (user_id, problem_id)
+        for (user_id, problem_id, _key), attempts in attempts_by_key.items()
+        if len(attempts) >= min_attempts
+    }
+
+
 def problem_aggregates(
     attempt_rows: list[tuple[str, int, int, float]],
     latest_attempt_ids: dict[tuple[str, int], int] | None = None,
     created_at_by_attempt: dict[int, datetime] | None = None,
+    repeated_pairs: Collection[tuple[str, int]] | None = None,
 ) -> dict[str, list[ProblemAgg]]:
     """Fold ``(user_id, problem_id, attempt_id, score)`` graded-attempt rows
     into per-student ``ProblemAgg`` lists (one per (student, problem)).
@@ -227,7 +301,14 @@ def problem_aggregates(
     ``created_at_by_attempt`` maps a graded attempt id to its ``pa.created_at``.
     Supplied it fills the DISPLAY-ONLY timing fields (P3.3); omitted they stay
     None — an optional SIDE MAP, exactly like ``latest_attempt_ids``, so the
-    4-tuple row shape (and every fixture built on it) is unchanged."""
+    4-tuple row shape (and every fixture built on it) is unchanged.
+
+    ``repeated_pairs`` (P3.2) is the third such side map:
+    ``load_repeated_misconception_pairs``' ``(user_id, problem_id)`` set. Absent
+    it, every ``repeated_misconception`` is False and `student_flags` returns
+    today's five flags exactly. A pair only appears here if it has graded
+    attempts WITH a served score — the artifact rows alone never invent a
+    ProblemAgg — so the flag is conservative by construction."""
     grouped: dict[tuple[str, int], list[tuple[int, float]]] = {}
     for user_id, problem_id, attempt_id, score in attempt_rows:
         grouped.setdefault((user_id, problem_id), []).append((attempt_id, float(score)))
@@ -256,6 +337,9 @@ def problem_aggregates(
                 min_gap_seconds=timings["min_gap_seconds"],
                 # currently unconsumed; candidate input for P3.2 (wrongness signal) — drop if still unread then.
                 first_to_best_seconds=timings["first_to_best_seconds"],
+                repeated_misconception=(
+                    repeated_pairs is not None and (user_id, problem_id) in repeated_pairs
+                ),
             )
         )
     return by_student
@@ -317,7 +401,11 @@ def student_flags(
     median_words: float | None,
     aggs: list[ProblemAgg],
 ) -> list[str]:
-    """The five algorithmic attention flags, in a stable order."""
+    """The six algorithmic attention flags, in a stable order.
+
+    APPEND-ONLY: a new flag goes on the END and no existing flag's presence,
+    spelling, or position may change — the teacher UI keys off these strings and
+    an absent P3.2 payload must reproduce the original five exactly."""
     flags: list[str] = []
     if attempts == 0:
         flags.append("not_started")
@@ -337,6 +425,12 @@ def student_flags(
         flags.append("grinding")
     if any(_is_rapid_flip(a) for a in aggs):
         flags.append("rapid_retry")
+    # P3.2 §2.5, teacher surface: the same claim stood uncorrected across two or
+    # more graded attempts at one problem. Level-gated for free — the pairs come
+    # from `teacher_visible_misconception`, which drops every entry persisted
+    # below wrongness level 3.
+    if any(a.repeated_misconception for a in aggs):
+        flags.append("repeated_misconception")
     return flags
 
 
@@ -489,8 +583,61 @@ async def load_engagement(db: AsyncSession, *, search_space_id: int) -> dict[str
     return engagement_by_student([(str(r["user_id"]), r["content"] or "") for r in rows])
 
 
+async def load_repeated_misconception_pairs(
+    db: AsyncSession, *, search_space_id: int
+) -> set[tuple[str, int]]:
+    """``(user_id, problem_id)`` pairs carrying a REPEATED uncorrected
+    misconception, read from the canonical artifact rows.
+
+    Unrolls ``internal.grading_runs.grader_payload -> 'misconceptions'`` the same
+    way ``classroom.struggle_signals`` and
+    ``persistence.attempt_history.prior_wrongness_findings`` already do, guarded
+    by ``jsonb_typeof(...) = 'array'`` so a malformed free-form payload yields
+    zero rows instead of raising. Entries arrive as whole JSONB objects and the
+    visibility/repeat decision is made by the PURE fold above — this coroutine
+    owns no logic, exactly like the other two loaders. Course-scoped and
+    canonical-role only; roster-bounded, never a cross-course export."""
+    rows = (
+        (
+            await db.execute(
+                text(
+                    """
+                SELECT g.user_id AS user_id, g.problem_id AS problem_id,
+                       g.attempt_id AS attempt_id, misc AS entry
+                FROM internal.grading_runs g,
+                     LATERAL jsonb_array_elements(
+                         CASE
+                             WHEN jsonb_typeof(g.grader_payload -> 'misconceptions') = 'array'
+                             THEN g.grader_payload -> 'misconceptions'
+                             ELSE '[]'::jsonb
+                         END
+                     ) AS misc
+                WHERE g.course_id = :search_space_id
+                  AND g.role = 'canonical'
+                  AND misc ->> 'canonical_key' IS NOT NULL
+                """
+                ),
+                {"search_space_id": search_space_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return repeated_misconception_pairs(
+        [
+            (str(r["user_id"]), int(r["problem_id"]), int(r["attempt_id"]), r["entry"])
+            for r in rows
+            if isinstance(r["entry"], Mapping)
+        ]
+    )
+
+
 async def load_problem_aggregates(
-    db: AsyncSession, *, search_space_id: int, score_expr: str
+    db: AsyncSession,
+    *,
+    search_space_id: int,
+    score_expr: str,
+    repeated_pairs: Collection[tuple[str, int]] | None = None,
 ) -> dict[str, list[ProblemAgg]]:
     """Per-student (student, problem) graded-attempt aggregates. ``score_expr``
     is `performance.py`'s served-grade SQL fragment (a module constant, not user
@@ -502,7 +649,11 @@ async def load_problem_aggregates(
 
     The graded SELECT also carries ``pa.created_at`` — DISPLAY-ONLY, threaded
     through as the ``created_at_by_attempt`` side map for retry spacing. The
-    ``ORDER BY`` stays ``pa.id``: a timestamp must never order attempts."""
+    ``ORDER BY`` stays ``pa.id``: a timestamp must never order attempts.
+
+    ``repeated_pairs`` is `load_repeated_misconception_pairs`' set, passed
+    straight through as a third side map (no query of its own here) — omitted,
+    every ``repeated_misconception`` stays False."""
     rows = (
         (
             await db.execute(
@@ -557,4 +708,5 @@ async def load_problem_aggregates(
         ],
         latest_attempt_ids,
         created_at_by_attempt=created_at_by_attempt,
+        repeated_pairs=repeated_pairs,
     )
