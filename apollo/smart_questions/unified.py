@@ -1,4 +1,13 @@
-"""One-call Apollo tally updates and question generation with log-only belt telemetry."""
+"""One-call Apollo tally updates and question generation, with belt telemetry.
+
+The belt is **log-only on the ordinary questioning path** — it records
+``belt_hit_served`` and serves the reply anyway, because option-word false
+positives made blocking worse than the leak. It is **not** log-only on the P3.2
+done-gate branch: ``challenge.resolve`` swaps a hit (or a malformed rendering)
+for the quote-free ``CHALLENGE_FALLBACK`` before returning, so a belt hit there
+is never served. ``belt_hit_served=False`` on that branch is therefore literal,
+not an omission.
+"""
 
 from __future__ import annotations
 

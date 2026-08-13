@@ -1,6 +1,6 @@
 """Deterministic question-target policy for Apollo's questioning loop.
 
-Two rules live here, both enforced in code rather than in the prompt:
+Three rules live here, all enforced in code rather than in the prompt:
 
 * **Graded-first (P1.2a).** Only ``GRADED_NODE_TYPES`` reference nodes are scored
   by the topic grader, so every open graded node must be probed before the ask
