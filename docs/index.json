@@ -1,7 +1,7 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-08-12",
+  "generated_at": "2026-08-13",
   "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {

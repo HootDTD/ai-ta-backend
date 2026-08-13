@@ -12,7 +12,7 @@ related:
   - apollo/projections/mastery
   - apollo/overseer/wrongness
   - apollo/projections/classroom
-last_verified: 2026-08-12
+last_verified: 2026-08-13
 stub: false
 ---
 
