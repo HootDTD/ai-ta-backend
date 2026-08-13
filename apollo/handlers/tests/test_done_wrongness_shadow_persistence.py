@@ -22,6 +22,7 @@ claims, one per section below:
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -396,3 +397,22 @@ async def test_a_resolved_node_is_never_carried_forward_as_a_challenge(monkeypat
         turn_index=0,
     )
     assert seen["budget"].carried_challenges == ()
+
+
+# --------------------------------------------------------------------------- #
+# 5. G-L1c needs a denominator, not just a count                              #
+# --------------------------------------------------------------------------- #
+
+
+async def test_the_summary_line_carries_the_over_fire_denominator(monkeypatch, caplog):
+    """G-L1c gates the dark bake on "`wrongness != none` on **< 10% of ledger
+    rows**". `findings=` is the numerator; without the total the ratio cannot be
+    computed from the shadow corpus at all — and producing that corpus is the
+    only reason level 1 exists. The default ledger is one tagged entry plus one
+    clean one, so the honest reading is 1 of 2."""
+    with caplog.at_level(logging.INFO, logger="apollo.handlers.done"):
+        await wf.run_done(monkeypatch, level=1)
+
+    line = next(m for m in caplog.messages if m.startswith("apollo_wrongness_summary"))
+    assert "findings=1" in line
+    assert "ledger_entries=2" in line

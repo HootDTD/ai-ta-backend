@@ -521,11 +521,16 @@ def _evaluate_wrongness(
             finding.kind,
         )
     _LOG.info(
-        "apollo_wrongness_summary attempt_id=%s findings=%d nodes=%d corroborated=%d "
-        "would_ceiling=%d level=%d",
+        # `ledger_entries` is G-L1c's DENOMINATOR: the gate is "wrongness != none
+        # on < 10% of ledger rows", and `findings` alone is the numerator. Without
+        # the total, the over-fire monitor cannot be computed from the shadow
+        # corpus at all — which is the one thing level 1 exists to produce.
+        "apollo_wrongness_summary attempt_id=%s findings=%d nodes=%d ledger_entries=%d "
+        "corroborated=%d would_ceiling=%d level=%d",
         attempt_id,
         len(findings),
         len({f.node_id for f in findings}),
+        len(tally_findings),
         len({f.node_id for f in findings if f.corroborated}),
         len({f.node_id for f in findings if f.would_ceiling}),
         level,
