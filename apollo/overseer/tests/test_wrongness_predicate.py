@@ -19,7 +19,7 @@ import ast
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -321,19 +321,59 @@ def test_would_ceiling_requires_corroboration() -> None:
 
 @pytest.mark.parametrize(
     ("last_asked_turn", "claim_turn", "expected"),
-    [(1, 2, True), (0, 2, True), (2, 2, False), (4, 2, False), (None, 2, False)],
+    [(1, 2, True), (0, 2, True), (2, 2, True), (4, 2, True), (None, 2, False)],
 )
-def test_apollo_elicited_requires_last_asked_before_correction_turn(
+def test_apollo_elicited_requires_apollo_to_have_asked_about_the_node(
     last_asked_turn: int | None, claim_turn: int, expected: bool
 ) -> None:
     """Decision 7 amendment: the XP bonus only ever rewards a contradiction
-    APOLLO drew out. 'Assert something wrong unprompted, then fix it' is a
-    farmable path and earns nothing — the population that would farm it is
-    demonstrably present in the prod export."""
+    APOLLO drew out. 'Assert something wrong on a node Apollo never asked about,
+    then fix it' is a farmable path and earns nothing — the population that would
+    farm it is demonstrably present in the prod export.
+
+    The guard is a PRESENCE test, not `last_asked_turn < claim_turn`; see
+    `select_findings`' docstring for why the turn comparison is both
+    unimplementable as spec'd (no correction turn on the ledger) and
+    self-defeating (a later probe flips it off). Only `None` — Apollo never
+    asked — is not elicited."""
     finding = _one(
         [_Row(last_asked_turn=last_asked_turn, evidence=[_entry(turn_id=claim_turn)])],
     )
     assert finding.apollo_elicited is expected
+
+
+def test_a_probe_AFTER_the_wrong_claim_still_counts_as_elicited() -> None:
+    """THE regression this exists for. The ordinary challenge loop is: student
+    errs at turn 2, L2a sorts the contested node to the front, Apollo probes it
+    at turn 3, the student fixes it. `last_asked_turn` (3) is then GREATER than
+    the claim turn (2).
+
+    Under the old `last_asked_turn < turn_id` reading that made the finding
+    NOT elicited, so the decision-7 bonus never paid in exactly the population
+    level 2's probe priority exists to create — the more Apollo elicited, the
+    less likely the flag was true. The bonus must fire here."""
+    finding = _one(
+        [_Row(last_asked_turn=3, evidence=[_entry(turn_id=2)])],
+        second_reader={NODE: {"contradicted": True, "corrected_later": True}},
+    )
+
+    assert (finding.resolved, finding.apollo_elicited) == (True, True)
+
+
+def test_a_non_mapping_second_reader_never_raises() -> None:
+    """`second_reader` is `coverage["wrongness"]` — LLM-shaped data that
+    `validate_coverage_verdict` admits as an optional key without checking its
+    type. A raise here lands on the grade path AFTER the Done claim is taken,
+    so the module's totality contract has to cover its own argument."""
+    for garbage in ([], "none", 7, None):
+        findings = wrongness.select_findings(
+            findings=wrongness.ledger_findings([_Row(evidence=[_entry()])]),
+            credits={NODE: 1.0},
+            second_reader=cast(Any, garbage),
+            graded_node_ids={NODE},
+            raw_score=100,
+        )
+        assert [f.corroborated for f in findings] == [False]
 
 
 def test_resolved_and_elicited_is_the_xp_bonus_shape() -> None:

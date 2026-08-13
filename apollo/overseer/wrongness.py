@@ -288,12 +288,46 @@ def select_findings(
     Ungraded-type nodes are still REPORTED (they feed the narrative and the
     teacher surfaces) and can never be corroborated: moving them silently widens
     the graded denominator, which is P1.4's decision, not this one.
+
+    **``apollo_elicited`` is a presence test, deliberately.** Spec §8 D7 writes
+    the guard as ``last_asked_turn < correction_turn``, but **the correction turn
+    is not on the ledger**: the shipped correction signal is the second reader's
+    ``corrected_later`` BOOLEAN, which carries no turn, and a correction that
+    leaves the sticky ``conflicting`` state in place appends no new tally entry
+    to compare against either. Two candidate substitutes, and why this one:
+
+    * ``last_asked_turn < turn_id`` ("asked before the wrong CLAIM") reads
+      stricter, but ``last_asked_turn`` is a mutable row-level LAST value, so
+      the ordinary challenge loop — student errs, Apollo probes the contested
+      node, student fixes it — pushes it PAST the claim turn and flips the guard
+      to ``False``. It is defeated by exactly the L2a probe priority that exists
+      to produce corrections, which would leave decision 7 an unpayable no-op in
+      its target population.
+    * ``last_asked_turn is not None`` ("Apollo asked about this node at all
+      during this attempt") is MONOTONE — no later probe can turn it off — and
+      still blocks the named farm, which is the node Apollo never asked about.
+      It also equals the spec's comparison wherever that comparison is
+      reachable: a node the tally relabels ``understood`` on correction leaves
+      ``probeable_graded`` (`selection.build_selection_policy`), so Apollo
+      cannot ask about it after the correction.
+
+    Magnitude is bounded independently of which reading wins: the bonus is +10,
+    deduped once per user x problem x node against ``prior_wrongness_findings``,
+    and XP only ever goes up.
     """
     selected: list[WrongnessFinding] = []
+    # The whole map, not only its values: `second_reader` is
+    # `coverage["wrongness"]`, i.e. LLM-shaped data that `validate_coverage_verdict`
+    # admits as an OPTIONAL key without inspecting its type. A model returning
+    # `"wrongness": []` or a bare string would make `.get` an AttributeError —
+    # raised on the grade path AFTER the Done claim is taken. This module's
+    # contract is that every function is total; that has to include its own
+    # argument, not just the rows inside it.
+    readers: Mapping[str, Any] = second_reader if isinstance(second_reader, Mapping) else {}
     for finding in findings:
         if finding.wrongness == WRONGNESS_NONE:
             continue
-        reader = second_reader.get(finding.node_id)
+        reader = readers.get(finding.node_id)
         row: Mapping[str, Any] = reader if isinstance(reader, Mapping) else {}
         contradicted = _is_true(row.get("contradicted"))
         corrected_later = _is_true(row.get("corrected_later"))
@@ -314,12 +348,11 @@ def select_findings(
                 corroborated=corroborated,
                 resolved=corrected_later,
                 # Decision 7: the bonus only ever rewards a contradiction Apollo
-                # ELICITED. Asserting something wrong unprompted and then fixing
-                # it is a farmable path and earns nothing.
-                apollo_elicited=(
-                    finding.last_asked_turn is not None
-                    and finding.last_asked_turn < finding.turn_id
-                ),
+                # ELICITED. Asserting something wrong on a node Apollo never
+                # asked about and then fixing it yourself is a farmable path and
+                # earns nothing. See the note below on why this is a presence
+                # test and not a turn comparison.
+                apollo_elicited=finding.last_asked_turn is not None,
                 would_ceiling=(
                     corroborated and not corrected_later and raw_score > CEILING_UNCORRECTED
                 ),

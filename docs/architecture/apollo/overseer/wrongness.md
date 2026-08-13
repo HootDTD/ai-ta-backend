@@ -86,9 +86,18 @@ Producer → ledger → here → consumers:
   requires `NOT corrected_later`). The decision-7 XP bonus population is
   therefore `resolved AND apollo_elicited` — a caller that asks for
   `corroborated AND resolved` gets the empty set, always.
-- **`apollo_elicited` = `last_asked_turn is not None and last_asked_turn <
-  turn_id`** — the decision-7 amendment. "Assert something wrong unprompted,
-  then fix it" is a farmable path and earns nothing.
+- **`apollo_elicited` = `last_asked_turn is not None`** — the decision-7
+  amendment, as a PRESENCE test. "Assert something wrong on a node Apollo never
+  asked about, then fix it" is the farmable path, and it earns nothing. Spec §8
+  D7 writes the guard as `last_asked_turn < correction_turn`, but no correction
+  turn exists on the ledger (the second reader returns a `corrected_later`
+  bool), and comparing against the CLAIM turn instead is self-defeating:
+  `last_asked_turn` is a mutable row-level LAST value, so the ordinary L2a
+  challenge loop (student errs → contested node probed → student fixes it)
+  pushes it past the claim and turns the guard off in exactly the population
+  the bonus exists to reward. The presence test is monotone and equals the
+  spec's comparison wherever that comparison is reachable — a corrected node
+  leaves `probeable_graded`, so Apollo cannot ask about it afterwards.
 - **No double jeopardy.** INTERACTION5's flat 0.5 aside cap lands below
   `MIN_CORROBORATED_CREDIT`, so a capped node can never also carry a
   corroborated finding.

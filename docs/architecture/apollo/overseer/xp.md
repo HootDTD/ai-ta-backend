@@ -51,9 +51,11 @@ level/threshold payload the FE renders directly.
   what keeps `persistence/progress_repo.apply_xp`'s "raises on a negative
   delta" guard un-trippable. This module does arithmetic only: **every**
   eligibility rule is the caller's (`handlers/done.py` at
-  `APOLLO_WRONGNESS_LEVEL >= 3`) — the finding must be corroborated,
-  Apollo-elicited (`last_asked_turn < correction_turn`, so a self-asserted then
-  self-corrected claim is not farmable), and not already awarded for this
+  `APOLLO_WRONGNESS_LEVEL >= 3`) — the finding must be **`resolved`** (never
+  `corroborated`; S2′ makes those two mutually exclusive, so a `corroborated`
+  bonus population is always empty), Apollo-elicited (`last_asked_turn is not
+  None` — see [wrongness](wrongness.md) for why the spec's
+  `< correction_turn` is a presence test in code), and not already awarded for this
   user × problem × node in an earlier attempt (`persistence/attempt_history.
   prior_wrongness_findings`). Dedup of DISTINCT keys inside one call is the
   function's only guard. The bonus is DARK until that caller ships: nothing

@@ -76,9 +76,16 @@ async def test_self_asserted_then_corrected_earns_no_bonus(monkeypatch):
     assert delta == _BASE_XP
 
 
-async def test_a_claim_made_before_the_probe_earns_no_bonus(monkeypatch):
-    """`last_asked_turn` AFTER the quoted turn means Apollo had not yet asked
-    when the student made the claim — the correction was not elicited."""
+async def test_a_probe_after_the_claim_still_earns_the_bonus(monkeypatch):
+    """`last_asked_turn` (9) AFTER the quoted claim turn (4) is the ORDINARY
+    challenge loop, not a farm: the student errs, L2a sorts the contested node
+    to the front, Apollo probes it, the student fixes it. Decision 7 exists to
+    celebrate exactly this.
+
+    An earlier reading compared the two turn numbers and denied the bonus here,
+    which made the level-2 probe priority defeat the level-3 bonus — the more
+    Apollo elicited, the less the guard believed it had. See
+    `wrongness.select_findings` for why the guard is a presence test."""
     delta = await _xp_delta(
         monkeypatch,
         level=3,
@@ -86,7 +93,7 @@ async def test_a_claim_made_before_the_probe_earns_no_bonus(monkeypatch):
         wrongness_map=wf.second_reader(corrected_later=True),
     )
 
-    assert delta == _BASE_XP
+    assert delta == _BASE_XP + _BONUS
 
 
 async def test_bonus_deduped_across_prior_attempts_same_node(monkeypatch):
