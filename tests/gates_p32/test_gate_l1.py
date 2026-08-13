@@ -155,11 +155,17 @@ async def test_gate_G_L1_the_only_level_1_effect_is_the_internal_record(monkeypa
     assert level0.wrongness_candidates is None
     assert level1.wrongness_candidates == {"eq1": "Pressure rises wherever the flow speeds up."}
     assert level0.shadow_misconceptions is None
+    # `shadow: true` is W3-B's write-side marker (wave-2 F-20): the array is
+    # persisted from level 1 for the two INTERNAL readers, so every entry below
+    # `LEVEL_SURFACE` is stamped and the teacher readers exclude it. Pinned as
+    # part of the whole-entry shape, not separately, so a future author cannot
+    # drop the marker and keep this gate green.
     assert level1.shadow_misconceptions == [
         {
             "canonical_key": "eq1",
             "resolved": False,
             "evidence_span": "Pressure rises wherever the flow speeds up.",
+            "shadow": True,
         }
     ]
 

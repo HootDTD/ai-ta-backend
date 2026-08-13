@@ -22,7 +22,7 @@ only their own rung.
 | ``topics[].misconceptions`` / artifact array / scorecard ``watch_out`` | >= 3 | ``GateRun`` |
 | XP bonus (+10, D7) | >= 3 | ``GateRun.xp_delta`` |
 | ceiling ``min(raw, 84)`` + ``misconception_dock`` | == 4 | ``GateRun.topic_score`` |
-| teacher surfaces exclude shadow entries, populate at >= 3 | >= 3 | **xfail — W3-B lands the filter** |
+| teacher surfaces exclude shadow entries, populate at >= 3 | >= 3 | ``performance_insights.teacher_visible_misconception`` |
 
 **Amendment recorded (wave-2 §2, and the orchestrator ruling this task was given).**
 S10 as written says the persisted array starts at level 3. It does not: L2c reads
@@ -32,7 +32,10 @@ would silently no-op at the rung it ships at. The array is therefore written fro
 level **1**, internal-only — the served payload, the scorecard and
 ``topics[].misconceptions`` all still start at 3. The ruling adds a ``shadow:
 true`` marker below level 3 so teacher surfaces can exclude the internal
-population; that marker is W3-B's and is xfail'd here until it lands.
+population. W3-B landed that marker (``done.SHADOW_MISCONCEPTION_KEY``) and both
+teacher readers (``classroom._TEACHER_VISIBLE_MISCONCEPTION_SQL`` and its pure
+twin ``performance_insights.teacher_visible_misconception``), so the row below is
+asserted STRICTLY as of wave-3 integration — it is no longer an xfail.
 
 The **allowlist** axis is the INTERACTION5 pairing: an ``INTERACTION_CONCEPTS``
 that does not name this problem's concept forces the WHOLE ladder to 0 at every
@@ -47,7 +50,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from apollo.handlers import done
 from apollo.handlers.tests import _wrongness_fixtures as wf
+from apollo.overseer import wrongness
+from apollo.projections.performance_insights import teacher_visible_misconception
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import controller
 from apollo.smart_questions.unified import TallyState
@@ -285,24 +291,33 @@ async def test_flag_matrix_every_rung_is_a_superset_of_the_one_below(monkeypatch
     assert active == expected
 
 
-@pytest.mark.xfail(
-    reason="W3-B lands the `shadow: true` marker + the teacher-surface filter",
-    strict=False,
-)
-@pytest.mark.parametrize("level", [1, 2, 3])
+@pytest.mark.parametrize("level", [1, 2, 3, 4])
 async def test_flag_matrix_teacher_surfaces_exclude_shadow_entries(monkeypatch, level):
-    """ORCHESTRATOR RULING (wave 2/3), not yet in the spec: the persisted
+    """ORCHESTRATOR RULING (wave 2/3), not in the spec text: the persisted
     ``grader_payload -> 'misconceptions'`` array carries ``"shadow": true`` below
     level 3, so ``classroom.top_misconceptions`` — a live SQL LATERAL with no
-    level predicate — can exclude the internal population and keep populating at
+    level predicate — excludes the internal population and keeps populating at
     >= 3 as S10 says.
 
     Without the marker the aggregate lights up at level >= 1 and counts resolved
     findings too (wave-2 F-20). Teacher-only and human-gated, but a deviation
     from S10 either way.
+
+    Asserted through the REAL reader rather than a re-spelled predicate, so this
+    row of the matrix moves if and only if what a teacher can see moves. Below
+    level 3 the marker is present and every entry is invisible; at >= 3 the key
+    is ABSENT (not ``False``) — which is exactly why both readers test
+    ``IS DISTINCT FROM 'true'`` / ``_marked_true`` rather than equality, and why
+    every pre-P3.2 row, which carries neither key, still counts.
     """
     run = await run_gate_done(monkeypatch, level=level)
     entries = run.shadow_misconceptions or []
+    visible = [entry for entry in entries if teacher_visible_misconception(entry)]
 
     assert entries
-    assert all(entry.get("shadow") is (level < 3) for entry in entries)
+    if level < wrongness.LEVEL_SURFACE:
+        assert all(entry.get(done.SHADOW_MISCONCEPTION_KEY) is True for entry in entries)
+        assert visible == []
+    else:
+        assert all(done.SHADOW_MISCONCEPTION_KEY not in entry for entry in entries)
+        assert visible == [entry for entry in entries if not entry["resolved"]]
