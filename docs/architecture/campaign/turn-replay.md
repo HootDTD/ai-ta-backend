@@ -144,6 +144,13 @@ kinds. `test_jsonl_row_schema_is_the_p31_contract` pins both key sets.
   question that was never asked, so a gated turn measures *gating*, never grade
   movement. Attempt 083 is the named case — do not claim the gate "kills 83".
 
+- **A node's first ask MINTS its opportunity row before charging**, mirroring
+  `controller.plan_next_question`. Skipping the mint skipped the charge, which
+  under-counted `questions_asked` and left `last_asked_turn` `None` — making
+  `apollo_elicited` structurally False and the decision-7 XP population
+  UNREPLAYABLE (an L3 arm would report a bonus delta of 0 by construction, not
+  by measurement).
+
 ## Related
 
 - [campaign/transcript-replay](transcript-replay.md) (the grading core and the

@@ -59,6 +59,7 @@ from apollo.smart_questions.controller import (
     _apply_tally_updates,
     _build_tally_state,
     _ladder_inputs,
+    _new_opportunity_row,
     _write_opportunity_audit,
 )
 from apollo.smart_questions.selection import SelectionPolicy, build_selection_policy
@@ -335,7 +336,8 @@ def _charge_ask(row: Any, *, turn_index: int, fallback_served: bool) -> None:
     there is no database here. The rule is copied verbatim from its call site: a
     degenerate ``fallback_served`` turn on a node never probed before spends no
     probe; every later serve on the same node charges. ``last_asked_turn`` is
-    stamped either way.
+    stamped either way — and the CALLER must mint an absent row first, exactly
+    as ``plan_next_question`` does, or a node's first ask is never charged at all.
     """
     if not fallback_served or row.asked_turn is not None:
         row.times_asked = int(row.times_asked or 0) + 1
@@ -487,8 +489,25 @@ async def _replay(
         )
         if result.action == "ask" and result.target_node_id is not None:
             target = by_id.get(result.target_node_id)
-            if target is not None:
-                _charge_ask(target, turn_index=turn_id, fallback_served=result.fallback_served)
+            if target is None:
+                # MINT, exactly like `plan_next_question` does before it charges
+                # (`controller.py`, the `if target_row is None` branch). Skipping
+                # the mint made the harness skip the charge on every node's FIRST
+                # ask — the row only appeared later, via `_write_opportunity_audit`,
+                # already past this turn's bookkeeping. That under-counted
+                # `questions_asked` and left `last_asked_turn` None, which in turn
+                # made `wrongness.select_findings`' `apollo_elicited` structurally
+                # False, so the decision-7 XP population was UNREPLAYABLE: the
+                # campaign's L3 arm would report a bonus delta of 0 by construction
+                # rather than by measurement.
+                target = _new_opportunity_row(
+                    course_id=_REPLAY_COURSE_ID,
+                    session_id=_REPLAY_SESSION_ID,
+                    attempt_id=_REPLAY_ATTEMPT_ID,
+                    node_id=result.target_node_id,
+                )
+                by_id[result.target_node_id] = target
+            _charge_ask(target, turn_index=turn_id, fallback_served=result.fallback_served)
         _write_opportunity_audit(
             session,
             course_id=_REPLAY_COURSE_ID,

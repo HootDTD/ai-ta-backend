@@ -64,7 +64,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -595,6 +595,21 @@ class HttpxApolloClient:
         return resp.json()
 
 
+def _iter_misconceptions(grader_payload: Any) -> list[Mapping[str, Any]]:
+    """The object-shaped entries of `grader_payload -> 'misconceptions'`.
+
+    `grader_payload` is free-form JSONB with no CHECK constraint, so the array
+    can hold anything a past or future writer put there. Non-object entries are
+    skipped rather than fed to `teacher_visible_misconception`, which would
+    `AttributeError` on a bare string — matching the `isinstance(..., Mapping)`
+    guard `performance_insights.load_repeated_misconception_pairs` applies to
+    the same column."""
+    entries = grader_payload.get("misconceptions") if isinstance(grader_payload, Mapping) else None
+    if not isinstance(entries, list):
+        return []
+    return [entry for entry in entries if isinstance(entry, Mapping)]
+
+
 class SqlArtifactReader:
     """Real :class:`ArtifactReader` — reads the two ``GradingRun`` rows
     (``role="canonical"``/``role="pair"``) a Done-click persisted, straight
@@ -637,7 +652,7 @@ class SqlArtifactReader:
             "edge_ledger": row.edge_ledger,
             "misconceptions": [
                 entry
-                for entry in grader_payload.get("misconceptions", []) or []
+                for entry in _iter_misconceptions(grader_payload)
                 if teacher_visible_misconception(entry)
             ],
             "clarification_trace": grader_payload.get("clarification_trace", []),
