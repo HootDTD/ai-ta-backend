@@ -624,3 +624,57 @@ def test_compare_cli_emits_a_report(tmp_path: Path) -> None:
     args = turn_replay.build_parser().parse_args(["--compare", str(left), str(right)])
     (payload,) = turn_replay._run_cli(args)
     assert json.loads(payload)["score_delta"]["signed_mean"] == -10.0
+
+
+# --------------------------------------------------------------------------- #
+# Arm selection (the ladder, read through the production single reader)        #
+# --------------------------------------------------------------------------- #
+
+
+def test_wrongness_candidates_are_built_only_from_level_1(monkeypatch) -> None:
+    """The at-Done half of an arm. `None` (never `{}`) below level 1 and when
+    nothing was flagged, because an empty map still changes the adjudicator's
+    prompt — the same rule `done.py` follows."""
+    fixture = _fixture("attempt_124_conflicting_graded")
+    graph = fixture.problem.to_kg_graph(attempt_id=-1)
+    graded = next(
+        node.node_id for node in graph.nodes if node.node_type in turn_replay._GRADED_NODE_TYPES
+    )
+    rows = [
+        transcript_replay.LedgerRow(
+            reference_node_id=graded,
+            state="understood",
+            evidence=[
+                {
+                    "turn_id": 0,
+                    "quote": "a verbatim claim",
+                    "wrongness": "contradicts_material",
+                    "contradicts": "the reference says otherwise",
+                    "kind": "reversal",
+                }
+            ],
+        )
+    ]
+
+    assert turn_replay._wrongness_candidates(rows, graph=graph, level=0) is None
+    assert turn_replay._wrongness_candidates(rows, graph=graph, level=1) == {
+        graded: "a verbatim claim"
+    }
+    # An untagged ledger flags nothing, so the map collapses back to `None`.
+    clean = [transcript_replay.LedgerRow(reference_node_id=graded, state="understood")]
+    assert turn_replay._wrongness_candidates(clean, graph=graph, level=1) is None
+
+
+def test_the_level_flag_selects_the_arm_through_the_env(monkeypatch) -> None:
+    """`--level N` WRITES `APOLLO_WRONGNESS_LEVEL`; everything downstream still
+    READS it through `wrongness.effective_wrongness_level`, so an arm is chosen
+    exactly the way a deployment chooses a rung. Omitting the flag leaves the
+    ambient environment alone."""
+    monkeypatch.setenv("APOLLO_WRONGNESS_LEVEL", "1")
+    with patch.object(turn_replay, "run", return_value=()) as ran:
+        turn_replay._run_cli(turn_replay.build_parser().parse_args(["--level", "2"]))
+        assert turn_replay.os.environ["APOLLO_WRONGNESS_LEVEL"] == "2"
+
+        turn_replay._run_cli(turn_replay.build_parser().parse_args([]))
+        assert turn_replay.os.environ["APOLLO_WRONGNESS_LEVEL"] == "2"
+    assert ran.call_count == 2
