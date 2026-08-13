@@ -534,44 +534,57 @@ def _evaluate_wrongness(
 
 
 def _shadow_misconceptions(
-    corroborated: Mapping[str, wrongness.WrongnessFinding],
+    findings: Sequence[wrongness.WrongnessFinding],
     *,
     level: int,
 ) -> list[dict[str, Any]] | None:
-    """The level-1/2 SHADOW persistence of the corroborated findings, or ``None``.
+    """The INTERNAL wrongness record persisted from level 1, or ``None`` at 0.
 
-    Spec §2.3 level 1 is "produce + persist + shadow-log", and L2c
-    (cross-attempt question memory) is a level-**2** feature that reads what an
-    EARLIER attempt persisted, via
-    ``attempt_history.prior_wrongness_findings`` over
-    ``grader_payload -> 'misconceptions'``. Deriving that array only from
-    ``topics[].misconceptions`` — which is populated at level >= 3 — therefore
-    starves L2c: at level 2 every prior attempt wrote ``[]``, so
-    ``controller._select_carried`` has nothing to carry and the rung silently
-    no-ops at the level it ships at.
+    This is the row's ``grader_payload -> 'misconceptions'`` array, and it is
+    deliberately NOT the array the student is served (`artifact_writer` keeps
+    those separate). It exists because two later readers need a record the
+    served array cannot give them:
 
-    So levels 1-2 persist the array explicitly here. It is written to the DB
-    column ONLY (`artifact_writer._artifact_row`): the served payload keeps
-    deriving from the ONE scored result, so the student's scorecard *Watch out*
+    1. **L2c cross-attempt question memory** is a level-**2** rung that reads
+       what an EARLIER attempt persisted, through
+       ``attempt_history.prior_wrongness_findings``. Deriving the array only
+       from ``topics[].misconceptions`` — populated at level >= 3 — starves it:
+       at level 2 every prior attempt wrote ``[]``, so
+       ``controller._select_carried`` has nothing to carry.
+    2. **The decision-7 XP dedup** ("once per user x problem x node") subtracts
+       those same prior rows. The corroborated set can never contain a resolved
+       finding (S2′ requires NOT ``corrected_later``), so an array of
+       corroborated findings alone records nothing about the population the
+       bonus actually pays — and the guard degrades to "always empty", making
+       +10 re-earnable on every best-grade-wins retry. Persisting the
+       ``resolved AND apollo_elicited`` nodes is what closes that loop.
+
+    Hence BOTH populations, node-keyed (corroborated wins the slot — it is the
+    node's latest-evidence rung by S2′) and sorted, at every level >= 1. Keys
+    are exactly the three every reader consumes; ``kind`` is deliberately absent
+    because ``TopicMisconception`` has no such field and the served array must
+    stay the same shape.
+
+    Nothing student-facing moves: the served payload, the scorecard *Watch out*
     list, ``topics[].misconceptions`` and the narrative all still start at level
-    3 exactly as W2-B built them. ``None`` at level 0 (byte-identical) and at
-    level >= 3 (one producer, the scored result).
-
-    Keys are exactly the three every reader consumes (`canonical_key`,
-    `resolved`, `evidence_span`); node-keyed and therefore already deduped past
-    F-06's per-evidence-entry rungs, and sorted so the array is deterministic.
-    ``kind`` is deliberately absent: ``TopicMisconception`` has no such field, so
-    carrying it here would make the level-2 and level-3 arrays different shapes.
+    3 exactly as W2-B built them, and this array is a SUPERSET of the served one
+    that agrees with it entry for entry on the corroborated nodes.
     """
-    if not (wrongness.LEVEL_PRODUCE <= level < wrongness.LEVEL_SURFACE):
+    if level < wrongness.LEVEL_PRODUCE:
         return None
+    keep: dict[str, wrongness.WrongnessFinding] = {
+        finding.node_id: finding for finding in findings if finding.corroborated
+    }
+    for finding in findings:
+        if finding.node_id not in keep and finding.resolved and finding.apollo_elicited:
+            keep[finding.node_id] = finding
     return [
         {
             "canonical_key": finding.node_id,
             "resolved": finding.resolved,
-            "evidence_span": finding.quote or None,
+            "evidence_span": finding.quote,
         }
-        for finding in sorted(corroborated.values(), key=lambda f: f.node_id)
+        for finding in sorted(keep.values(), key=lambda f: f.node_id)
     ]
 
 
@@ -1179,7 +1192,11 @@ async def _grade_claimed_attempt(
     # `getattr` (as `_course_evidence_safe`'s call already does) because this is
     # the FIRST unconditional read of `concept_id` on this path — INTERACTION5's
     # is short-circuited by its flag — and a problem shim without the attribute
-    # must degrade to "outside the pilot", never raise inside the grade path.
+    # must not raise inside the grade path. Note the degradation is to "no
+    # concept", not to "outside the pilot": `interaction_allowed_for_concept`
+    # admits `None` whenever the allowlist is EMPTY, so a shim still gets the
+    # ambient level. That is the same behaviour INTERACTION2/5 already have, and
+    # a pilot run scopes itself by SETTING `INTERACTION_CONCEPTS`.
     level = wrongness.effective_wrongness_level(getattr(problem, "concept_id", None))
     graded_node_ids: frozenset[str] = frozenset()
     tally_findings: tuple[wrongness.LedgerFinding, ...] = ()
@@ -1538,10 +1555,11 @@ async def _grade_claimed_attempt(
         rubric=rubric,
         latency_ms=artifact_latency_ms,
         topic_score=topic_score,
-        # Internal-only at levels 1-2: the persisted array feeds the NEXT
-        # attempt's L2c carried challenge; the returned payload (and so the
-        # scorecard rendered below) is untouched. See `_shadow_misconceptions`.
-        shadow_misconceptions=_shadow_misconceptions(corroborated, level=level),
+        # Internal-only from level 1: the persisted array feeds the NEXT
+        # attempt's L2c carried challenge and the decision-7 XP dedup; the
+        # returned payload (and so the scorecard rendered below) is untouched.
+        # See `_shadow_misconceptions`.
+        shadow_misconceptions=_shadow_misconceptions(wrongness_findings, level=level),
     )
     if canonical_payload is not None:
         student_response["scorecard"] = render_scorecard(canonical_payload)

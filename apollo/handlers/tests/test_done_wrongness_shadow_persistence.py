@@ -284,19 +284,19 @@ async def test_level_0_persists_no_array(monkeypatch):
 
 
 @pytest.mark.parametrize("level", [3, 4])
-async def test_level_3_and_above_keep_one_producer(monkeypatch, level: int):
-    """At level >= 3 the served payload already carries the array, derived from
-    the ONE scored result. Passing a second copy here would let the persisted
-    column and the served topics disagree — so the override goes back to `None`.
-    """
+async def test_the_persisted_array_agrees_with_the_served_one_at_level_3(monkeypatch, level: int):
+    """The persisted column is a SUPERSET of the served array, and the two agree
+    entry for entry on the corroborated nodes — the shape that lets the internal
+    record carry the XP-dedup rows without the student ever seeing them."""
     _out, started = await wf.run_done(monkeypatch, level=level, real_artifact=True)
     kwargs = _artifact_kwargs(started)
-    assert kwargs["shadow_misconceptions"] is None
-
+    persisted = kwargs["shadow_misconceptions"]
     payload = await started["write_artifacts"].side_effect(None, **kwargs)
+
     assert payload["misconceptions"] == [
         {"canonical_key": _NODE, "resolved": False, "evidence_span": wf.MATERIAL_QUOTE}
     ]
+    assert persisted == payload["misconceptions"]
 
 
 async def test_level_2_persists_the_same_array_as_level_1(monkeypatch):
@@ -317,3 +317,82 @@ async def test_nothing_corroborated_persists_an_empty_array_not_none(monkeypatch
         monkeypatch, level=1, wrongness_map=wf.second_reader(contradicted=False)
     )
     assert _artifact_kwargs(started)["shadow_misconceptions"] == []
+
+
+# --------------------------------------------------------------------------- #
+# 4. The XP-dedup loop — the record the bonus subtracts must actually exist    #
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_paid_bonus_writes_the_row_that_suppresses_the_next_one(monkeypatch):
+    """The decision-7 guard is "once per user x problem x node", enforced by
+    subtracting `prior_wrongness_findings`. Corroborated findings can NEVER be
+    resolved (S2′ requires NOT corrected_later), so an array of corroborated
+    findings alone records nothing about the population the bonus pays — the
+    subtraction would always be empty and +10 would be re-earnable on every
+    best-grade-wins retry. The paid node is therefore persisted too."""
+    _out, started = await wf.run_done(
+        monkeypatch,
+        level=3,
+        wrongness_map=wf.second_reader(corrected_later=True),
+        real_artifact=True,
+    )
+    assert started["apply_xp"].await_args.kwargs["xp_delta"] == 20  # base 10 + bonus 10
+
+    persisted = _artifact_kwargs(started)["shadow_misconceptions"]
+    assert persisted == [
+        {"canonical_key": _NODE, "resolved": True, "evidence_span": wf.MATERIAL_QUOTE}
+    ]
+    # ...and that row, read back through the S9 projection, is exactly what the
+    # NEXT attempt subtracts. Retry pays base XP only.
+    _out2, retry = await wf.run_done(
+        monkeypatch,
+        level=3,
+        wrongness_map=wf.second_reader(corrected_later=True),
+        prior_findings=tuple(
+            {
+                "canonical_key": row["canonical_key"],
+                "evidence_span": row["evidence_span"],
+                "resolved": json.dumps(row["resolved"]) == "true",
+                "attempt_id": 7,
+            }
+            for row in persisted
+        ),
+        real_artifact=True,
+    )
+    assert retry["apply_xp"].await_args.kwargs["xp_delta"] == 10  # base only, bonus suppressed
+
+
+async def test_a_resolved_node_is_never_carried_forward_as_a_challenge(monkeypatch):
+    """The same row must NOT become an L2c challenge — the student already fixed
+    that claim. `_select_carried` skips anything `resolved`."""
+    _out, started = await wf.run_done(
+        monkeypatch,
+        level=3,
+        wrongness_map=wf.second_reader(corrected_later=True),
+        real_artifact=True,
+    )
+    persisted = _artifact_kwargs(started)["shadow_misconceptions"]
+    assert [row["resolved"] for row in persisted] == [True]
+
+    monkeypatch.setenv("APOLLO_WRONGNESS_LEVEL", "2")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    db = _DB([_Row(_NODE)], _as_sql_projection(persisted))
+
+    seen: dict[str, Any] = {}
+
+    async def evaluate(**kwargs: Any) -> UnifiedQuestionResult:
+        seen.update(kwargs)
+        return UnifiedQuestionResult((), "done", None, None, None)
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    await controller.plan_next_question(
+        db,
+        course_id=3,
+        attempt_id=99,
+        session_id=5,
+        problem=_problem(),
+        transcript=[("student", "Same claim as last time.")],
+        turn_index=0,
+    )
+    assert seen["budget"].carried_challenges == ()

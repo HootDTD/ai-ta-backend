@@ -44,11 +44,14 @@ no dedicated columns in the target DDL, so they nest under the catch-all
   gates: the returned payload becomes the student's scorecard *Watch out* list
   (wrongness level >= 3), while the persisted column is what the NEXT attempt
   reads back via `persistence/done-write-linkage`'s `prior_wrongness_findings`
-  for L2c cross-attempt question memory — a level-**2** rung. `done.py`
-  therefore passes the corroborated array explicitly at levels 1-2 and `None`
-  at level 0 (byte-identical) and level >= 3 (the scored result stays the one
-  producer). Always stored as a LIST: both readers unroll it with
-  `jsonb_array_elements`.
+  for L2c cross-attempt question memory (a level-**2** rung) and by the
+  decision-7 XP dedup. `done.py` therefore passes an explicit array from level
+  1 up — corroborated findings PLUS the `resolved AND apollo_elicited` nodes the
+  bonus paid, which the served array can never carry — and `None` only at level
+  0, where the payload's own empty array keeps the row byte-identical. The
+  persisted array is a SUPERSET of the served one and agrees with it entry for
+  entry on the corroborated nodes. Always stored as a LIST: both readers unroll
+  it with `jsonb_array_elements`.
 
 ## Invariants & gotchas
 

@@ -1068,9 +1068,12 @@ async def compute_transcript_coverage(
 ) -> CoverageVerdict:
     """Verdict-only twin of :func:`compute_transcript_coverage_with_spans`.
 
-    ``wrongness_candidates`` (P3.2) is accepted here too so the offline replay
-    (``campaign/transcript_replay.py``) can exercise the same corroboration lane
-    production runs; ``None`` reproduces today's prompts, schema and verdict."""
+    ``wrongness_candidates`` (P3.2) is accepted here too so the two twins stay
+    signature-compatible; ``None`` reproduces today's prompts, schema and
+    verdict. **No production or replay caller remains** — `handlers/done` and
+    `campaign/transcript_replay.grade_replay` both take the spans variant, and
+    the offline corroboration lane is exercised through that. This survives as
+    the tested verdict-only contract."""
     verdicts = await _adjudicate_all_graded(
         transcript,
         reference_graph,
