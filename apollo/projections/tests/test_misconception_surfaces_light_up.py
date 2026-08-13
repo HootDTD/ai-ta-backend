@@ -127,6 +127,19 @@ def test_the_shadow_marker_key_is_spelled_the_same_everywhere():
     )
 
 
+def test_the_campaign_artifact_reader_reuses_the_pure_predicate():
+    """The FOURTH reader of that column, and the only one outside `apollo/`:
+    `campaign.cast.student.SqlArtifactReader._row_to_payload` reassembles the
+    SERVED artifact payload from the persisted row, so it must drop exactly what
+    the served array never had. It IMPORTS `teacher_visible_misconception`
+    rather than re-spelling the keys — a campaign is a measuring instrument, and
+    an instrument that disagrees with the surface it measures is worse than no
+    instrument. Pinned by identity, so a local re-implementation fails here."""
+    from campaign.cast import student
+
+    assert student.teacher_visible_misconception is pi.teacher_visible_misconception
+
+
 def test_the_s9_cross_attempt_read_is_marker_agnostic():
     """S9 powers the LEVEL-2 carried challenge and the XP dedup, both of which
     read what levels 1-2 wrote. It must therefore INCLUDE shadow-marked entries

@@ -69,6 +69,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from apollo.projections.performance_insights import teacher_visible_misconception
 from campaign.cast.personas.schema import PersonaAttempt
 
 _LOG = logging.getLogger(__name__)
@@ -613,13 +614,32 @@ class SqlArtifactReader:
 
     @staticmethod
     def _row_to_payload(row: Any) -> dict[str, Any]:
+        """Reassemble the SERVED artifact payload from the persisted row.
+
+        ``misconceptions`` needs a filter, and only that key does. Apollo P3.2
+        made ``grader_payload -> 'misconceptions'`` a SUPERSET of the array the
+        student was served: from wrongness level 1 it also carries the internal
+        record two later readers need (``shadow``-marked entries below level 3,
+        and ``resolved`` ones the decision-7 XP dedup subtracts) — see
+        ``apollo.handlers.done._shadow_misconceptions``. Replaying the raw
+        column would hand the campaign an array no Done ever served, silently
+        inflating misconception counts at every level >= 1.
+
+        ``teacher_visible_misconception`` is IMPORTED, not re-spelled: it is the
+        exact predicate that reconstructs the served array (drop ``shadow``,
+        drop ``resolved``), and one authority means a campaign reading and a
+        teacher surface can never disagree about what was served."""
         grader_payload = row.grader_payload or {}
         return {
             "grader_used": row.grader_used,
             "versions": row.version_details,
             "node_ledger": row.node_ledger,
             "edge_ledger": row.edge_ledger,
-            "misconceptions": grader_payload.get("misconceptions", []),
+            "misconceptions": [
+                entry
+                for entry in grader_payload.get("misconceptions", []) or []
+                if teacher_visible_misconception(entry)
+            ],
             "clarification_trace": grader_payload.get("clarification_trace", []),
             "scores": row.score_details,
             "abstention": row.abstention_details,
