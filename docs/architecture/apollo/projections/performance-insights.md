@@ -125,3 +125,12 @@ rows to the pure folders above.
   negative duration. No ordering, best-wins selection, or score expression
   anywhere is keyed on a timestamp — re-ordering by time would silently change
   served grades and break teacher/student grade parity.
+- **`load_repeated_misconception_pairs` pre-filters in SQL**
+  (`_TEACHER_VISIBLE_MISCONCEPTION_SQL`, byte-identical to `classroom`'s twin
+  and pinned equal by test) and the pure `teacher_visible_misconception` still
+  decides on every row returned. At wrongness levels 1-2 every persisted entry
+  is `shadow`-marked, so without the predicate the loader would ship the whole
+  course's misconception corpus on each teacher page load and discard all of
+  it. The LATERAL is `jsonb_typeof(...) = 'array'`-guarded; there is no time
+  window, on purpose — a repeat is a fact about a student's whole history at
+  one problem, not a recent-activity signal.

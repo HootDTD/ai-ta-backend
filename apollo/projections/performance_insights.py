@@ -73,6 +73,22 @@ REPEATED_MISCONCEPTION_MIN_ATTEMPTS = 2
 # are pinned equal by ``tests/test_misconception_surfaces_light_up.py``.
 SHADOW_MISCONCEPTION_KEY = "shadow"
 
+# The SQL twin of ``teacher_visible_misconception``, byte-identical to
+# ``classroom._TEACHER_VISIBLE_MISCONCEPTION_SQL`` (pinned equal by test). It is
+# a PRE-FILTER, not the authority: the pure function still decides on every row
+# the loader returns, so the two can only ever agree or the SQL be stricter.
+#
+# Why it is worth having twice. At wrongness levels 1-2 EVERY persisted entry is
+# shadow-marked, so without this predicate the loader ships the whole course's
+# misconception corpus over the pooler on every teacher page load and then
+# discards 100% of it in Python. Those are precisely the rungs this feature
+# ships at. `IS DISTINCT FROM 'true'` (not `!= 'true'`) because `->>` on an
+# absent key is NULL: every pre-P3.2 row, which carries neither key, still counts.
+_TEACHER_VISIBLE_MISCONCEPTION_SQL = f"""
+                  AND (misc ->> '{SHADOW_MISCONCEPTION_KEY}') IS DISTINCT FROM 'true'
+                  AND (misc ->> 'resolved') IS DISTINCT FROM 'true'
+"""
+
 
 class ProblemAgg(NamedTuple):
     """One (student, problem) pair's graded-attempt shape."""
@@ -595,13 +611,15 @@ async def load_repeated_misconception_pairs(
     by ``jsonb_typeof(...) = 'array'`` so a malformed free-form payload yields
     zero rows instead of raising. Entries arrive as whole JSONB objects and the
     visibility/repeat decision is made by the PURE fold above — this coroutine
-    owns no logic, exactly like the other two loaders. Course-scoped and
-    canonical-role only; roster-bounded, never a cross-course export."""
+    owns no logic, exactly like the other two loaders; the SQL only PRE-FILTERS
+    the invisible population (see ``_TEACHER_VISIBLE_MISCONCEPTION_SQL``), which
+    is 100% of it at wrongness levels 1-2. Course-scoped and canonical-role
+    only; roster-bounded, never a cross-course export."""
     rows = (
         (
             await db.execute(
                 text(
-                    """
+                    f"""
                 SELECT g.user_id AS user_id, g.problem_id AS problem_id,
                        g.attempt_id AS attempt_id, misc AS entry
                 FROM internal.grading_runs g,
@@ -615,6 +633,7 @@ async def load_repeated_misconception_pairs(
                 WHERE g.course_id = :search_space_id
                   AND g.role = 'canonical'
                   AND misc ->> 'canonical_key' IS NOT NULL
+                  {_TEACHER_VISIBLE_MISCONCEPTION_SQL}
                 """
                 ),
                 {"search_space_id": search_space_id},

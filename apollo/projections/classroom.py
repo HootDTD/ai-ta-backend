@@ -72,8 +72,8 @@ _LEDGER_STATUSES_WITH_REFERENCE_KEY = ("credited", "misconception", LEDGER_STATU
 # ``->>`` as TEXT, so an absent key is NULL and ``IS DISTINCT FROM 'true'``
 # KEEPS it — every pre-P3.2 row stays counted.
 SHADOW_MISCONCEPTION_KEY = "shadow"
-_TEACHER_VISIBLE_MISCONCEPTION_SQL = """
-                  AND (misc ->> 'shadow') IS DISTINCT FROM 'true'
+_TEACHER_VISIBLE_MISCONCEPTION_SQL = f"""
+                  AND (misc ->> '{SHADOW_MISCONCEPTION_KEY}') IS DISTINCT FROM 'true'
                   AND (misc ->> 'resolved') IS DISTINCT FROM 'true'
 """
 
@@ -135,6 +135,13 @@ async def struggle_signals(
     most frequently asserted misconceptions. Pure aggregation via
     ``jsonb_array_elements`` lateral expansion over ``node_ledger`` /
     ``grader_payload -> 'misconceptions'`` -- no new inference.
+
+    ``top_misconceptions``'s LATERAL is `jsonb_typeof(...) = 'array'`-guarded,
+    matching `persistence.attempt_history.prior_wrongness_findings` and
+    `performance_insights.load_repeated_misconception_pairs`: `grader_payload`
+    is free-form JSONB with no CHECK, and Apollo P3.2 is what starts writing
+    that key, so a non-array value from any writer must yield zero rows rather
+    than 500 the whole teacher dashboard.
 
     ``top_misconceptions`` counts only TEACHER-VISIBLE misconception entries
     (see ``_TEACHER_VISIBLE_MISCONCEPTION_SQL``): the array is persisted from
@@ -264,7 +271,13 @@ async def struggle_signals(
                     misc ->> 'canonical_key' AS key,
                     count(*) AS n
                 FROM internal.grading_runs a,
-                     LATERAL jsonb_array_elements(a.grader_payload -> 'misconceptions') AS misc
+                     LATERAL jsonb_array_elements(
+                         CASE
+                             WHEN jsonb_typeof(a.grader_payload -> 'misconceptions') = 'array'
+                             THEN a.grader_payload -> 'misconceptions'
+                             ELSE '[]'::jsonb
+                         END
+                     ) AS misc
                 WHERE a.course_id = :search_space_id
                   AND a.role = 'canonical'
                   AND a.created_at >= :window_start

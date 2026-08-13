@@ -100,9 +100,38 @@ def test_classroom_top_misconceptions_sql_shape_matches_artifact_keys():
     Read off the SOURCE, because the SQL is inline in the coroutine: a rename on
     either side breaks this instead of silently emptying a teacher panel."""
     source = inspect.getsource(classroom.struggle_signals)
-    assert "jsonb_array_elements(a.grader_payload -> 'misconceptions')" in source
+    assert "a.grader_payload -> 'misconceptions'" in source
     assert "misc ->> 'canonical_key' AS key" in source
     assert "canonical_key" in _ARTIFACT_MISCONCEPTION_KEYS
+
+
+def test_every_misconceptions_lateral_is_jsonb_typeof_guarded():
+    """`grader_payload` is free-form JSONB with NO check constraint, and P3.2 is
+    what starts writing this key — so a non-array value from any writer must
+    yield zero rows, not 500 the teacher dashboard. All THREE readers unroll it
+    the same guarded way; this fails if a fourth is added without the guard."""
+    sources = {
+        "classroom": inspect.getsource(classroom.struggle_signals),
+        "performance_insights": inspect.getsource(pi.load_repeated_misconception_pairs),
+        "attempt_history": attempt_history._PRIOR_WRONGNESS_FINDINGS_SQL.text,
+    }
+    for name, sql in sources.items():
+        assert "jsonb_typeof" in sql, f"{name} unrolls the array unguarded"
+        assert "'array'" in sql, name
+
+
+def test_the_two_teacher_visible_sql_predicates_are_identical():
+    """The SQL twin is duplicated in both teacher readers (one is a pure
+    projection, one a loader) for the same import-chain reason the key spelling
+    is. Duplicated text that must agree is exactly what a test is for — and the
+    Python authority `teacher_visible_misconception` still decides on every row
+    either query returns, so the SQL can only ever be a pre-filter."""
+    assert pi._TEACHER_VISIBLE_MISCONCEPTION_SQL == classroom._TEACHER_VISIBLE_MISCONCEPTION_SQL
+    assert pi._TEACHER_VISIBLE_MISCONCEPTION_SQL in inspect.getsource(
+        pi.load_repeated_misconception_pairs
+    ) or "_TEACHER_VISIBLE_MISCONCEPTION_SQL" in inspect.getsource(
+        pi.load_repeated_misconception_pairs
+    )
 
 
 def test_classroom_excludes_shadow_and_resolved_entries():
