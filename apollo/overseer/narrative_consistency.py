@@ -56,7 +56,11 @@ import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from apollo.overseer.topic_narrative import humanize_key, nameable_misconception_keys
+from apollo.overseer.topic_narrative import (
+    PRAISE_FLOOR,
+    humanize_key,
+    nameable_misconception_keys,
+)
 from apollo.overseer.topic_score import MAX_REFERENCE_TEXT_REVEALS, TopicCredit
 
 _LOG = logging.getLogger(__name__)
@@ -64,7 +68,12 @@ _LOG = logging.getLogger(__name__)
 # Below this credit the adjudicator did not find sufficient evidence, so prose
 # may not credit the student for it. Mirrors the adjudication anchor set
 # {0, 0.6, 0.85, 1.0} (P1.1): 0.6 is the lowest anchor that means "landed".
-PRAISE_FLOOR = 0.6
+#
+# Re-exported, not declared: since study-prep 2026-08-23 the topic line renders a
+# status WORD instead of a percentage, so `topic_narrative._credit_status` has to
+# split credited from uncredited at the exact same credit this gate does. It owns
+# the literal (this module already imports from it — the reverse would be a
+# cycle); the public name stays here, where every caller already reads it.
 
 # The gate's own sentences quote the topic's display name — which IS the
 # reference solution's wording — so they are a reveal channel exactly like D2's

@@ -7,7 +7,7 @@ related:
   - apollo/overseer/diagnostic
   - apollo/overseer/topic-score
   - apollo/overseer/grounding
-last_verified: 2026-08-12
+last_verified: 2026-08-23
 stub: false
 ---
 
@@ -30,6 +30,13 @@ structured-JSON completion.
   display fallback the P2.1 consistency gate needs (see
   [diagnostic](diagnostic.md)). Canonical keys otherwise appear only as
   response identifiers.
+- `PRAISE_FLOOR` — the credit at or above which prose may claim the student
+  earned a topic (0.6, the lowest adjudication anchor that means "landed").
+  DECLARED here since 2026-08-23 and re-exported by
+  [diagnostic](diagnostic.md)'s `narrative_consistency`, which stays the public
+  name: once the topic line renders a status WORD instead of a percentage, the
+  prompt and the post-generation gate have to split credited from uncredited at
+  the identical credit, and two literals that must agree are one literal.
 - `nameable_misconception_keys(topics) -> frozenset[str]` + `MAX_NARRATIVE_REVEALS`
   — 2026-08-12 (P3.2 L3): THE shared reveal allocator, read by this builder and
   the consistency gate.
@@ -38,7 +45,8 @@ structured-JSON completion.
 
 `diagnostic.generate_diagnostic` calls the builder with the `TopicScoreResult`,
 the problem text, and (2026-07-14 grounding fix) the verbatim student transcript.
-Each topic renders as one line with its status, whole-number percent, a quoted
+Each topic renders as one line with its credit status WORD (no number since
+2026-08-23 — see the numeric-grade invariant below), a quoted
 `You said:` line when it carries a gated per-attempt `evidence_span`, and any
 nameable misconception's evidence + resolved flag. The canonical key is included
 solely for copying into the response mapping. The system message
@@ -49,12 +57,37 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
 
 ## Invariants & gotchas
 
-- **`SCORE CONSISTENCY` is a base-prompt rule (P2.1, 2026-08-07), not a flag.**
-  A topic below 60% may not be praised, a topic at 0% must have the missing idea
-  named in its own note, and the headline/next step follow the same rule. This
-  deliberately re-froze `_TOPIC_SYSTEM_PROMPT` — the byte-identical contracts
-  below are relative to the flag-off build, not to the pre-P2.1 text. The prompt
-  is the soft half; [diagnostic](diagnostic.md)'s gate enforces it in code.
+- **NO NUMBER THAT STANDS FOR A GRADE reaches student-facing prose
+  (study-prep 2026-08-23, user ruling).** Two independent controls:
+  1. **the prompt (primary).** The topic line ends at the status word — the
+     trailing `— {pct}%` is gone — and the system prompt forbids any score,
+     percentage, points, "out of 100" or letter grade outright, while explicitly
+     welcoming SUBJECT-MATTER numbers so the rule cannot be read as "avoid
+     numbers". No percentage is supplied anywhere, so there is nothing to recite.
+  2. **`sanitize_narrative` (backstop).** See the scrub invariant below.
+  Grading semantics are untouched: scores, credits, artifacts and grader payloads
+  are unchanged, and `band` beside `letter` is [rubric](rubric.md)'s business.
+- **`CREDIT CONSISTENCY` is a base-prompt rule (P2.1, 2026-08-07; renamed from
+  `SCORE CONSISTENCY` 2026-08-23), not a flag.** Its JOB is unchanged — prose may
+  never praise a topic the ledger did not credit (pilot complaint c2) — only its
+  currency moved from percentages to status words: `covered` is the only credited
+  status, `partially covered` and `missing` may not be praised, `missing` must
+  have the idea named in its own note, and the headline/next step follow the same
+  rule. This deliberately re-froze `_TOPIC_SYSTEM_PROMPT` — the byte-identical
+  contracts below are relative to the flag-off build, not to the pre-P2.1 text.
+  The prompt is the soft half; [diagnostic](diagnostic.md)'s gate enforces it in
+  code.
+- **The status word is chosen by CREDIT, not by `TopicCredit.status`
+  (`_credit_status`).** `topic_score._credit_for_node` derives status from the
+  coverage verdict and credit from `procedure_scores` independently, so `covered`
+  at 0.4 credit and `missing` at 0.7 credit are both reachable. While the line
+  carried the percentage, that number kept the prompt and the code gate keyed on
+  the same quantity; with it gone the WORD has to carry the same meaning, so
+  `credit >= PRAISE_FLOOR` → `covered`, `> 0` → `partially covered`, `== 0` →
+  `missing`, and `unprobed` passes through untouched (it is not a credit verdict).
+  The vocabulary is still `_status_label`'s — no parallel one was invented — and
+  a parametrized property test pins word ⇔ `narrative_consistency._is_uncredited`
+  across the whole credit range.
 - **Reference wording is never attributed to the student** unless it appears
   verbatim in a quoted `You said:` line; a topic with no gated span is credited
   in general terms only. Topic descriptions are the reference solution's wording,
@@ -98,7 +131,31 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
   W1-B/W2-A idiom) and telling the narrator a flagged topic keeps its credit. No
   rendered line → BOTH messages byte-identical: every attempt below level 3.
 - **`sanitize_narrative` is belt-and-suspenders:** it strips canonical keys and
-  ledger-shaped scoring tokens (`credit 0.80`, `weight`, `dock`) via regex while
-  deliberately preserving whole-number percentages; never drops legitimate prose
-  like `weight = mg`. It is also why the level-4 ceiling is leak-proof for free —
-  and the number never enters the prompt at all, so it cannot be stated anyway.
+  ledger-shaped scoring tokens (`credit 0.80`, `weight`, `dock`) via regex, never
+  dropping legitimate prose like `weight = mg`. It is also why the level-4
+  ceiling is leak-proof for free — and the number never enters the prompt at all,
+  so it cannot be stated anyway.
+- **The grade scrub is PRECISION over recall (2026-08-23).** It used to preserve
+  whole-number percentages deliberately; it now removes them, plus `NN/100`,
+  `NN out of 100`, and numbers in a score/grade collocation (`scored NN`,
+  `earned NN points`, `your score is NN`, `an NN grade`, `worth NN points`). It
+  never touches a BARE INTEGER — a step, problem, section or equation reference,
+  a year, a quantity, a computed value all survive — and `basis points`,
+  `percentage points` and `the index fell 200 points` are left alone, because a
+  scrub that mangles physics or business content is worse than the residual leak
+  the prompt already closes. Removing a percentage is cheap even when it was
+  content: "the 12% growth rate" degrades to "the growth rate". Prose repairs
+  (dangling conjunction, orphan punctuation, function-word-only sentence) run
+  ONLY when a scrub fired, so untouched text is returned byte-identical; a field
+  that was nothing BUT a grade statement goes empty and the gate's fallback
+  headline/next step takes over. The pattern inventory with its negatives is
+  `apollo/overseer/tests/test_topic_narrative_numbers.py`.
+- **QUOTED SPANS ARE EXEMPT from the grade scrub.** Everything the narrative
+  quotes is the student's own words (the prompt allows a quote only from a
+  verbatim `You said` span and [diagnostic](diagnostic.md) enforces exact
+  equality in code), so a number inside `"…"` is subject-matter content, not the
+  system disclosing a grade — and scrubbing it would silently mangle, or via the
+  exact-match gate silently DROP, a legitimate grounded quote. An unterminated
+  quote fails CLOSED (the tail is scrubbed). The `quote` FIELD arrives without
+  its delimiters, so `_gate_topic_quote` still drops rather than serves a span
+  the scrub would rewrite.

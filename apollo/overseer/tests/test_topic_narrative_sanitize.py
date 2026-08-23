@@ -2,8 +2,12 @@
 
 The gate is the belt-and-suspenders layer under the prompt fix: even if the
 LLM leaks ledger internals (canonical keys, credit/weight decimals, dock
-values), the served narrative must not contain them. Percentages the topic
-list already shows are allowed and must survive.
+values), the served narrative must not contain them.
+
+Study-prep 2026-08-23 (user ruling): numeric GRADES are now scrubbed too —
+percentages the topic list used to show are no longer exempt. This file keeps
+the ledger-internals contract; the grade-number pattern inventory (positives,
+negatives, and the quotes exemption) lives in ``test_topic_narrative_numbers``.
 """
 
 from __future__ import annotations
@@ -47,9 +51,17 @@ def test_no_empty_parens_or_dangling_punctuation_left_behind():
     assert " ." not in out and " ," not in out
 
 
-def test_percentages_are_preserved():
+def test_percentages_are_no_longer_preserved():
+    """Reversed by the study-prep ruling (2026-08-23). This test used to assert
+    the opposite — percentages were the topic list's own numbers and were kept
+    deliberately. Students now see a proficiency band and never a number, so a
+    percentage in the prose contradicts the report they are looking at. The
+    full pattern inventory lives in ``test_topic_narrative_numbers.py``.
+    """
     text = "You earned 80% on the causality topic and 100% on the definition."
-    assert sanitize_narrative(text, canonical_keys=_KEYS) == text
+    out = sanitize_narrative(text, canonical_keys=_KEYS)
+    assert "80%" not in out and "100%" not in out
+    assert "causality topic" in out and "definition" in out
 
 
 def test_inline_scoring_fragments_without_parens_are_stripped():

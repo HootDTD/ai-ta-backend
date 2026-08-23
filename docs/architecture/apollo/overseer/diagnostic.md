@@ -12,7 +12,7 @@ related:
   - apollo/overseer/aside-penalty
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-08-12
+last_verified: 2026-08-23
 stub: false
 ---
 
@@ -36,6 +36,7 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
   -> feedback` — pure, total, idempotent verdict-consistency gate (P2.1);
   `PRAISE_FLOOR = 0.6`, `FALLBACK_HEADLINE` and `MAX_REFERENCE_NAME_QUOTES`
   (imported from [topic-score](topic-score.md)) are its public constants.
+  `PRAISE_FLOOR` is RE-EXPORTED, not declared, since 2026-08-23: [topic-narrative](topic-narrative.md) now needs the same literal to pick a topic line's status word, so it owns it (the reverse import would be a cycle) while the public name stays here. Behaviour unchanged — the P3.2 gate digest is byte-identical.
 
 ## Data flow
 
@@ -73,9 +74,8 @@ stripping empties gets a neutral "did not count toward your grade" line instead,
 and such a topic is never chosen as the next-step subject.
 
 `course_evidence` (INTERACTION2, supplied by `handlers/done.py` from
-[grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY.
-The axis prompt is the soft-fail fallback and stays frozen — grounding must not
-change the shape of a degraded narrative.
+[grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY; the
+axis prompt is the frozen soft-fail fallback, so grounding never changes the shape of a degraded narrative.
 With `INTERACTION3` enabled and the problem concept allowed by
 `INTERACTION_CONCEPTS`, `done.py` passes successful structured feedback to
 `remediation.py`. A non-null session grounding bundle is reused exclusively;

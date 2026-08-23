@@ -6,9 +6,15 @@ and can hallucinate claims beyond the coverage map (staging session 43: the
 narrative invented "expression involving ∫sin x dx", never taught). This
 module builds the REPLACEMENT prompt whenever a ``TopicScoreResult`` is
 available: it is built entirely from an already-computed result — every
-topic's status and whole-number percentage and every misconception's evidence
-span + correction state are named explicitly in the prompt. Internal scoring
-details never reach the narrator.
+topic's credit STATUS WORD and every misconception's evidence span +
+correction state are named explicitly in the prompt. Internal scoring details
+never reach the narrator.
+
+Study-prep 2026-08-23 (user ruling): a student sees a proficiency BAND, never a
+number, so no number that stands for a grade may reach student-facing prose. The
+prompt is the primary control — it renders status words instead of percentages
+and forbids numeric grades outright — and :func:`sanitize_narrative` is the
+deterministic backstop for score-shaped phrasing the model invents anyway.
 
 Pure module: no IO, no LLM call. ``build_topic_narrative_prompt`` returns the
 ``(system, user)`` message pair; the caller (``diagnostic.py``) is responsible
@@ -46,7 +52,7 @@ EVIDENCE AND ACCURACY:
   actually said. NEVER expand a topic's name into a detailed explanation the transcript does not
   contain — if you cannot point to where the student taught a credited topic, credit it in one
   plain clause by its topic name, without attributing specific claims to the student.
-- The supplied statuses and percentages stay authoritative: never use the transcript to argue a
+- The supplied statuses stay authoritative: never use the transcript to argue a
   topic deserved more or less credit than the assessment shows.
 - Each topic's description is the REFERENCE solution's wording: it says what an ideal
   explanation contains, not what the student said. The student's own words appear only in the
@@ -57,25 +63,33 @@ EVIDENCE AND ACCURACY:
 - Treat a covered topic as a genuine strength. For a partial topic, distinguish what the
   explanation established from what still needs to be made explicit. Treat a missing topic as
   an opportunity to extend the explanation, never as proof that the student does not know it.
-- Synthesize; do not inventory the rubric. Mention at most two of the most important gaps, chosen
-  by lowest percentage. Combine closely related gaps into one idea when possible.
+- Synthesize; do not inventory the rubric. Mention at most two of the most important gaps, taken
+  from the "missing" topics first and then the "partially covered" ones. Combine closely related
+  gaps into one idea when possible.
 - Discuss a misconception only when one is supplied. Quote or closely paraphrase its evidence,
   state plainly why it needs attention, and acknowledge it if marked corrected. If none are
   supplied, say nothing at all about misconceptions, correctness, or the absence of errors.
 - NEVER expose internal identifiers outside the canonical_key JSON fields. Never expose scoring
   machinery, decimal credit/weight/dock values, or the words "ledger" and "rubric" in prose.
-  Percentages are available for prioritization but should be omitted unless one is genuinely
-  useful to the student.
+- NEVER put a grade into words as a number. No score, no percentage, no points, no "out of 100",
+  no letter grade — not for one topic, not for the whole explanation, not even approximately or
+  as a range. The student is shown a proficiency level, never a number, so a number standing in
+  for a grade contradicts what they are looking at. Numbers that belong to the SUBJECT MATTER —
+  a quantity, a date, a step or equation number, a value the student worked out — are welcome
+  and must not be avoided.
 - Use inline math delimited ONLY as `$...$` — never `\\( \\)`, never `\\[ \\]`, and never a
   bare LaTeX command outside a `$...$` span.
 
-SCORE CONSISTENCY — every sentence must match the topic percentages supplied below:
-- A topic below 60% was NOT credited. Never praise it, and never say you explained, showed,
-  covered, connected, contrasted, or captured it. Say plainly what Apollo did not get from the
-  teaching and what to add next time.
-- A topic at 0% must have the missing idea named explicitly in that topic's note.
-- Keep credit statements for topics at 60% or above. The headline and the next step follow the
-  same rule: neither may celebrate a topic that scored below 60%.
+CREDIT CONSISTENCY — every sentence must match the status word on the topic lines supplied below:
+- "covered" is the only status that was credited. Those are the topics you may praise, and the
+  only ones you may say the student explained, showed, connected, contrasted, or captured.
+- "partially covered" was NOT credited: part of the idea reached Apollo and the rest did not.
+  Never praise it on its own — in the same sentence, say what is still missing and what to make
+  explicit next time.
+- "missing" was NOT credited at all. Name the missing idea explicitly in that topic's note and
+  say plainly what Apollo did not get from the teaching.
+- The headline and the next step follow the same rule: neither may celebrate a topic that is not
+  "covered".
 
 RESPONSE SHAPE:
 - Return valid JSON only, with exactly these fields:
@@ -89,7 +103,8 @@ RESPONSE SHAPE:
 - A quote may be non-null ONLY when that topic supplies a "You said" span, and it must copy that
   entire span exactly, character for character. Otherwise quote must be null. Never quote from
   the transcript or invent, shorten, normalize, or combine a quote.
-- Do not include recap text, headings, bullets, the score, or the letter grade."""
+- Do not include recap text, headings, bullets, the score, the letter grade, or any number
+  standing in for a grade."""
 
 # INTERACTION5 — appended to the system prompt ONLY when at least one supplied
 # topic is Hoot-assisted, so the unassisted build stays byte-identical. The note
@@ -126,7 +141,7 @@ COURSE MATERIALS (only when a "Course materials" section is supplied):
   sentence, never invent or reword a marker, and never cite an excerpt you did not use.
 - The excerpts are NOT the student's words. Never put excerpt text in a "quote" field, never
   present an excerpt's content as something the student said, and never let an excerpt change the
-  supplied statuses or percentages."""
+  supplied statuses. A number inside an excerpt is subject-matter content, never a grade."""
 
 # P3.2 L3 (2026-08-12) — appended to the system prompt ONLY when at least one
 # topic line actually renders a misconception, so every build that names none
@@ -152,14 +167,60 @@ FLAGGED CLAIMS (only when a topic line carries a "Misconception" entry):
 - A flagged claim is the student's wording, not the reference solution's. Never present it as
   correct, and never place it in a "quote" field — the quote rule is unchanged, so a quote
   still comes only from that topic's verbatim "You said" span and is otherwise null.
-- A topic can be credited AND carry a flagged claim. Keep the credit statement its percentage
+- A topic can be credited AND carry a flagged claim. Keep the credit statement its status word
   supports and add the flagged-claim note beside it; never withdraw credit in prose."""
+
+
+# The credit at or above which prose may claim the student earned a topic.
+# Mirrors the adjudication anchor set {0, 0.6, 0.85, 1.0} (P1.1): 0.6 is the
+# lowest anchor that means "landed".
+#
+# Declared HERE since study-prep 2026-08-23, not in ``narrative_consistency``
+# (which re-exports it and stays the public name): once the topic line renders a
+# status WORD instead of a percentage, the prompt and the post-generation gate
+# have to split credited from uncredited at the identical point, and two
+# literals that must agree are one literal in the module both sides import.
+PRAISE_FLOOR = 0.6
 
 
 def _status_label(status: str) -> str:
     return {"covered": "covered", "partial": "partially covered", "missing": "missing"}.get(
         status, status
     )
+
+
+def _credit_status(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid import cycle noise
+    """The status the topic line renders — chosen by CREDIT, not by ``status``.
+
+    Study-prep 2026-08-23: the percentage used to leave the prompt (``covered —
+    40%``), and the old ``SCORE CONSISTENCY`` block keyed its "never praise this"
+    rule on that number. With the number gone the status word is the ONLY signal
+    left, so it has to carry the same meaning the number did — otherwise the
+    prompt and ``narrative_consistency`` (which strips praise at
+    ``PRAISE_FLOOR`` == 0.6 of CREDIT) can disagree and the student reads praise
+    that the gate then deletes, or a "you never taught this" line on a topic the
+    gate happily credits.
+
+    ``TopicCredit.status`` cannot carry it: ``topic_score._credit_for_node``
+    derives status from the coverage verdict and credit from
+    ``procedure_scores`` INDEPENDENTLY, so ``covered`` at 0.4 credit and
+    ``missing`` at 0.7 credit are both reachable. The vocabulary is
+    :func:`_status_label`'s — no parallel one is invented — but which word a
+    topic gets is decided by the same threshold the code gate uses:
+
+    * ``credit >= PRAISE_FLOOR`` -> ``covered``   (praise is allowed)
+    * ``0 < credit < PRAISE_FLOOR`` -> ``partially covered`` (not credited)
+    * ``credit == 0`` -> ``missing``  (the gate's ``_ZERO_GAP`` case)
+
+    ``unprobed`` is passed through untouched: it means "Apollo never asked",
+    which is neither a credit verdict nor a teaching gap, and the gate gives it
+    its own blame-free treatment.
+    """
+    if topic.status == "unprobed":
+        return "unprobed"
+    if topic.credit >= PRAISE_FLOOR:
+        return "covered"
+    return "partial" if topic.credit > 0.0 else "missing"
 
 
 def humanize_key(key: str) -> str:
@@ -222,10 +283,12 @@ def nameable_misconception_keys(topics: Sequence[TopicCredit]) -> frozenset[str]
 
 def _format_topic_line(topic, *, may_name_misconception: bool) -> str:  # noqa: ANN001 - TopicCredit, avoid import cycle noise
     name = topic.display_name or humanize_key(topic.canonical_key)
-    pct = round(topic.credit * 100)
+    # Study-prep 2026-08-23: the status word, and nothing numeric. The line used
+    # to end `— {pct}%`, which is where every "you scored 72%" in the prose came
+    # from; `_credit_status` makes the word carry the meaning the number carried.
     line = (
         f'- Topic canonical_key="{topic.canonical_key}", name="{name}": '
-        f"{_status_label(topic.status)} — {pct}%"
+        f"{_status_label(_credit_status(topic))}"
     )
     if getattr(topic, "evidence_span", None):
         line += f'\n  * You said: "{topic.evidence_span}"'
@@ -263,8 +326,10 @@ def build_topic_narrative_prompt(
 
     Pure: no IO. ``user`` enumerates every topic (in ``result.topics`` order,
     including the synthetic ``_general`` bucket last, matching
-    ``compute_topic_score``'s own ordering) with its status, whole-number
-    percentage, canonical key (needed only for the structured response), and —
+    ``compute_topic_score``'s own ordering) with its credit status WORD
+    (:func:`_credit_status` — study-prep 2026-08-23 replaced the trailing
+    ``— {pct}%`` so no grade number reaches the narrator at all), its canonical
+    key (needed only for the structured response), and —
     when the topic carries a gated per-attempt
     ``evidence_span`` — a quoted ``You said:`` line of the student's own
     words, plus any attached misconceptions (evidence span + resolved flag).
@@ -385,15 +450,189 @@ _EMPTY_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+[.!?](?=\s|$)")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"[ \t]+([,.;:!?])")
 _MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
 
+# ── numeric-grade scrub (study-prep 2026-08-23, user ruling) ────────────────
+#
+# Students see a proficiency BAND, so a number that stands for a grade may not
+# reach the prose. The PROMPT is the primary control (no percentage is supplied
+# and numeric grades are forbidden outright); this is the deterministic backstop
+# for score-shaped phrasing the model produces anyway.
+#
+# PRECISION OVER RECALL is the design rule: mangled physics or business content
+# is worse than a residual leak, so a bare integer is NEVER touched (it is a
+# step, a problem id, a year, a quantity, a computed value) and only two shapes
+# are removed on sight — a PERCENTAGE, and a number carrying an explicit grade
+# unit. Removing a percentage is cheap even when it was content: "the 12% growth
+# rate" degrades to "the growth rate", which is still a true, grammatical
+# sentence. Removing a bare integer is not: "step 2" degrades to "step".
+_GRADE_NUM = r"\d{1,3}(?:\.\d+)?"
+# A grade unit: the currency itself, never a subject-matter unit.
+# One group, so `{_GRADE_UNIT}?` makes the WHOLE unit optional rather than just
+# its trailing denominator.
+_GRADE_UNIT = (
+    r"(?:(?:%|percent\b|points?\b|pts?\b|marks?\b|/\s*100\b|out of\s+100\b)"
+    r"(?:\s+out of\s+\d{1,3})?)"
+)
+# Trailing scope words a leak habitually carries; swallowed so the residue of a
+# pure score sentence is a bare subject the residue sweep can then drop.
+_GRADE_SCOPE = r"(?:\s+(?:overall|in total|so far|here|today|on this (?:topic|attempt)))?"
+# Determiners in front of a score noun, swallowed for the same reason.
+_GRADE_DET = r"(?:\b(?:your|the|a|an|this|that|its|their|his|her|our)\s+)?(?:overall\s+)?"
+# Verbs strong enough to make even a BARE integer a grade ("you scored 72").
+_STRONG_SCORE_VERB = r"scored|scores|scoring|graded|grades|grading|marked"
+# Verbs that need the unit to disambiguate: "you got 90%" is a grade, "you got 3
+# of the 5 steps" is not.
+_WEAK_SCORE_VERB = (
+    r"earned|earns|earn|received|receives|receive|got|awarded|awards|lost|loses|"
+    r"deducted|docked|worth"
+)
+_GRADE_NOUN = r"score|grade|mark|rating"
+
+_SCORE_FRAME_RES = (
+    # "you scored 72", "graded 84 overall" — strong verb, unit optional.
+    re.compile(
+        rf"\b(?:you(?:'ve|'d| have| had)?\s+)?(?:{_STRONG_SCORE_VERB})\s+"
+        rf"(?:an?|the)?\s*{_GRADE_NUM}\s*{_GRADE_UNIT}?{_GRADE_SCOPE}",
+        re.IGNORECASE,
+    ),
+    # "you earned 18 points", "got 90% here" — weak verb, unit REQUIRED.
+    re.compile(
+        rf"\b(?:you(?:'ve|'d| have| had)?\s+)?(?:{_WEAK_SCORE_VERB})\s+"
+        rf"(?:an?|the)?\s*{_GRADE_NUM}\s*{_GRADE_UNIT}{_GRADE_SCOPE}",
+        re.IGNORECASE,
+    ),
+    # "your score is 72", "overall grade: 84%", "a rating of 70".
+    re.compile(
+        rf"{_GRADE_DET}\b(?:{_GRADE_NOUN})s?\b"
+        rf"\s*(?:of|is|was|sits at|comes to|came out to|stands at|at)?"
+        rf"\s*[:=]?\s*(?:an?|the)?\s*{_GRADE_NUM}\s*{_GRADE_UNIT}?{_GRADE_SCOPE}",
+        re.IGNORECASE,
+    ),
+    # "a 72% score", "an 85 grade" — the same collocation, reversed.
+    re.compile(rf"\b(?:an?|the)?\s*{_GRADE_NUM}\s*{_GRADE_UNIT}?\s*(?:{_GRADE_NOUN})s?\b",
+               re.IGNORECASE),
+    # "18 points out of 25" — a points tally against any denominator.
+    re.compile(rf"\b{_GRADE_NUM}\s*(?:points?|pts?|marks?)\s+out of\s+{_GRADE_NUM}\b",
+               re.IGNORECASE),
+)  # fmt: skip
+
+# A leading connective the token scrub swallows so the number's slot closes
+# cleanly ("a drop of 15%" -> "a drop", not "a drop of"). Copulas are excluded:
+# "the pump is 85% efficient" reads better as "the pump is efficient" than as
+# "the pump efficient".
+_GRADE_LEAD = (
+    r"(?:\b(?:to|at|of|around|about|roughly|nearly|approximately|just|only|above|below)\s+)?"
+)
+_SCORE_TOKEN_RES = (
+    # A percentage, anywhere: the grade currency the report no longer shows.
+    re.compile(rf"{_GRADE_LEAD}\b{_GRADE_NUM}\s*(?:%|percent\b)", re.IGNORECASE),
+    # "72 out of 100" / "72/100" — a denominator of 100 is a grade, not a ratio.
+    re.compile(rf"{_GRADE_LEAD}\b{_GRADE_NUM}\s*(?:/\s*|\s+out of\s+)100\b", re.IGNORECASE),
+)
+
+# `"` and the two curly forms delimit a quoted span. Captured so `re.split`
+# keeps them and the text round-trips exactly when nothing is scrubbed.
+_QUOTE_SPLIT_RE = re.compile('(["“”])')
+
+# Repairs, applied ONLY when something was actually scrubbed, so a clean
+# narrative is still returned byte-identical.
+_DANGLING_CONJ_RE = re.compile(r"\s+\b(?:and|but|or|so|yet)\b\s*(?=[,;])", re.IGNORECASE)
+_DANGLING_CLAUSE_PUNCT_RE = re.compile(r"\s*[:;,]+\s*(?=[.!?])")
+_LEADING_PUNCT_RE = re.compile(r"(?m)^[ \t]*[.,;:!?]+[ \t]*")
+# One sentence, never crossing a paragraph break, for the residue sweep.
+_SENTENCE_SPAN_RE = re.compile(r"[^.!?\n]*[.!?]")
+_RESIDUE_WORD_RE = re.compile(r"[a-z0-9]+")
+# Function words a scrubbed sentence can be left holding. A sentence reduced to
+# nothing but these ("You.", "Your overall.") is scrub debris, not feedback.
+_RESIDUE_WORDS = frozenset(
+    {"a", "also", "an", "and", "are", "as", "at", "be", "been", "but", "d", "down", "for", "from",
+     "here", "in", "is", "it", "its", "just", "of", "on", "only", "or", "out", "overall", "s",
+     "so", "still", "that", "the", "their", "them", "there", "these", "this", "those", "to",
+     "too", "total", "up", "ve", "was", "well", "were", "with", "you", "your"}
+)  # fmt: skip
+
+
+def _scrub_outside_quotes(text: str) -> str:
+    """Apply the grade scrub to every span that is NOT inside a quotation.
+
+    QUOTES ARE EXEMPT — deliberately. Everything the narrative quotes is the
+    STUDENT'S own words: the prompt allows a quote only from a verbatim
+    ``You said`` span, ``diagnostic._gate_topic_quote`` enforces exact equality
+    with that span in code, and a note that quotes inline is quoting the same
+    transcript. A number the student themself said ("I got about 80% of the way
+    there", "the firm scored 72 on the index") is subject-matter content, not the
+    system disclosing a grade, and deleting it would silently mangle — or, via
+    the exact-match gate, silently DROP — a legitimate grounded quote. The
+    residual risk (a model wrapping its own score claim in quotation marks) is
+    accepted: the prompt forbids it, and the alternative loses real quotes on
+    every attempt whose evidence span happens to contain a number.
+
+    An unterminated final span is not a quotation, so it is scrubbed: an odd
+    quote count fails CLOSED rather than exempting the rest of the text.
+    """
+    pieces = _QUOTE_SPLIT_RE.split(text)
+    unbalanced = (len(pieces) // 2) % 2 == 1
+    out: list[str] = []
+    for index, piece in enumerate(pieces):
+        if index % 2:  # the delimiter itself, kept verbatim
+            out.append(piece)
+            continue
+        quoted = (index // 2) % 2 == 1 and not (unbalanced and index == len(pieces) - 1)
+        out.append(piece if quoted else _scrub_grade_numbers(piece))
+    return "".join(out)
+
+
+def _scrub_grade_numbers(span: str) -> str:
+    """Remove grade-shaped numbers from one unquoted span.
+
+    Frames run BEFORE bare tokens so a collocation is removed whole: with the
+    order reversed, ``"you scored 72%"`` would lose ``72%`` and serve the
+    dangling verb ``"you scored"``.
+    """
+    for pattern in _SCORE_FRAME_RES:
+        span = pattern.sub("", span)
+    for pattern in _SCORE_TOKEN_RES:
+        span = pattern.sub("", span)
+    return span
+
+
+def _drop_residue_sentences(cleaned: str, original: str) -> str:
+    """Drop sentences the scrub reduced to nothing but function words.
+
+    A sentence is dropped only when it is function-words-only (or wordless) AND
+    absent from the input verbatim, so genuine short prose ("That's it.") can
+    never be swept away — only debris the scrub itself created ("You.",
+    "Your overall."). A field whose every sentence was a grade statement does go
+    empty: there is no feedback in "You scored 72%." to preserve, and
+    ``narrative_consistency`` substitutes its fallback headline / next step.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        sentence = match.group(0)
+        stripped = sentence.strip()
+        words = set(_RESIDUE_WORD_RE.findall(stripped.lower()))
+        if words and stripped in original:
+            return sentence
+        return "" if words <= _RESIDUE_WORDS else sentence
+
+    return _SENTENCE_SPAN_RE.sub(_replace, cleaned)
+
 
 def sanitize_narrative(text: str, canonical_keys: Sequence[str] = ()) -> str:
-    """Deterministic gate: strip ledger internals from a narrative.
+    """Deterministic gate: strip ledger internals and grade numbers.
 
     Belt-and-suspenders under the prompt fix (2026-07-11 feedback spec §2) —
     the prompt no longer contains canonical keys/weights, but the narrative is
     LLM output, so the served text is scrubbed regardless. Pure + idempotent;
-    returns a new string. Whole-number percentages (the topic list's own
-    numbers) are deliberately preserved.
+    returns a new string.
+
+    Study-prep 2026-08-23 (user ruling — students see a proficiency band, never a
+    number) added the grade scrub: percentages and numbers carrying a grade unit
+    or a score/grade collocation are removed OUTSIDE quoted spans (see
+    :func:`_scrub_outside_quotes`). Bare integers are never touched, so step,
+    problem, section, equation, year and quantity references survive intact.
+
+    The prose repairs at the end run ONLY when a scrub actually fired, so text
+    with nothing to remove is still returned byte-identical.
     """
     cleaned = text
     for key in canonical_keys:
@@ -402,16 +641,25 @@ def sanitize_narrative(text: str, canonical_keys: Sequence[str] = ()) -> str:
         cleaned = re.sub(rf"`?\b{re.escape(key)}\b`?", "", cleaned)
     cleaned = _SCORING_PAREN_RE.sub("", cleaned)
     cleaned = _SCORING_INLINE_RE.sub("", cleaned)
+    cleaned = _scrub_outside_quotes(cleaned)
     cleaned = _EMPTY_PAREN_RE.sub("", cleaned)
     cleaned = _DANGLING_COMMA_RE.sub("", cleaned)
     cleaned = _EMPTY_SENTENCE_RE.sub("", cleaned)
     cleaned = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", cleaned)
     cleaned = _MULTI_SPACE_RE.sub(" ", cleaned)
+    if cleaned.strip() != text.strip():
+        cleaned = _DANGLING_CONJ_RE.sub("", cleaned)
+        cleaned = _DANGLING_CLAUSE_PUNCT_RE.sub("", cleaned)
+        cleaned = _drop_residue_sentences(cleaned, text)
+        cleaned = _LEADING_PUNCT_RE.sub("", cleaned)
+        cleaned = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", cleaned)
+        cleaned = _MULTI_SPACE_RE.sub(" ", cleaned)
     return cleaned.strip()
 
 
 __all__ = [
     "MAX_NARRATIVE_REVEALS",
+    "PRAISE_FLOOR",
     "build_topic_narrative_prompt",
     "humanize_key",
     "nameable_misconception_keys",

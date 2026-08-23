@@ -475,16 +475,24 @@ def test_ceiling_can_never_be_stated_numerically():
 
 # ── levels 0/1/2 inertness ───────────────────────────────────────────────────
 
-# sha256 digests captured on the wave-2 integration head f56a3463, BEFORE this
-# task edited either module. `topics[].misconceptions` is empty at every level
-# below 3 (done.py passes `misconceptions=` only at `LEVEL_SURFACE`), so these
-# pin the ENTIRE served narrative lane for levels 0, 1 and 2. A digest change is
-# a level-0 inertness breach, not a formatting nit.
+# sha256 digests originally captured on the wave-2 integration head f56a3463.
+# `topics[].misconceptions` is empty at every level below 3 (done.py passes
+# `misconceptions=` only at `LEVEL_SURFACE`), so these pin the ENTIRE served
+# narrative lane for levels 0, 1 and 2. A digest change is a level-0 inertness
+# breach, not a formatting nit — RE-CAPTURE ONLY with a deliberate, documented
+# prompt change beside it.
+#
+# RE-CAPTURED 2026-08-23 (study-prep task 2c, the four PROMPT digests only): the
+# user ruling took numeric grades out of every student-facing surface, so the
+# topic line dropped its trailing `— {pct}%` for a status word and the
+# `SCORE CONSISTENCY` block became `CREDIT CONSISTENCY`. That is a change to what
+# the narrator is TOLD, not to what P3.2 does; `gate` is deliberately unchanged
+# from f56a3463, which is the proof `narrative_consistency` was not touched.
 _LEVEL_0_1_2_DIGESTS = {
-    "plain_system": "5219b0420c5dd316cbc3031b32b5d025ee252ce7441bea1084cf44f9e62ae475",
-    "plain_user": "cd03d8e6a484d3f23b3689822fa8082f16081bdacc875591252b653b2a8d834f",
-    "rich_system": "aeaa1dc99b817175b868fb2f8db179dd80abf2a50a2fc72b70aa502874a64126",
-    "rich_user": "fe8fd248e8016a3b10739ab2d8a675ab14771738f40cee2f08ecb5c5778f2d86",
+    "plain_system": "fc1ba0805597c8f8e077ebeff4889ddcc6a49c8ca2d4841ec6125d00e8a300ad",
+    "plain_user": "03c010df9052d9c6ea19e87006dd6433a304d6b857e8e8dab02520b43e7da6c4",
+    "rich_system": "780f8ffa6bbea9be42beb5725d5195c9d230ac8e884060854cce4e5664d33677",
+    "rich_user": "699ec9558971a5326e2b12baa15d2a320c33401abbc03e5d70d0f45f112c4f9c",
     "gate": "ee972e689d38a4c928c7b67a105ff26d62331ae17ce04dd4fb355bb498b1150b",
 }
 
