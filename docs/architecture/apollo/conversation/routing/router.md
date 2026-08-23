@@ -5,12 +5,13 @@ owns:
   - apollo/api.py
   - apollo/__init__.py
 related:
+  - apollo/conversation/handlers/chat-stream
   - apollo/conversation/routing/errors
   - apollo/conversation/routing/auth-deps
   - apollo/conversation/agent/persona-reply
   - apollo/persistence/neo4j-client
   - apollo/provisioning/_index
-last_verified: 2026-08-11
+last_verified: 2026-08-23
 stub: false
 ---
 
@@ -29,7 +30,14 @@ stub: false
 - `GradingInProgressError` → 409 `grading_in_progress` (`grading_in_progress_handler`).
 - Request models: `FromHootRequest`, `SessionCreateRequest`, `ChatRequest`,
   `NextRequest`. `ChatRequest` is `{message: str, ask_hoot: bool = false}`;
-  omitting `ask_hoot` preserves the ordinary teaching-turn contract.
+  omitting `ask_hoot` preserves the ordinary teaching-turn contract. The
+  blocking and streaming chat routes share it verbatim.
+- `chat_stream(...) -> StreamingResponse` — the 2026-08-23 B.1 Tier 1 sibling of
+  `chat`. Adds `Depends(get_turn_session_opener)` (the DETACHED turn's own DB
+  session) and is the only route that `await db.rollback()`s its gate session,
+  so a streaming turn holds one pool slot, not two. Event contract + the
+  disconnect invariant: `handlers/chat-stream`. The blocking `chat` route is
+  UNCHANGED and stays the fallback / kill switch.
 
 ## Data flow
 
@@ -41,6 +49,7 @@ Route → handler → auth dep (owned by `routing/auth-deps`):
 | POST `/sessions` | `init_session_direct` | user + course_member |
 | GET `/sessions/{id}` | `handle_get_session` | session_owner |
 | POST `/sessions/{id}/chat` | `handle_chat` (`message` + optional `ask_hoot`) | session_owner |
+| POST `/sessions/{id}/chat/stream` | `stream_chat_turn` over the same `handle_chat` (SSE) | session_owner |
 | POST `/sessions/{id}/done` | `handle_done` | session_owner |
 | POST `/sessions/{id}/retry` | `handle_retry` | session_owner |
 | POST `/sessions/{id}/next` | `handle_next` (lazy import) | session_owner |
