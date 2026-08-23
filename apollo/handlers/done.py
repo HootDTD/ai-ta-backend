@@ -1576,10 +1576,15 @@ async def _grade_claimed_attempt(
         )
 
     # The student-facing payload is constructed from OLD-path values ONLY,
-    # EXCEPT for `rubric`, which is `served_rubric` — byte-identical to
-    # `rubric` (same object) unless `topic_score` computed successfully, in
-    # which case `overall` is the topic score/letter (spec §3). The shadow
-    # result is NEVER merged into it (WU-4C1).
+    # EXCEPT for `rubric`, which is `served_rubric`. Since the 2026-08-23 band
+    # change that is ALWAYS a new dict — never `rubric` itself — and it differs
+    # from `rubric` in exactly one key: `overall`. Every axis block is carried
+    # over as the SAME object. `overall` is the topic score/letter when
+    # `topic_score` computed (spec §3), the axis-blend overall otherwise, and
+    # carries the additive `band` either way (spec §A.2). The RAW `rubric` —
+    # persisted as `diagnostic_report["rubric"]` and handed to
+    # `write_artifacts` above — is untouched and band-free. The shadow result
+    # is NEVER merged into it (WU-4C1).
     student_response = {
         "rubric": served_rubric,
         "diagnostic_narrative": diagnostic_narrative,
