@@ -50,7 +50,7 @@ from apollo.overseer.misconception import (
 )
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.remediation import add_remediation_reviews
-from apollo.overseer.rubric import compute_rubric
+from apollo.overseer.rubric import band_from_served_overall, compute_rubric, score_to_band
 from apollo.overseer.topic_score import (
     _GRADED_NODE_TYPES,
     TopicScoreResult,
@@ -895,6 +895,39 @@ async def _fence_grade_commit(db: AsyncSession, *, session_id: int) -> bool:
     return result.rowcount > 0
 
 
+def _served_overall_block(score: int, letter: str) -> dict[str, Any]:
+    """The student-facing `overall`: the unchanged score/letter plus `band`.
+
+    Study-prep 2026-08-23 (spec §A.1/§A.2). `band` is ADDITIVE — `letter` stays
+    on the wire for the teacher surfaces, the research corpus, and any client
+    that has not migrated. One builder for both serving branches so the topic-
+    score path and the soft-fail path can never disagree about the shape.
+
+    The band is derived from the score being served on THIS payload, so the two
+    can never contradict each other. Re-serving surfaces (browse, progress, the
+    already-graded Done replay) do not call this — they read the persisted
+    snapshot via `rubric.band_from_served_overall` instead, so a later cut move
+    cannot relabel a grade somebody already saw.
+    """
+    return {"score": score, "letter": letter, "band": score_to_band(score)}
+
+
+def _with_band(overall: Any) -> Any:
+    """The legacy axis-rubric `overall`, plus the additive band.
+
+    The soft-fail branch of serving (topic scoring raised) hands the student the
+    axis-blend overall, and that path must not be the one place a student is
+    served a bandless grade. Purely additive by construction: the incoming dict
+    is spread, never rebuilt, so whatever `compute_rubric` put there survives
+    verbatim — and anything without a usable score (no band to state) is
+    returned UNCHANGED rather than decorated with a fiction.
+    """
+    if not isinstance(overall, dict):
+        return overall
+    band = band_from_served_overall(overall)
+    return overall if band is None else {**overall, "band": band}
+
+
 def _progress_block(envelope: Any) -> dict[str, Any]:
     """The structured progress envelope served on every Done response.
 
@@ -1319,17 +1352,25 @@ async def _grade_claimed_attempt(
     # score/letter while every legacy axis block is carried over UNCHANGED
     # (mid-deploy safety for older UI clients). This builds a NEW dict —
     # `rubric` itself (the object `attempt.diagnostic_report` and
-    # `write_artifacts` below both still receive) is never mutated. A
-    # soft-failed `topic_score` (None) leaves `served_rubric is rubric`
-    # (byte-identical downstream).
+    # `write_artifacts` below both still receive) is never mutated.
+    #
+    # Study-prep 2026-08-23 (spec §A.2): the served `overall` gains an ADDITIVE
+    # `band` beside the unchanged `score`/`letter`. Both branches get it — a
+    # soft-failed topic score must not be the one case where a student is served
+    # a bandless grade — which is why the soft-fail branch now also builds a new
+    # dict instead of aliasing `rubric`. Only `overall` differs from the raw
+    # rubric on that branch; every axis block is the same object, and the RAW
+    # `rubric` (persisted as `diagnostic_report["rubric"]`, handed to
+    # `write_artifacts`, read by the teacher projections) is bit-for-bit
+    # untouched.
     serve_topic_score = topic_score is not None
     if serve_topic_score:
         served_rubric = {
             **rubric,
-            "overall": {"score": topic_score.score, "letter": topic_score.letter},
+            "overall": _served_overall_block(topic_score.score, topic_score.letter),
         }
     else:
-        served_rubric = rubric
+        served_rubric = {**rubric, "overall": _with_band(rubric.get("overall"))}
 
     # Narrative grounding (2026-07-14): feed the narrator the verbatim student
     # transcript so credit statements quote what the student actually said
@@ -1453,6 +1494,9 @@ async def _grade_claimed_attempt(
         # stays the RAW rubric — rerun/janitor consumers depend on it — so any
         # surface re-serving the grade later (browse cards, progress recents)
         # must read this snapshot first and fall back to `rubric.overall`.
+        # From 2026-08-23 the snapshot carries `band` alongside `score`/`letter`
+        # for the same reason: it records what was served, so a later cut move
+        # never relabels an attempt retroactively.
         "served_overall": dict(served_rubric["overall"]),
     }
     # Teacher-surface consistency (2026-08-07 review fix). The per-problem node

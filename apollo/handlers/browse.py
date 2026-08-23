@@ -8,9 +8,11 @@ concept_id from another course 409s instead of leaking cross-course problems.
 Student-safety invariant: the response carries ONLY {id, difficulty,
 problem_text, attempted, grade} — never reference_solution / given_values /
 target_unknown. `grade` is the student's OWN best served overall
-({score, letter, feedback}) across their graded attempts on that problem, or
-null. `feedback` is the narrative that attempt already served to this student
-at Done-time — never rubric/coverage internals."""
+({score, letter, band, feedback}) across their graded attempts on that problem,
+or null. `band` (study-prep 2026-08-23) is the additive student-facing
+proficiency token beside the unchanged `letter`. `feedback` is the narrative
+that attempt already served to this student at Done-time — never rubric/coverage
+internals."""
 
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import NoMatchingConceptError
 from apollo.overseer.problem_selector import list_problems_for_concept
+from apollo.overseer.rubric import band_from_served_overall
 from apollo.persistence.models import ProblemAttempt
 from apollo.subjects.curriculum_db import list_course_concepts
 
@@ -33,6 +36,12 @@ def served_overall_from_report(report: Any) -> dict[str, Any] | None:
     legacy `rubric.overall` for attempts graded before the snapshot existed.
     Returns None when neither yields a usable score+letter, so a malformed
     legacy row degrades to the plain "Tried" state instead of failing browse.
+
+    `band` (study-prep 2026-08-23) rides beside the UNCHANGED `letter`, resolved
+    by `rubric.band_from_served_overall` — snapshot first, derived from the
+    snapshot's own score only for rows graded before the key existed. The
+    eligibility rule above is untouched: a row that had no grade to show still
+    has none, and `letter` is still what decides whether this returns at all.
     """
     if not isinstance(report, dict):
         return None
@@ -43,7 +52,7 @@ def served_overall_from_report(report: Any) -> dict[str, Any] | None:
     letter = overall.get("letter")
     if isinstance(score, bool) or not isinstance(score, (int, float)) or not isinstance(letter, str):
         return None
-    return {"score": score, "letter": letter}
+    return {"score": score, "letter": letter, "band": band_from_served_overall(overall)}
 
 
 def feedback_from_report(report: Any) -> str | None:

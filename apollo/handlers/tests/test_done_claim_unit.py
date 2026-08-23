@@ -21,6 +21,7 @@ import pytest
 
 from apollo.errors import CoverageGradingError, GradingInProgressError
 from apollo.handlers.tests._done_fixtures import _old_path_patches
+from apollo.overseer.rubric import score_to_band
 from apollo.persistence.models import SessionPhase
 
 pytestmark = pytest.mark.unit
@@ -105,7 +106,13 @@ async def test_already_graded_attempt_serves_the_stored_grade_and_never_claims()
     result = await _run(patches, db)
 
     assert result["already_graded"] is True
-    assert result["rubric"]["overall"] == {"score": 71, "letter": "B-"}
+    # WHOLE-dict: the replay serves the snapshot's score/letter verbatim plus the
+    # additive `band` (study-prep 2026-08-23), and nothing else.
+    assert result["rubric"]["overall"] == {
+        "score": 71,
+        "letter": "B-",
+        "band": score_to_band(71),
+    }
     assert result["diagnostic_narrative"] == "You explained continuity well."
     assert result["xp_earned"] == 0
     assert result["progress"]["xp_before"] == result["progress"]["xp_after"] == 140

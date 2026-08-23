@@ -25,7 +25,7 @@ import pytest
 from apollo.handlers.done import handle_done
 from apollo.handlers.tests._done_fixtures import _old_path_patches
 from apollo.ontology import KGGraph, build_node
-from apollo.overseer.rubric import score_to_letter
+from apollo.overseer.rubric import score_to_band, score_to_letter
 from apollo.overseer.xp import compute_xp_earned
 
 pytestmark = pytest.mark.unit
@@ -391,7 +391,11 @@ async def test_remediation_failure_leaves_grade_payload_untouched(monkeypatch):
 
     assert out == expected
     assert out["feedback"] == feedback
-    assert out["rubric"]["overall"] == {"score": 50, "letter": score_to_letter(50)}
+    assert out["rubric"]["overall"] == {
+        "score": 50,
+        "letter": score_to_letter(50),
+        "band": score_to_band(50),
+    }
     assert "review" not in out["feedback"]["topic_feedback"][1]
     retrieve.assert_awaited_once()
 
@@ -477,9 +481,13 @@ async def test_topic_score_raising_soft_fails_legacy_rubric_served(monkeypatch):
     out = await _run(monkeypatch, topic_score_side_effect=RuntimeError("boom"))
 
     assert "topics" not in out
-    # topic_score computation failed -> falls back to the OLD rubric
-    # (served_rubric is rubric itself).
-    assert out["rubric"] == _OLD_RUBRIC
+    # topic_score computation failed -> falls back to the OLD rubric, whole-blob
+    # identical EXCEPT the additive `band` the serving layer attaches to the
+    # overall (study-prep 2026-08-23). Every axis block is untouched.
+    assert out["rubric"] == {
+        **_OLD_RUBRIC,
+        "overall": {**_OLD_RUBRIC["overall"], "band": score_to_band(90)},
+    }
     assert "rubric" in out  # HTTP 200 shape, no exception escaped
 
 
@@ -510,7 +518,7 @@ async def test_served_overall_snapshot_on_soft_fail_equals_raw_overall(monkeypat
     )
 
     report = capture["attempt"].diagnostic_report
-    assert report["served_overall"] == {"score": 90, "letter": "A"}
+    assert report["served_overall"] == {"score": 90, "letter": "A", "band": score_to_band(90)}
     assert report["served_overall"] == out["rubric"]["overall"]
 
 

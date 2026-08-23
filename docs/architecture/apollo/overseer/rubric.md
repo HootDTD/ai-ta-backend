@@ -1,6 +1,6 @@
 ---
 doc: apollo/overseer/rubric
-description: Pure weighted-axis grade computation, the letter-band map, and the retained misconception signal value objects.
+description: Pure weighted-axis grade computation, the letter-band and proficiency-band maps, and the retained misconception signal value objects.
 owns:
   - apollo/overseer/rubric.py
   - apollo/overseer/misconception.py
@@ -8,11 +8,11 @@ related:
   - apollo/overseer/topic-score
   - apollo/overseer/transcript-coverage
   - apollo/conversation/handlers/done
-last_verified: 2026-08-07
+last_verified: 2026-08-23
 stub: false
 ---
 
-# Overseer rubric — weighted axis grade + letter bands
+# Overseer rubric — weighted axis grade + letter/proficiency bands
 
 Deterministic, no-LLM grade over a coverage verdict + reference `Node` list. It
 still runs live (`done.py`), but its `overall` is only the artifact's legacy
@@ -21,11 +21,19 @@ still runs live (`done.py`), but its `overall` is only the artifact's legacy
 
 ## Interface
 
-- `compute_rubric(coverage, reference_nodes, *, misconception_scores=None) ->
-  dict` — per-axis `{score, letter, present}` blocks + `overall`.
+- `compute_rubric(coverage, reference_nodes, *, misconception_scores=None) -> dict`
+  — per-axis `{score, letter, present}` blocks + `overall`.
 - `score_to_letter(score: int) -> str` — the 0-100 → letter-band map (imported by
   [topic-score](topic-score.md) and `projections/performance*`). Descending
   `LETTER_BANDS`; anything below the lowest band degrades to `F`.
+- `score_to_band(score: int) -> str` — the 0-100 → STUDENT-facing proficiency
+  band over `PROFICIENCY_BANDS` (same descending-table shape). Lowercase wire
+  tokens (`beginner`/`intermediate`/`advanced`); display strings live in the UI.
+  Used by `handlers/done`; `band_from_served_overall(overall) -> str | None` is
+  the RE-SERVING variant (persisted band, else derived from that snapshot's own
+  score, else `None`) used by `handlers/browse` + `handlers/progress`.
+  `PROFICIENCY_CUTS = (50, 85)` is the sole declaration of the cuts, so the §A.4
+  re-cut is one line.
 - From `misconception.py`: `MisconceptionSignal` (frozen per-turn signal),
   `MisconceptionState`, `summarize_for_rubric` (reduces turn-ordered signals to
   per-bank-code axis scores). `MisconceptionSignal` is also imported by the
@@ -56,20 +64,30 @@ proportionally; no axis present → overall 0.
   (`test_rubric.py` is skipped at module level — legacy V2 signatures).
   Historical rows keep their served letter verbatim: re-serving surfaces read
   `diagnostic_report.served_overall`, never re-derive, so the rescale applies to
-  grades computed AFTER the deploy only.
+  grades computed AFTER the deploy only. `band_from_served_overall` extends that
+  to the band — snapshot first; only pre-key rows derive one from their score.
+- **Proficiency bands are ADDITIVE (study-prep 2026-08-23).** `band` rides
+  beside `letter` on the student payloads (`handlers/done` served overall,
+  `handlers/browse` chips, `handlers/progress` recents); `letter` is removed
+  from nothing. `compute_rubric`'s output is UNCHANGED: no band in the raw rubric,
+  `score_details.llm_rubric`, the artifact or `topic_score_serialize`. Cuts sit
+  ON letter floors (85 = A-, 50 = C) so both vocabularies change at the same
+  score, and are NOT derived from `LETTER_BANDS` at runtime — a letter rescale
+  must FAIL `overseer/tests/test_rubric_bands.py` (P3.2 ceiling-pin pattern);
+  `CEILING_UNCORRECTED = 84` sits one point under the advanced cut, so a
+  ceilinged student is never "advanced".
 - **Weights are 60/25/15 rebalanced by ×0.95 with a 5% misconception axis**
   (`AXIS_WEIGHTS`). When no misconception fired the axis is absent and the
   redistribution restores an exact 60/25/15 — byte-identical to the pre-P2.8
   rubric.
 - **`misconception_scores` values:** `1.0` = detected and resolved, `0.5` =
-  detected and unresolved (resolution judged over the last `resolved_window=2`
-  turns); never-detected codes are simply absent (no penalty).
-- **Retired paths are gone.** Misconception inference and the authored bank no
-  longer exist; only the `MisconceptionSignal` shape + `summarize_for_rubric`
-  survive for the rubric axis and the output-filter contract.
+  detected and unresolved (over the last `resolved_window=2` turns);
+  never-detected codes are simply absent (no penalty).
+- **Retired paths are gone.** Misconception inference and the authored bank are
+  gone; only `MisconceptionSignal` + `summarize_for_rubric` survive, for the
+  rubric axis and the output-filter contract.
 - `_finite_score` clamps NaN/inf/non-numeric to 0.
 
 ## Related
 
-`overall` feeds `grading/artifact-build`'s `scores.composite`; the served grade
-replaces it with the topic score in `done.py`.
+`overall` feeds `grading/artifact-build`'s `scores.composite`; the served grade replaces it with the topic score in `done.py`.

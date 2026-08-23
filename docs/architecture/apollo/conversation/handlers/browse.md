@@ -7,7 +7,7 @@ related:
   - apollo/conversation/routing/router
   - apollo/overseer/problem-selector
   - apollo/conversation/curriculum/db
-last_verified: 2026-07-27
+last_verified: 2026-08-23
 stub: false
 ---
 
@@ -20,13 +20,17 @@ stub: false
 
 - `handle_list_problems(db, *, user_id, search_space_id, concept_id, difficulty=None) -> dict`
   — called by `routing/router`. Returns `{problems: [{id, difficulty,
-  problem_text, attempted, grade}]}` where `grade` is `{score, letter,
+  problem_text, attempted, grade}]}` where `grade` is `{score, letter, band,
   feedback}` (the student's own best served overall across graded attempts,
   plus that same attempt's narrative) or `null`.
-- `served_overall_from_report(report) -> {score, letter} | None` — extracts the
-  student-facing overall from a persisted `diagnostic_report`: prefers the
-  Done path's `served_overall` snapshot, falls back to the legacy
-  `rubric.overall`; returns `None` on any malformed shape.
+- `served_overall_from_report(report) -> {score, letter, band} | None` —
+  extracts the student-facing overall from a persisted `diagnostic_report`:
+  prefers the Done path's `served_overall` snapshot, falls back to the legacy
+  `rubric.overall`; returns `None` on any malformed shape. `band` (study-prep
+  2026-08-23) is `overseer/rubric`'s `band_from_served_overall` — the persisted
+  token when the snapshot has one, else derived from that same snapshot's score.
+  It is ADDITIVE: `letter` is unchanged and still decides eligibility, so a row
+  that had no grade to show still has none.
 - `feedback_from_report(report) -> str | None` — extracts the report's
   `narrative` (the exact feedback text the Done panel served; for topic-score
   attempts, the flattened structured feedback). Anything but a non-empty
@@ -56,6 +60,10 @@ a different attempt than the displayed grade.
   the requesting student's own; other students' attempts never surface.
   `grade.feedback` is only the narrative that attempt already served to this
   student at Done-time — rubric/coverage internals stay out.
+- **`band` never changes who gets a chip** — it is computed only after
+  `score`+`letter` have already qualified the row, and a band outside the wire
+  vocabulary (`beginner`/`intermediate`/`advanced`) is treated as corruption and
+  re-derived from the score rather than served through.
 - Attempted problems are flagged (not excluded) via the surrogate `database_id`.
 - A malformed/legacy report degrades that problem to the plain attempted state
   (`grade: null`) — it must never 500 the browse surface. A graded report with

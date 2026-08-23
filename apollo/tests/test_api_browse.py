@@ -17,6 +17,7 @@ import apollo.auth_deps as deps
 from apollo.api import get_neo4j_client, register_exception_handlers
 from apollo.api import router as apollo_router
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
+from apollo.overseer.rubric import score_to_band
 from apollo.persistence.models import (
     Concept,
     EntityPrereq,
@@ -360,7 +361,12 @@ def test_list_problems_serves_best_grade_from_served_overall(client_factory, mon
     by_id = {p["id"]: p for p in resp.json()["problems"]}
     # served_overall (88/A-) wins — NOT the raw rubric overall the report
     # stores — and feedback is the WINNING attempt's narrative
-    assert by_id[codes[0]]["grade"] == {"score": 88, "letter": "A-", "feedback": "a-notes"}
+    assert by_id[codes[0]]["grade"] == {
+        "score": 88,
+        "letter": "A-",
+        "band": score_to_band(88),
+        "feedback": "a-notes",
+    }
     assert by_id[codes[1]]["grade"] is None
     assert by_id[codes[1]]["attempted"] is False
 
@@ -409,7 +415,12 @@ def test_list_problems_grade_falls_back_to_rubric_overall(client_factory, monkey
     )
     assert resp.status_code == 200
     by_id = {p["id"]: p for p in resp.json()["problems"]}
-    assert by_id[codes[0]]["grade"] == {"score": 75, "letter": "B", "feedback": "…"}
+    assert by_id[codes[0]]["grade"] == {
+        "score": 75,
+        "letter": "B",
+        "band": score_to_band(75),
+        "feedback": "…",
+    }
     assert by_id[codes[1]]["grade"] is None
     assert by_id[codes[1]]["attempted"] is True
 
@@ -439,7 +450,12 @@ def test_list_problems_grade_without_narrative_serves_null_feedback(client_facto
     )
     assert resp.status_code == 200
     by_id = {p["id"]: p for p in resp.json()["problems"]}
-    assert by_id[codes[0]]["grade"] == {"score": 82, "letter": "B+", "feedback": None}
+    assert by_id[codes[0]]["grade"] == {
+        "score": 82,
+        "letter": "B+",
+        "band": score_to_band(82),
+        "feedback": None,
+    }
 
 
 def test_served_overall_from_report_edge_cases():
@@ -461,12 +477,23 @@ def test_served_overall_from_report_edge_cases():
             "served_overall": {"score": 82, "letter": "B+"},
             "rubric": {"overall": {"score": 40, "letter": "F"}},
         }
-    ) == {"score": 82, "letter": "B+"}
+    ) == {"score": 82, "letter": "B+", "band": score_to_band(82)}
     # legacy fallback still works
     assert served_overall_from_report({"rubric": {"overall": {"score": 60.0, "letter": "C"}}}) == {
         "score": 60.0,
         "letter": "C",
+        "band": score_to_band(60),
     }
+    # `band` is snapshot-first: a persisted token wins over re-derivation, so a
+    # later cut move can never relabel a grade the student already saw...
+    assert served_overall_from_report(
+        {"served_overall": {"score": 90, "letter": "A", "band": "beginner"}}
+    ) == {"score": 90, "letter": "A", "band": "beginner"}
+    # ...but a token outside the wire vocabulary is not a snapshot, it is
+    # corruption, and falls back to the score rather than being served through.
+    assert served_overall_from_report(
+        {"served_overall": {"score": 90, "letter": "A", "band": "Advanced!"}}
+    ) == {"score": 90, "letter": "A", "band": score_to_band(90)}
 
 
 def test_feedback_from_report_edge_cases():
