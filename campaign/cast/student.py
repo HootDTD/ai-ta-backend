@@ -64,11 +64,12 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from apollo.projections.performance_insights import teacher_visible_misconception
 from campaign.cast.personas.schema import PersonaAttempt
 
 _LOG = logging.getLogger(__name__)
@@ -594,6 +595,21 @@ class HttpxApolloClient:
         return resp.json()
 
 
+def _iter_misconceptions(grader_payload: Any) -> list[Mapping[str, Any]]:
+    """The object-shaped entries of `grader_payload -> 'misconceptions'`.
+
+    `grader_payload` is free-form JSONB with no CHECK constraint, so the array
+    can hold anything a past or future writer put there. Non-object entries are
+    skipped rather than fed to `teacher_visible_misconception`, which would
+    `AttributeError` on a bare string — matching the `isinstance(..., Mapping)`
+    guard `performance_insights.load_repeated_misconception_pairs` applies to
+    the same column."""
+    entries = grader_payload.get("misconceptions") if isinstance(grader_payload, Mapping) else None
+    if not isinstance(entries, list):
+        return []
+    return [entry for entry in entries if isinstance(entry, Mapping)]
+
+
 class SqlArtifactReader:
     """Real :class:`ArtifactReader` — reads the two ``GradingRun`` rows
     (``role="canonical"``/``role="pair"``) a Done-click persisted, straight
@@ -613,13 +629,32 @@ class SqlArtifactReader:
 
     @staticmethod
     def _row_to_payload(row: Any) -> dict[str, Any]:
+        """Reassemble the SERVED artifact payload from the persisted row.
+
+        ``misconceptions`` needs a filter, and only that key does. Apollo P3.2
+        made ``grader_payload -> 'misconceptions'`` a SUPERSET of the array the
+        student was served: from wrongness level 1 it also carries the internal
+        record two later readers need (``shadow``-marked entries below level 3,
+        and ``resolved`` ones the decision-7 XP dedup subtracts) — see
+        ``apollo.handlers.done._shadow_misconceptions``. Replaying the raw
+        column would hand the campaign an array no Done ever served, silently
+        inflating misconception counts at every level >= 1.
+
+        ``teacher_visible_misconception`` is IMPORTED, not re-spelled: it is the
+        exact predicate that reconstructs the served array (drop ``shadow``,
+        drop ``resolved``), and one authority means a campaign reading and a
+        teacher surface can never disagree about what was served."""
         grader_payload = row.grader_payload or {}
         return {
             "grader_used": row.grader_used,
             "versions": row.version_details,
             "node_ledger": row.node_ledger,
             "edge_ledger": row.edge_ledger,
-            "misconceptions": grader_payload.get("misconceptions", []),
+            "misconceptions": [
+                entry
+                for entry in _iter_misconceptions(grader_payload)
+                if teacher_visible_misconception(entry)
+            ],
             "clarification_trace": grader_payload.get("clarification_trace", []),
             "scores": row.score_details,
             "abstention": row.abstention_details,

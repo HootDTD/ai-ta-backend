@@ -1,0 +1,248 @@
+{
+  "fixture_version": 1,
+  "attempt_ref": "prod-2026-08-11/attempt-086",
+  "pii_scrubbed": true,
+  "concept": {
+    "id": 20,
+    "slug": "ethics"
+  },
+  "problem": {
+    "authored": {
+      "solution": "Answer: BIG PAPA is the 2020 extension of Mason's PAPA framework proposed by Young, Smith, and Zheng for the big data era. It keeps Mason's four issues — privacy, accuracy, property, accessibility — in their evolved forms and appends three issues: Behavioral surveillance, Interpretation, and Governance. Each new issue is rooted in Mason's original work but has grown into a distinct concern. Behavioral surveillance is rooted primarily in Mason's discussion of privacy: he worried about data users consciously provided, whereas modern technology collects behavioral data — location, communication, digital interaction — continuously and often without awareness or meaningful consent. Interpretation is teased out as a subset of Mason's accuracy issue: accuracy asks whether the data is correct, while interpretation recognizes that perfectly accurate data can still yield wrong conclusions through flawed models and analyses. Governance is formed from Mason's repeated calls for adequate safeguards, which were embedded within each PAPA issue; Young et al. argue governance failures are now so pervasive that the question 'who will watch the watchmen?' deserves standalone attention. Before the big data era these issues only loosely overlapped with data practice; today each is fully entrenched in it.",
+      "completeness": "answer_only",
+      "worked_procedure": null
+    },
+    "verification": "faithfulness_only",
+    "layer1_seeded": true,
+    "declared_paths": [
+      [
+        "define_papa_framework",
+        "define_big_papa",
+        "define_behavioral_surveillance",
+        "define_interpretation_issue",
+        "define_governance_issue",
+        "q19_map_roots"
+      ]
+    ],
+    "id": "authored.ebfa7ada026be88d6ccdc96f0e23b730",
+    "concept_id": "ethics",
+    "difficulty": "intro",
+    "problem_text": "What is the BIG PAPA framework, who proposed it, and how does each of its three new issues tie back into Mason's original PAPA framework?",
+    "given_values": {},
+    "target_unknown": "",
+    "reference_solution": [
+      {
+        "id": "define_papa_framework",
+        "step": 1,
+        "content": {
+          "concept": "PAPA framework",
+          "meaning": "PAPA is Richard Mason's 1986 framework naming the four major ethical issues of the information age — Privacy, Accuracy, Property, and Accessibility — posed as questions society must answer so that the information society being created is the one we actually want."
+        },
+        "depends_on": [],
+        "entity_key": "def.define_papa_framework",
+        "entry_type": "definition"
+      },
+      {
+        "id": "define_big_papa",
+        "step": 2,
+        "content": {
+          "concept": "BIG PAPA framework",
+          "meaning": "BIG PAPA is Young, Smith, and Zheng's 2020 extension of Mason's PAPA framework to the big data era: it appends three new ethical issues — Behavioral surveillance, Interpretation, and Governance — to the original four issues of privacy, accuracy, property, and accessibility."
+        },
+        "depends_on": [
+          "define_papa_framework"
+        ],
+        "entity_key": "def.define_big_papa",
+        "entry_type": "definition"
+      },
+      {
+        "id": "define_behavioral_surveillance",
+        "step": 3,
+        "content": {
+          "concept": "behavioral surveillance",
+          "meaning": "Behavioral surveillance is the BIG PAPA issue concerning data that reveals individual activity — location, communication, and digital interaction. Its core questions: how can users be better informed before making an active choice to share data, and how do we preserve individual liberty when behavior is constantly monitored?"
+        },
+        "depends_on": [
+          "define_big_papa"
+        ],
+        "entity_key": "def.define_behavioral_surveillance",
+        "entry_type": "definition"
+      },
+      {
+        "id": "define_interpretation_issue",
+        "step": 4,
+        "content": {
+          "concept": "interpretation (BIG PAPA)",
+          "meaning": "Interpretation is the BIG PAPA issue concerning analytical error: how can we avoid developing flawed models built upon erroneous or incomplete data, reduce the likelihood of drawing erroneous conclusions, and educate others to recognize poor analyses?"
+        },
+        "depends_on": [
+          "define_big_papa"
+        ],
+        "entity_key": "def.define_interpretation_issue",
+        "entry_type": "definition"
+      },
+      {
+        "id": "define_governance_issue",
+        "step": 5,
+        "content": {
+          "concept": "governance (BIG PAPA)",
+          "meaning": "Governance is the BIG PAPA issue of ensuring that the necessary controls are in place to handle ethical challenges related to big data — summarized by the question 'who will watch the watchmen?'"
+        },
+        "depends_on": [
+          "define_big_papa"
+        ],
+        "entity_key": "def.define_governance_issue",
+        "entry_type": "definition"
+      },
+      {
+        "id": "q19_map_roots",
+        "step": 6,
+        "content": {
+          "order": 1,
+          "action": "Map each new issue to its Mason root: behavioral surveillance grows out of privacy (consciously provided data versus continuous collection); interpretation is teased out of accuracy (correct data versus correct conclusions); governance elevates Mason's embedded safeguard calls into a standalone issue.",
+          "purpose": "Show BIG PAPA as an extension, not a replacement, of PAPA.",
+          "uses_equations": []
+        },
+        "depends_on": [
+          "define_behavioral_surveillance",
+          "define_interpretation_issue",
+          "define_governance_issue"
+        ],
+        "entity_key": "proc.q19_map_roots",
+        "entry_type": "procedure_step"
+      }
+    ]
+  },
+  "messages": [],
+  "question_opportunities": [
+    {
+      "reference_node_id": "define_papa_framework",
+      "state": "understood",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Richard O. Mason's classic 1986 PAPA framework (Privacy, Accuracy, Property, Accessibility)."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_big_papa",
+      "state": "tentative",
+      "times_asked": 2,
+      "last_asked_turn": 9,
+      "asked_turn": 9,
+      "answered_turn": null,
+      "question": "What paper introduced it, and where was it published?",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Proposed by researchers Robert Wayne Gregory, Ola Henfridsson, Kagan Bakici, and Harminder Singh"
+        },
+        {
+          "turn_id": 2,
+          "quote": "The BIG PAPA framework was introduced by an entirely different team of researchers—not Richard O. Mason."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_behavioral_surveillance",
+      "state": "understood",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Behavioral Surveillance expands Privacy from explicit data disclosure to invisible, pervasive monitoring."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_interpretation_issue",
+      "state": "understood",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Interpretation elevates Accuracy from factual data entry to the validity of algorithmic conclusions."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_governance_issue",
+      "state": "understood",
+      "times_asked": 1,
+      "last_asked_turn": 5,
+      "asked_turn": 5,
+      "answered_turn": 6,
+      "question": "In practice, who (or what kind of body) is supposed to set, enforce, and audit the rules in your idea of “governance”—companies themselves, government, independent watchdogs, or something else?",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Governance synthesizes Property and Accessibility into a broader question of systemic power, control, and ethics."
+        },
+        {
+          "turn_id": 4,
+          "quote": "Governance centers on who makes the rules regarding ownership, usage rights, and algorithmic control over that information."
+        },
+        {
+          "turn_id": 6,
+          "quote": "effective governance in the Big Data era relies on a multi-stakeholder ecosystem where different bodies handle setting, enforcing, and auditing rules"
+        }
+      ]
+    },
+    {
+      "reference_node_id": "q19_map_roots",
+      "state": "conflicting",
+      "times_asked": 2,
+      "last_asked_turn": 7,
+      "asked_turn": 7,
+      "answered_turn": 8,
+      "question": "In the older four-part framework, was there already an idea about checks, accountability, or safeguards, and is the newer “governance” piece basically pulling that out into its own issue?",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Governance $\\rightarrow$ Ties back to Property & Accessibility"
+        },
+        {
+          "turn_id": 4,
+          "quote": "If forced to map Governance strictly to one original issue, Property is the strongest match."
+        }
+      ]
+    }
+  ],
+  "adjudicator_output": {
+    "verdicts": [
+      {
+        "node_id": "q19_map_roots",
+        "covered": true,
+        "credit": 0.95,
+        "confidence": 0.9,
+        "evidence_span": null,
+        "prompted": false,
+        "corrected_later": false,
+        "contradicted": false,
+        "basis": "stated",
+        "hoot_assisted": false
+      }
+    ]
+  },
+  "recorded": {
+    "served_score": 95,
+    "served_letter": "A",
+    "topic_credits": {
+      "q19_map_roots": 0.95
+    }
+  }
+}

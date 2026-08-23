@@ -13,8 +13,9 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,7 @@ from apollo.hoot_bridge.reference_answer import (
 )
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
+from apollo.overseer import wrongness
 from apollo.overseer.aside_penalty import apply_aside_caps
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.grounding import (
@@ -50,6 +52,7 @@ from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.remediation import add_remediation_reviews
 from apollo.overseer.rubric import compute_rubric
 from apollo.overseer.topic_score import (
+    _GRADED_NODE_TYPES,
     TopicScoreResult,
     compute_centrality,
     compute_topic_score,
@@ -57,8 +60,15 @@ from apollo.overseer.topic_score import (
 )
 from apollo.overseer.topic_score_serialize import serialize_topics
 from apollo.overseer.transcript_coverage import compute_transcript_coverage_with_spans
-from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
-from apollo.persistence.attempt_history import has_prior_graded_attempt
+from apollo.overseer.xp import (
+    compute_misconception_bonus,
+    compute_progress_envelope,
+    compute_xp_earned,
+)
+from apollo.persistence.attempt_history import (
+    has_prior_graded_attempt,
+    prior_wrongness_findings,
+)
 from apollo.persistence.models import (
     GradingRun,
     ProblemAttempt,
@@ -425,29 +435,220 @@ async def _aside_texts(
 
 def _compute_topic_score_safe(
     *,
-    coverage: dict,
+    coverage: Mapping[str, Any],
     reference_graph: KGGraph,
     attempt_id: int,
     evidence_spans: dict[str, str] | None = None,
     asked_node_ids: frozenset[str] | None = None,
+    misconceptions: Mapping[str, Any] | None = None,
+    ceiling_active: bool = False,
 ) -> TopicScoreResult | None:
     """Soft-failing wrapper around ``compute_topic_score`` (2026-07-10 spec
     §3): computed ALWAYS (flag-independent — the artifact gets telemetry
     before any serving flip), but any exception here must never break a Done.
     Centrality is computed from the reference graph. Any exception here
     is logged and swallowed — the caller receives ``None`` and proceeds with
-    ``topic_score`` absent from both the artifact and the served payload."""
+    ``topic_score`` absent from both the artifact and the served payload.
+
+    ``misconceptions``/``ceiling_active`` (P3.2 seam S7) are the wrongness
+    containers and the DARK level-4 ceiling. The defaults are what levels 0-2
+    pass, and they take ``compute_topic_score``'s early return, so the payload
+    is byte-identical to pre-P3.2 by construction."""
     try:
         return compute_topic_score(
-            coverage=coverage,
+            # The adjudicator returns the `CoverageVerdict` TypedDict, which
+            # mypy treats as unrelated to the scorer's plain `dict` parameter;
+            # spell the hop once here instead of at every call site.
+            coverage=cast("dict[Any, Any]", coverage),
             reference_nodes=reference_graph.nodes,
             centrality=compute_centrality(reference_graph),
             evidence_spans=evidence_spans,
             asked_node_ids=asked_node_ids,
+            misconceptions=misconceptions,
+            ceiling_active=ceiling_active,
         )
     except Exception:
         _LOG.exception("topic_score_computation_failed attempt_id=%s", attempt_id)
         return None
+
+
+def _evaluate_wrongness(
+    tally_findings: Sequence[wrongness.LedgerFinding],
+    *,
+    coverage: Mapping[str, Any],
+    topic_score: TopicScoreResult | None,
+    graded_node_ids: frozenset[str],
+    attempt_id: int,
+    level: int,
+) -> tuple[wrongness.WrongnessFinding, ...]:
+    """Evaluate S2′ at Done and emit the level-≥1 shadow corpus.
+
+    AT DONE, not per turn: pre-P3.1 the ledger carries no per-turn credit and
+    S2′ needs one. The second reader is the adjudicator's corroboration map
+    (``coverage["wrongness"]``, present only when candidates were supplied);
+    **fail-safe = miss** — an absent row never corroborates, so the
+    corroborator's silence can only ever REMOVE a consequence. Logging is this
+    function's only effect: ``findings=`` counts evidence ENTRIES and
+    ``nodes=`` distinct nodes, because ``select_findings`` returns one rung per
+    entry and a node probed twice yields two.
+    """
+    if not tally_findings or topic_score is None:
+        return ()
+    second_reader: Mapping[str, Mapping[str, bool]] = coverage.get("wrongness") or {}
+    findings = wrongness.select_findings(
+        findings=tally_findings,
+        credits={topic.canonical_key: topic.credit for topic in topic_score.topics},
+        second_reader=second_reader,
+        graded_node_ids=graded_node_ids,
+        raw_score=topic_score.score,
+    )
+    for finding in findings:
+        reader = second_reader.get(finding.node_id)
+        _LOG.info(
+            "apollo_wrongness_observed attempt_id=%s node_id=%s rung=%s span_verified=%s "
+            "second_reader=%s would_ceiling=%s kind=%s",
+            attempt_id,
+            finding.node_id,
+            # corroborated = both readers agree it stands uncorrected (the only
+            # score-relevant rung, inert below level 4); resolved = the student
+            # fixed it (what the XP bonus rewards); reported = tally-only.
+            "corroborated"
+            if finding.corroborated
+            else ("resolved" if finding.resolved else "reported"),
+            bool(finding.quote),
+            "absent" if reader is None else dict(reader),
+            finding.would_ceiling,
+            finding.kind,
+        )
+    _LOG.info(
+        # `ledger_entries` is G-L1c's DENOMINATOR: the gate is "wrongness != none
+        # on < 10% of ledger rows", and `findings` alone is the numerator. Without
+        # the total, the over-fire monitor cannot be computed from the shadow
+        # corpus at all — which is the one thing level 1 exists to produce.
+        "apollo_wrongness_summary attempt_id=%s findings=%d nodes=%d ledger_entries=%d "
+        "corroborated=%d would_ceiling=%d level=%d",
+        attempt_id,
+        len(findings),
+        len({f.node_id for f in findings}),
+        len(tally_findings),
+        len({f.node_id for f in findings if f.corroborated}),
+        len({f.node_id for f in findings if f.would_ceiling}),
+        level,
+    )
+    return findings
+
+
+# The marker every entry persisted BELOW level 3 carries. S10 puts the teacher
+# surfaces on rung 3, but the array itself is persisted from rung 1 (see
+# `_shadow_misconceptions`), and `projections/classroom.top_misconceptions` +
+# the `repeated_misconception` attention flag both LATERAL over that same
+# column — so without a marker they would light up two rungs early, on a corpus
+# whose whole purpose is to be invisible. Teacher-facing readers exclude marked
+# entries; the S9 cross-attempt read
+# (`attempt_history.prior_wrongness_findings`, which powers the LEVEL-2 carried
+# challenge and the XP dedup) is deliberately marker-AGNOSTIC and must stay so.
+SHADOW_MISCONCEPTION_KEY = "shadow"
+
+
+def _shadow_misconceptions(
+    findings: Sequence[wrongness.WrongnessFinding],
+    *,
+    level: int,
+) -> list[dict[str, Any]] | None:
+    """The INTERNAL wrongness record persisted from level 1, or ``None`` at 0.
+
+    This is the row's ``grader_payload -> 'misconceptions'`` array, and it is
+    deliberately NOT the array the student is served (`artifact_writer` keeps
+    those separate). It exists because two later readers need a record the
+    served array cannot give them:
+
+    1. **L2c cross-attempt question memory** is a level-**2** rung that reads
+       what an EARLIER attempt persisted, through
+       ``attempt_history.prior_wrongness_findings``. Deriving the array only
+       from ``topics[].misconceptions`` — populated at level >= 3 — starves it:
+       at level 2 every prior attempt wrote ``[]``, so
+       ``controller._select_carried`` has nothing to carry.
+    2. **The decision-7 XP dedup** ("once per user x problem x node") subtracts
+       those same prior rows. The corroborated set can never contain a resolved
+       finding (S2′ requires NOT ``corrected_later``), so an array of
+       corroborated findings alone records nothing about the population the
+       bonus actually pays — and the guard degrades to "always empty", making
+       +10 re-earnable on every best-grade-wins retry. Persisting the
+       ``resolved AND apollo_elicited`` nodes is what closes that loop.
+
+    Hence BOTH populations, node-keyed (corroborated wins the slot — it is the
+    node's latest-evidence rung by S2′) and sorted, at every level >= 1. Keys
+    are exactly the three every reader consumes; ``kind`` is deliberately absent
+    because ``TopicMisconception`` has no such field and the served array must
+    stay the same shape.
+
+    Nothing student-facing moves: the served payload, the scorecard *Watch out*
+    list, ``topics[].misconceptions`` and the narrative all still start at level
+    3 exactly as W2-B built them, and this array is a SUPERSET of the served one
+    that agrees with it entry for entry on the corroborated nodes.
+
+    Below level 3 every entry additionally carries ``SHADOW_MISCONCEPTION_KEY``
+    so the TEACHER surfaces — which read this column, not the payload — can
+    stay on S10's rung 3 while the internal record starts at rung 1. At level
+    >= 3 the marker is absent, which is what turns those surfaces on.
+    """
+    if level < wrongness.LEVEL_PRODUCE:
+        return None
+    keep: dict[str, wrongness.WrongnessFinding] = {
+        finding.node_id: finding for finding in findings if finding.corroborated
+    }
+    for finding in findings:
+        if finding.node_id not in keep and finding.resolved and finding.apollo_elicited:
+            keep[finding.node_id] = finding
+    shadow = level < wrongness.LEVEL_SURFACE
+    return [
+        {
+            "canonical_key": finding.node_id,
+            "resolved": finding.resolved,
+            "evidence_span": finding.quote,
+            **({SHADOW_MISCONCEPTION_KEY: True} if shadow else {}),
+        }
+        for finding in sorted(keep.values(), key=lambda f: f.node_id)
+    ]
+
+
+async def _wrongness_bonus_xp(
+    db: AsyncSession,
+    *,
+    findings: Sequence[wrongness.WrongnessFinding],
+    attempt: ProblemAttempt,
+    course_id: int,
+) -> int:
+    """Decision-7 bonus XP: the student FIXED a contradiction Apollo elicited.
+
+    The population is ``resolved AND apollo_elicited``, never ``corroborated``:
+    S2′ requires NOT corrected_later, so "corroborated and resolved" is the
+    empty set by construction. ``apollo_elicited``
+    (``last_asked_turn < correction_turn``) is the anti-farming guard — assert
+    something wrong unprompted, fix it yourself, collect XP — and subtracting
+    ``prior_wrongness_findings`` makes it once per user × problem × node, so a
+    re-roll cannot re-earn it.
+
+    **Additive only, own failure domain.** Any exception logs
+    ``apollo_wrongness_xp_bonus_failed`` and awards 0 on top of the base XP;
+    the return is never negative, which is what keeps ``apply_xp`` (it raises
+    on a negative delta) safe."""
+    try:
+        earned = {f.node_id for f in findings if f.resolved and f.apollo_elicited}
+        if not earned:
+            return 0
+        prior = await prior_wrongness_findings(
+            db,
+            attempt_id=int(attempt.id),
+            problem_id=int(attempt.problem_id),
+            course_id=course_id,
+        )
+        return compute_misconception_bonus(
+            newly_resolved_keys=sorted(earned - {row["canonical_key"] for row in prior})
+        )
+    except Exception:
+        _LOG.exception("apollo_wrongness_xp_bonus_failed attempt_id=%s", attempt.id)
+        return 0
 
 
 def _course_evidence_safe(
@@ -1008,6 +1209,35 @@ async def _grade_claimed_attempt(
             _LOG.exception("apollo_aside_fetch_failed attempt_id=%s", attempt.id)
             hoot_asides = ()
 
+    # P3.2 wrongness ladder (`APOLLO_WRONGNESS_LEVEL`, default 0 = OFF), read
+    # ONCE and paired with the concept allowlist inside
+    # `effective_wrongness_level` exactly like INTERACTION5 above. Level 0 skips
+    # the block entirely, which is what makes it byte-identical to today.
+    # `getattr` (as `_course_evidence_safe`'s call already does) because this is
+    # the FIRST unconditional read of `concept_id` on this path — INTERACTION5's
+    # is short-circuited by its flag — and a problem shim without the attribute
+    # must not raise inside the grade path. Note the degradation is to "no
+    # concept", not to "outside the pilot": `interaction_allowed_for_concept`
+    # admits `None` whenever the allowlist is EMPTY, so a shim still gets the
+    # ambient level. That is the same behaviour INTERACTION2/5 already have, and
+    # a pilot run scopes itself by SETTING `INTERACTION_CONCEPTS`.
+    level = wrongness.effective_wrongness_level(getattr(problem, "concept_id", None))
+    graded_node_ids: frozenset[str] = frozenset()
+    tally_findings: tuple[wrongness.LedgerFinding, ...] = ()
+    wrongness_candidates: dict[str, str] | None = None
+    if level >= wrongness.LEVEL_PRODUCE and ledger_rows is not None:
+        # The tally's own contradiction labels, off the ledger ALREADY read
+        # above (never a second query). Candidates name graded nodes only, and
+        # `None` (not `{}`) leaves the adjudication schema, prompts and coverage
+        # dict byte-identical when nothing was flagged.
+        graded_node_ids = frozenset(
+            node.node_id for node in reference_graph.nodes if node.node_type in _GRADED_NODE_TYPES
+        )
+        tally_findings = wrongness.ledger_findings(ledger_rows)
+        wrongness_candidates = (
+            wrongness.candidate_quotes(tally_findings, graded_node_ids=graded_node_ids) or None
+        )
+
     coverage, narrative_spans = await compute_transcript_coverage_with_spans(
         transcript=transcript,
         reference_graph=reference_graph,
@@ -1015,6 +1245,7 @@ async def _grade_claimed_attempt(
         course_evidence=evidence_block(course_evidence),
         hoot_asides=hoot_asides,
         tally_context=tally_context,
+        wrongness_candidates=wrongness_candidates,
     )
 
     # Apply the flat cap to the coverage BEFORE rubric / topic-score / diagnostic
@@ -1054,6 +1285,35 @@ async def _grade_claimed_attempt(
         evidence_spans=narrative_spans,
         asked_node_ids=asked_node_ids,
     )
+
+    # P3.2: S2′ over the RAW result (it needs the raw score for `would_ceiling`),
+    # then level >=3 SUPERSEDES that result with the container-bearing one, so
+    # exactly ONE `TopicScoreResult` reaches `served_rubric` / `topics[]` /
+    # narrative / artifact. A soft-failed rescore keeps the raw result.
+    wrongness_findings = _evaluate_wrongness(
+        tally_findings,
+        coverage=coverage,
+        topic_score=topic_score,
+        graded_node_ids=graded_node_ids,
+        attempt_id=int(attempt.id),
+        level=level,
+    )
+    # Keyed by node id (S7). `select_findings` returns one rung per EVIDENCE
+    # ENTRY, but only a node's LATEST entry can corroborate, so this dedup is
+    # exact rather than last-write-wins.
+    corroborated = {f.node_id: f for f in wrongness_findings if f.corroborated}
+    if level >= wrongness.LEVEL_SURFACE and corroborated:
+        surfaced = _compute_topic_score_safe(
+            coverage=coverage,
+            reference_graph=reference_graph,
+            attempt_id=int(attempt.id),
+            evidence_spans=narrative_spans,
+            asked_node_ids=asked_node_ids,
+            misconceptions=corroborated,
+            ceiling_active=level >= wrongness.LEVEL_CEILING,
+        )
+        if surfaced is not None:
+            topic_score = surfaced
 
     # Serving (spec §3): `served_rubric` REPLACES `overall` with the topic
     # score/letter while every legacy axis block is carried over UNCHANGED
@@ -1155,6 +1415,14 @@ async def _grade_claimed_attempt(
         difficulty=attempt.difficulty,
         is_reattempt=is_reattempt,
     )
+    # Decision-7 bonus (level >=3): additive-only, so XP still only ever goes up.
+    if level >= wrongness.LEVEL_SURFACE and wrongness_findings:
+        xp_earned += await _wrongness_bonus_xp(
+            db,
+            findings=wrongness_findings,
+            attempt=attempt,
+            course_id=int(sess.search_space_id),
+        )
 
     # M1b fence (P3.4 controller delta) — the terminal phase transition is
     # itself a CAS, checked BEFORE any grade-visible write (spec: "Order the
@@ -1311,6 +1579,11 @@ async def _grade_claimed_attempt(
         rubric=rubric,
         latency_ms=artifact_latency_ms,
         topic_score=topic_score,
+        # Internal-only from level 1: the persisted array feeds the NEXT
+        # attempt's L2c carried challenge and the decision-7 XP dedup; the
+        # returned payload (and so the scorecard rendered below) is untouched.
+        # See `_shadow_misconceptions`.
+        shadow_misconceptions=_shadow_misconceptions(wrongness_findings, level=level),
     )
     if canonical_payload is not None:
         student_response["scorecard"] = render_scorecard(canonical_payload)

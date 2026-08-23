@@ -3,17 +3,29 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from apollo.overseer.wrongness import (
+    LEVEL_PRODUCE,
+    LEVEL_SCHEDULE,
+    WRONGNESS_NONE,
+    candidate_quotes,
+    effective_wrongness_level,
+    ledger_findings,
+)
+from apollo.persistence.attempt_history import prior_wrongness_findings
 from apollo.persistence.models import QuestionOpportunity
 from apollo.schemas.problem import Problem
-from apollo.smart_questions.selection import build_selection_policy
+from apollo.smart_questions.challenge import clean_quote
+from apollo.smart_questions.selection import SelectionPolicy, build_selection_policy
 from apollo.smart_questions.unified import (
+    CarriedChallenge,
     EvidenceQuote,
     QuestionBudget,
     TallyState,
@@ -151,6 +163,35 @@ async def _bump_times_asked(db: AsyncSession, *, row: Any) -> None:
     set_committed_value(row, "times_asked", int(new_value))
 
 
+def _evidence_entry(update: TallyUpdate) -> dict[str, Any]:
+    """One entry for the free-form ``question_opportunities.evidence`` array.
+
+    Two shapes, and the boundary between them is a contract (P3.2 seam S2):
+
+    * ``wrongness == "none"`` -> exactly ``{"turn_id", "quote"}``, BYTE-IDENTICAL
+      to every entry ever written before P3.2. Level 0 therefore writes the same
+      bytes it always has, and the dedup rule (``if serialized not in evidence``)
+      keeps matching historical rows.
+    * otherwise -> the tagged entry
+      ``{"turn_id", "quote", "wrongness", "contradicts", "kind"}``.
+
+    No migration: the column is free-form JSONB (`__evidence__array_check` only
+    asserts ``jsonb_typeof = 'array'``). Both shapes must keep reading correctly
+    in `done._latest_student_quote` and `done._probed_node_ids`, which only ever
+    look at ``quote`` — pinned by test.
+    """
+    evidence = cast(EvidenceQuote, update.evidence)
+    entry: dict[str, Any] = {"turn_id": evidence.turn_id, "quote": evidence.quote}
+    if update.wrongness == "none" or update.contradiction is None:
+        return entry
+    return {
+        **entry,
+        "wrongness": update.wrongness,
+        "contradicts": update.contradiction.reference_clause,
+        "kind": update.contradiction.kind,
+    }
+
+
 def _apply_tally_updates(
     db: AsyncSession,
     *,
@@ -169,24 +210,23 @@ def _apply_tally_updates(
     left nodes stuck ``missing`` and made Apollo re-probe covered territory.
     """
     by_id = {str(row.reference_node_id): row for row in rows}
-    for update in updates:
-        row = by_id.get(update.node_id)
+    # `tally_update`, not `update`: the loop name used to shadow the SQLAlchemy
+    # `update()` this module calls in `_bump_times_asked` (ruff F402).
+    for tally_update in updates:
+        row = by_id.get(tally_update.node_id)
         if row is None:
             row = _new_opportunity_row(
                 course_id=course_id,
                 session_id=session_id,
                 attempt_id=attempt_id,
-                node_id=update.node_id,
+                node_id=tally_update.node_id,
             )
             db.add(row)
-            by_id[update.node_id] = row
-        row.state = update.status
-        if update.evidence is not None:
+            by_id[tally_update.node_id] = row
+        row.state = tally_update.status
+        if tally_update.evidence is not None:
             evidence = list(row.evidence or [])
-            serialized = {
-                "turn_id": update.evidence.turn_id,
-                "quote": update.evidence.quote,
-            }
+            serialized = _evidence_entry(tally_update)
             if serialized not in evidence:
                 evidence.append(serialized)
             row.evidence = evidence
@@ -247,6 +287,110 @@ def _write_opportunity_audit(
     return rows
 
 
+@dataclass(frozen=True)
+class _LadderInputs:
+    """Everything `APOLLO_WRONGNESS_LEVEL` changes about ONE questioning call.
+
+    Resolved once per turn from a SINGLE ledger read, so the level is decided in
+    exactly one place and each rung's inputs are inert below it:
+
+    * level >= 1 — ``wrongness`` turns the producer on (schema + prompt block).
+    * level >= 2 — ``contested_ids`` reorders the askable set (L2a),
+      ``contested_quotes`` names each graded node's latest material
+      contradiction, ``challenge_gate`` arms the done-gate (L2b), and
+      ``carried_challenges`` carries ONE earlier-attempt claim forward (L2c).
+
+    Level 0 is the all-defaults instance, which is byte-identical to pre-P3.2.
+    """
+
+    wrongness: bool = False
+    challenge_gate: bool = False
+    contested_ids: tuple[str, ...] = ()
+    contested_quotes: dict[str, str] = field(default_factory=dict)
+    carried_challenges: tuple[CarriedChallenge, ...] = ()
+
+
+def _select_carried(
+    prior: Sequence[dict[str, Any]],
+    *,
+    policy: SelectionPolicy,
+    tally_state: Sequence[TallyState],
+) -> tuple[CarriedChallenge, ...]:
+    """At most ONE carried challenge (decision D4), newest-first.
+
+    The newest UNRESOLVED prior finding whose node is still askable this attempt
+    and has not been probed yet. One is the cap on purpose: the point is a single
+    continuity question, not a rap sheet — and the consequence is always earned
+    inside the current attempt.
+    """
+    askable = set(policy.askable_ids)
+    asked = {item.node_id: item.times_asked for item in tally_state}
+    for finding in prior:
+        node_id = finding.get("canonical_key")
+        if not isinstance(node_id, str) or node_id not in askable:
+            continue
+        if finding.get("resolved") or asked.get(node_id, 0) != 0:
+            continue
+        quote = clean_quote(finding.get("evidence_span"))
+        if quote:
+            return (CarriedChallenge(node_id=node_id, prior_quote=quote),)
+    return ()
+
+
+async def _ladder_inputs(
+    db: AsyncSession,
+    *,
+    problem: Problem,
+    attempt_id: int,
+    course_id: int,
+    reference_graph: Any,
+    rows: list[Any],
+    tally_state: Sequence[TallyState],
+    questions_asked: int,
+    cap: int,
+) -> _LadderInputs:
+    """Resolve this turn's ladder inputs. One ledger pass, one DB read at >= 2."""
+    level = effective_wrongness_level(problem.concept_id)
+    if level < LEVEL_SCHEDULE:
+        return _LadderInputs(wrongness=level >= LEVEL_PRODUCE)
+
+    findings = ledger_findings(rows)
+    contested_ids = tuple(
+        dict.fromkeys(
+            finding.node_id
+            for finding in findings
+            if finding.wrongness != WRONGNESS_NONE and finding.is_latest_evidence
+        )
+    )
+    policy = build_selection_policy(
+        reference_graph=reference_graph,
+        tally_state=tally_state,
+        questions_asked=questions_asked,
+        cap=cap,
+        contested_ids=contested_ids,
+    )
+    prior = (
+        await prior_wrongness_findings(
+            db,
+            attempt_id=attempt_id,
+            problem_id=problem.database_id,
+            course_id=course_id,
+        )
+        if problem.database_id is not None
+        else ()
+    )
+    return _LadderInputs(
+        wrongness=True,
+        challenge_gate=True,
+        contested_ids=contested_ids,
+        # `candidate_quotes` is the same graded + material + latest-evidence
+        # filter the at-Done corroborator uses, so the node the gate challenges
+        # is exactly the node that could later be corroborated.
+        contested_quotes=candidate_quotes(findings, graded_node_ids=policy.graded_ids),
+        carried_challenges=_select_carried(prior, policy=policy, tally_state=tally_state),
+    )
+
+
 async def plan_next_question(
     db: AsyncSession,
     *,
@@ -273,9 +417,23 @@ async def plan_next_question(
         .all(),
     )
     tally_state = _build_tally_state(reference_graph, opportunity_rows)
+    questions_asked = sum(int(row.times_asked) for row in opportunity_rows)
+    cap = question_cap()
+    ladder = await _ladder_inputs(
+        db,
+        problem=problem,
+        attempt_id=attempt_id,
+        course_id=course_id,
+        reference_graph=reference_graph,
+        rows=opportunity_rows,
+        tally_state=tally_state,
+        questions_asked=questions_asked,
+        cap=cap,
+    )
     budget = QuestionBudget(
-        questions_asked=sum(int(row.times_asked) for row in opportunity_rows),
-        cap=question_cap(),
+        questions_asked=questions_asked,
+        cap=cap,
+        carried_challenges=ladder.carried_challenges,
     )
     result = await evaluate_and_ask(
         transcript=transcript,
@@ -283,6 +441,10 @@ async def plan_next_question(
         problem=problem,
         tally_state=tally_state,
         budget=budget,
+        wrongness=ladder.wrongness,
+        contested_ids=ladder.contested_ids,
+        contested_quotes=ladder.contested_quotes,
+        challenge_gate=ladder.challenge_gate,
     )
     tally_by_id = _apply_tally_updates(
         db,
@@ -298,6 +460,7 @@ async def plan_next_question(
         tally_state=_build_tally_state(reference_graph, list(tally_by_id.values())),
         questions_asked=budget.questions_asked,
         cap=budget.cap,
+        contested_ids=ladder.contested_ids,
     )
 
     if result.action == "ask" and result.target_node_id is not None:

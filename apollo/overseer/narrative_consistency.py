@@ -38,6 +38,12 @@ not a teaching gap:
 * **Headline / next step** are only edited on strong evidence that the sentence
   is about an uncredited topic; the topic-name overlap test is deliberately
   strict, because emptying a one-sentence headline replaces it wholesale.
+* **Flagged claims** (P3.2 L3) are CONSISTENT with credit, not evidence against
+  it: a corroborated wrongness finding requires ``credit >= 0.6``, so a topic
+  carrying one is credited, is never in ``uncredited``, and keeps its praise and
+  its untouched note. The finding is narrated as its own separate line by
+  ``topic_narrative``. The only coupling here is the shared reveal budget —
+  see :data:`MAX_REFERENCE_NAME_QUOTES`.
 
 Pure, total, and idempotent — string/structural only, no second LLM call, no
 IO. Runs AFTER ``sanitize_narrative`` so it sees exactly the served text.
@@ -50,7 +56,7 @@ import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from apollo.overseer.topic_narrative import humanize_key
+from apollo.overseer.topic_narrative import humanize_key, nameable_misconception_keys
 from apollo.overseer.topic_score import MAX_REFERENCE_TEXT_REVEALS, TopicCredit
 
 _LOG = logging.getLogger(__name__)
@@ -70,6 +76,13 @@ PRAISE_FLOOR = 0.6
 # of the reference may this student see". `restart_problem` is still reachable
 # from REPORT and browse is best-grade-wins, so that union is recitable back
 # into a grade. Past the budget the gap is still named, without the wording.
+#
+# P3.2 L3 (2026-08-12): this is now the budget for the WHOLE narrative, not just
+# for this gate. A named misconception (`topic_narrative`) is a third channel
+# into the same payload, so it spends from the same two slots and the gate takes
+# only what is left — see `_quotable_keys`. Below wrongness level 3 no topic
+# carries a misconception, so the gate keeps the full budget and every output is
+# byte-identical to the pre-P3.2 build.
 MAX_REFERENCE_NAME_QUOTES = MAX_REFERENCE_TEXT_REVEALS
 
 FALLBACK_HEADLINE = "Here is what Apollo did not get from your teaching yet."
@@ -184,7 +197,13 @@ def enforce_narrative_consistency(
     if not uncredited:
         return dict(feedback)
     credited = [t for t in topics if t.canonical_key not in uncredited]
-    quotable = _quotable_keys(topics, uncredited)
+    # P3.2 L3: whatever the prompt builder already spent on named misconceptions
+    # comes off this gate's quota. Recomputed rather than passed in — it is a
+    # pure function of the SAME `topics` sequence `build_topic_narrative_prompt`
+    # was given (`diagnostic._build_topic_feedback` hands both the identical
+    # `topic_score.topics`), so the two allocations cannot disagree.
+    named_misconceptions = nameable_misconception_keys(topics)
+    quotable = _quotable_keys(topics, uncredited, named_misconceptions)
 
     items = feedback.get("topic_feedback")
     repaired_items: Any = items
@@ -234,6 +253,15 @@ def _is_uncredited(topic: TopicCredit) -> bool:
     sentence. The cap is ``min(evidence, 0.5)``, so any credit above zero proves
     the adjudicator found evidence; only exactly ``0`` (reachable solely from a
     pre-cap ``0``) is a real absence.
+
+    P3.2 L3 (2026-08-12) — DELIBERATELY not taught about the wrongness ceiling.
+    A corroborated finding requires ``credit >= 0.6``, so a flagged topic is by
+    construction a CREDITED topic; level 4's ``min(raw, 84)`` moves the attempt
+    SCORE and never a topic's credit. Reading "this attempt was ceilinged" as
+    "this topic was not credited" would strip praise the adjudicator's own
+    verdict awards and append a factually wrong gap sentence. The flagged claim
+    gets its own separate line in the narrative instead — credit sentence AND
+    misconception note, never one at the cost of the other.
     """
     if topic.credit >= PRAISE_FLOOR:
         return False
@@ -243,10 +271,11 @@ def _is_uncredited(topic: TopicCredit) -> bool:
 
 
 def _quotable_keys(
-    topics: Sequence[TopicCredit], uncredited: dict[str, TopicCredit]
+    topics: Sequence[TopicCredit],
+    uncredited: dict[str, TopicCredit],
+    named_misconceptions: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
-    """The ≤ :data:`MAX_REFERENCE_NAME_QUOTES` topics whose reference wording the
-    gate may quote in this payload.
+    """The topics whose reference wording the gate may quote in this payload.
 
     Selection deliberately reuses D2's ordering key from
     ``topic_score._reveal_reference_text`` — lowest credit first, then most
@@ -255,11 +284,22 @@ def _quotable_keys(
     reveal to a different subset. Topics that counted toward the grade come
     first; an all-zero-weight ledger (every graded node excluded) falls back to
     the excluded ones, matching how the next-step subject is chosen.
+
+    ``named_misconceptions`` (P3.2 L3) is what the prompt builder already spent
+    out of the shared :data:`MAX_REFERENCE_NAME_QUOTES` budget. It is subtracted
+    from the quota AND excluded from the candidate set, so the union of the two
+    channels never exceeds the budget in reveals OR in distinct nodes — one
+    topic can never spend two slots. Empty (every attempt below wrongness level
+    3) restores the full budget and the pre-P3.2 selection exactly.
     """
+    budget = MAX_REFERENCE_NAME_QUOTES - len(named_misconceptions)
+    if budget <= 0:
+        return frozenset()
     rank = {topic.canonical_key: index for index, topic in enumerate(topics)}
-    scored = [t for t in uncredited.values() if t.weight > 0.0] or list(uncredited.values())
+    candidates = [t for k, t in uncredited.items() if k not in named_misconceptions]
+    scored = [t for t in candidates if t.weight > 0.0] or candidates
     ordered = sorted(scored, key=lambda t: (t.credit, -t.weight, rank[t.canonical_key]))
-    return frozenset(t.canonical_key for t in ordered[:MAX_REFERENCE_NAME_QUOTES])
+    return frozenset(t.canonical_key for t in ordered[:budget])
 
 
 def _repair_item(

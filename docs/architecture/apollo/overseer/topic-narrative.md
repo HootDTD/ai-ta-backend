@@ -7,7 +7,7 @@ related:
   - apollo/overseer/diagnostic
   - apollo/overseer/topic-score
   - apollo/overseer/grounding
-last_verified: 2026-08-07
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -28,16 +28,20 @@ structured-JSON completion.
   idempotent output-side gate.
 - `humanize_key(key) -> str` — public since 2026-08-07: the same student-facing
   display fallback the P2.1 consistency gate needs (see
-  [diagnostic](diagnostic.md)).
+  [diagnostic](diagnostic.md)). Canonical keys otherwise appear only as
+  response identifiers.
+- `nameable_misconception_keys(topics) -> frozenset[str]` + `MAX_NARRATIVE_REVEALS`
+  — 2026-08-12 (P3.2 L3): THE shared reveal allocator, read by this builder and
+  the consistency gate.
 
 ## Data flow
 
 `diagnostic.generate_diagnostic` calls the builder with the `TopicScoreResult`,
 the problem text, and (2026-07-14 grounding fix) the verbatim student transcript.
-Each topic renders as one line with its status, whole-number percent, and — when
-the topic carries a gated per-attempt `evidence_span` — a quoted `You said:`
-line; misconception lines add evidence + resolved flag. The canonical key is
-included solely for copying into the response mapping. The system message
+Each topic renders as one line with its status, whole-number percent, a quoted
+`You said:` line when it carries a gated per-attempt `evidence_span`, and any
+nameable misconception's evidence + resolved flag. The canonical key is included
+solely for copying into the response mapping. The system message
 requires `{headline, topic_feedback: [{canonical_key, note, quote|null}],
 next_step}` JSON and forbids model-generated recap text. After the LLM call,
 `diagnostic.py` validates and scrubs every prose field with
@@ -77,9 +81,24 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
   counted for less"). Hoot's lookup content is NEVER presented as the student's
   understanding and never enters a `quote` field; the verbatim `You said` quote
   gate is unchanged. No assisted topic (the default) → BOTH messages byte-identical.
+- **A misconception line is named only at the corroborated rung, inside ONE
+  shared reveal budget (P3.2 L3, 2026-08-12).** The `Misconception
+  (corrected|uncorrected): "span"` copy and the "say nothing at all when none are
+  supplied" rule both predate P3.2; populating `topics[].misconceptions` activates
+  them, and `handlers/done.py` fills that container only at
+  `APOLLO_WRONGNESS_LEVEL >= 3` and only from **corroborated** findings (AST-pinned
+  by `test_only_corroborated_findings_are_nameable`). `nameable_misconception_keys`
+  caps rendered lines at `MAX_NARRATIVE_REVEALS`
+  (== `topic_score.MAX_REFERENCE_TEXT_REVEALS`) and [diagnostic](diagnostic.md)'s
+  gate spends only what is left, so the channels share one budget of two rather
+  than owning two each; the allocation is a pure function of the topic profile, so
+  best-grade-wins retries accumulate nothing new. `unprobed` topics are excluded
+  here as well as by `graded_topics_only`. A rendered line also appends
+  `_MISCONCEPTION_RULES`, labelling the quoted student text as untrusted DATA (the
+  W1-B/W2-A idiom) and telling the narrator a flagged topic keeps its credit. No
+  rendered line → BOTH messages byte-identical: every attempt below level 3.
 - **`sanitize_narrative` is belt-and-suspenders:** it strips canonical keys and
   ledger-shaped scoring tokens (`credit 0.80`, `weight`, `dock`) via regex while
   deliberately preserving whole-number percentages; never drops legitimate prose
-  like `weight = mg`.
-- `_humanize_key` degrades a snake_case key to a readable display fallback;
-  canonical keys otherwise appear only as response identifiers.
+  like `weight = mg`. It is also why the level-4 ceiling is leak-proof for free —
+  and the number never enters the prompt at all, so it cannot be stated anyway.

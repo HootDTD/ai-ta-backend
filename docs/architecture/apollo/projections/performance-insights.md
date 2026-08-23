@@ -5,7 +5,9 @@ owns:
   - apollo/projections/performance_insights.py
 related:
   - apollo/projections/performance
-last_verified: 2026-08-11
+  - apollo/projections/classroom
+  - apollo/conversation/handlers/done
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -31,16 +33,19 @@ no database. Composed by [performance](performance.md)'s assembler.
   `{problems_retried, avg_gain}`; `student_flags(...)` and `student_extras(...)`
   (the `{engagement, flags}` add-on); `gap_seconds(timestamps)` → consecutive
   ABSOLUTE deltas in seconds over one pair's id-ordered graded-attempt
-  timestamps (N stamps → N−1 gaps).
+  timestamps (N stamps → N−1 gaps); `teacher_visible_misconception(entry)` and
+  `repeated_misconception_pairs(entry_rows)` (P3.2 — the `(user_id, problem_id)`
+  set behind the 6th flag).
 - **Insight builders (pure):** `build_correlation(points)`,
   `build_effort_quartiles(students)`, `build_retry_payoff(aggregates)`,
   `build_retry_timing(aggregates)`, `build_insights(graded_points, aggregates)`.
 - **DB loaders:** `load_engagement(db, *, search_space_id)` (student messages);
-  `load_problem_aggregates(db, *, search_space_id, score_expr)` (graded
-  attempts — `score_expr` is [performance](performance.md)'s `_SCORE_EXPR`,
-  passed in so the served-grade expression lives in one place; the graded
-  SELECT also carries the display-only `pa.created_at`, threaded on as
-  `created_at_by_attempt`).
+  `load_problem_aggregates(db, *, search_space_id, score_expr, repeated_pairs=None)`
+  (graded attempts — `score_expr` is [performance](performance.md)'s
+  `_SCORE_EXPR`, passed in so the served-grade expression lives in one place; the
+  graded SELECT also carries the display-only `pa.created_at`, threaded on as
+  `created_at_by_attempt`); `load_repeated_misconception_pairs(db, *,
+  search_space_id)` (canonical `internal.grading_runs` artifacts).
 
 ## Data flow
 
@@ -50,8 +55,13 @@ Apollo side is `role = 'apollo'`), course-scoped, joined to
 user_id). `load_problem_aggregates` reads graded `app.problem_attempts` ordered
 by `pa.id` (one added column, `pa.created_at` — no new query, scan, or index),
 plus a second pass surfacing the latest attempt id per (student, problem) over
-**all** attempts (any result) that drives `best_is_last`. Both hand raw rows to
-the pure folders above.
+**all** attempts (any result) that drives `best_is_last`.
+`load_repeated_misconception_pairs` unrolls
+`internal.grading_runs.grader_payload -> 'misconceptions'` (canonical role,
+course-scoped) under the same `jsonb_typeof(...) = 'array'` guard the other two
+readers of that column use, and hands whole JSONB entries to the pure fold —
+the visibility and repeat decisions are Python, not SQL. All three hand raw
+rows to the pure folders above.
 
 ## Invariants & gotchas
 
@@ -84,9 +94,28 @@ the pure folders above.
   widest `LETTER_BANDS` band F = [0, 30) is exactly 30 wide). The fast gap and
   the gain are measured over the pair as a whole, not necessarily over the same
   transition — on pairs with 3+ attempts this is a heuristic, not proof that one
-  single retry did both. Stable order: not_started, low_effort, gave_up,
-  grinding, rapid_retry. `_is_rapid_flip` is the SINGLE predicate behind both
-  this flag and `retry_timing.rapid_flips`.
+  single retry did both. `repeated_misconception` (P3.2: the same
+  `canonical_key` teacher-visible in `>= REPEATED_MISCONCEPTION_MIN_ATTEMPTS` (2)
+  DISTINCT graded attempts by one student at one problem — distinct ATTEMPTS,
+  never rows, so a key repeated inside one array is still one attempt). Stable
+  order: not_started, low_effort, gave_up, grinding, rapid_retry,
+  repeated_misconception. `_is_rapid_flip` is the SINGLE predicate behind both
+  `rapid_retry` and `retry_timing.rapid_flips`.
+- **Flags are APPEND-ONLY.** A new flag goes on the END; no existing flag's
+  spelling or position may move (the teacher UI keys off these strings). Every
+  P3.2 input is an optional SIDE MAP, so an absent payload reproduces the
+  original five exactly — pinned by
+  `tests/test_performance_repeated_misconception.py`.
+- **`repeated_misconception` is a level-3 surface, gated on the WRITE side.** The
+  misconception array is persisted from wrongness level 1 for internal readers
+  ([done](../conversation/handlers/done.md)), so `teacher_visible_misconception`
+  drops entries carrying the `shadow` marker — and `resolved` ones, which the
+  student already fixed. Same two exclusions as
+  [classroom](classroom.md)'s `top_misconceptions`, expressed in Python here and
+  in SQL there; both are driven at levels 0/1/2/3 by
+  `tests/database/test_wrongness_teacher_surfaces_postgres.py`. A pair only gets
+  the flag if it also has graded attempts WITH a served score, since artifact
+  rows alone never mint a `ProblemAgg`.
 - **Same served-grade semantics as v1 everywhere** — best-wins here is the same
   max-score/latest-id order `_SCORE_EXPR` produces, so retry gain never disagrees
   with the best-wins grade the student was shown.
@@ -96,3 +125,12 @@ the pure folders above.
   negative duration. No ordering, best-wins selection, or score expression
   anywhere is keyed on a timestamp — re-ordering by time would silently change
   served grades and break teacher/student grade parity.
+- **`load_repeated_misconception_pairs` pre-filters in SQL**
+  (`_TEACHER_VISIBLE_MISCONCEPTION_SQL`, byte-identical to `classroom`'s twin
+  and pinned equal by test) and the pure `teacher_visible_misconception` still
+  decides on every row returned. At wrongness levels 1-2 every persisted entry
+  is `shadow`-marked, so without the predicate the loader would ship the whole
+  course's misconception corpus on each teacher page load and discard all of
+  it. The LATERAL is `jsonb_typeof(...) = 'array'`-guarded; there is no time
+  window, on purpose — a repeat is a fact about a student's whole history at
+  one problem, not a recent-activity signal.

@@ -724,6 +724,55 @@ def test_sql_artifact_reader_row_to_payload_maps_every_jsonb_column():
     }
 
 
+def test_sql_artifact_reader_row_to_payload_drops_the_internal_wrongness_record():
+    """Apollo P3.2: `grader_payload -> 'misconceptions'` is a SUPERSET of the
+    array the student was served -- it carries `shadow`-marked entries below
+    wrongness level 3 and `resolved` ones the XP dedup subtracts (see
+    `apollo.handlers.done._shadow_misconceptions`). The campaign reader must
+    reconstruct what was SERVED, or every level >= 1 run reports misconceptions
+    no Done ever showed."""
+    served = {"canonical_key": "eq.served", "resolved": False, "evidence_span": "q"}
+    row = _FakeRow(
+        grader_used="llm",
+        version_details={},
+        node_ledger=[],
+        edge_ledger=[],
+        grader_payload={
+            "misconceptions": [
+                {"canonical_key": "eq.shadow", "resolved": False, "shadow": True},
+                {"canonical_key": "eq.fixed", "resolved": True, "evidence_span": "q"},
+                served,
+            ]
+        },
+        score_details={},
+        abstention_details=None,
+        grading_latency_ms=1,
+    )
+
+    assert student.SqlArtifactReader._row_to_payload(row)["misconceptions"] == [served]
+
+
+def test_sql_artifact_reader_row_to_payload_keeps_every_pre_p32_entry():
+    """The two markers are both ABSENT on every row written before P3.2, and an
+    absent marker must never be read as a mark -- the same `IS DISTINCT FROM
+    'true'` semantics the teacher SQL uses. A `None` array is also not a crash."""
+    legacy = {"canonical_key": "eq.legacy", "evidence_span": "q"}
+    row = _FakeRow(
+        grader_used="graph",
+        version_details={},
+        node_ledger=[],
+        edge_ledger=[],
+        grader_payload={"misconceptions": [legacy]},
+        score_details={},
+        abstention_details=None,
+        grading_latency_ms=1,
+    )
+    assert student.SqlArtifactReader._row_to_payload(row)["misconceptions"] == [legacy]
+
+    row.grader_payload = {"misconceptions": None}
+    assert student.SqlArtifactReader._row_to_payload(row)["misconceptions"] == []
+
+
 def test_sql_artifact_reader_stores_session_factory():
     def factory():
         return None

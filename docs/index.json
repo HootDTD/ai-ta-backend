@@ -1,7 +1,7 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-08-08",
+  "generated_at": "2026-08-13",
   "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
@@ -101,6 +101,7 @@
     "apollo/overseer/topic_score.py": "apollo/overseer/topic-score",
     "apollo/overseer/topic_score_serialize.py": "apollo/overseer/topic-score",
     "apollo/overseer/transcript_coverage.py": "apollo/overseer/transcript-coverage",
+    "apollo/overseer/wrongness.py": "apollo/overseer/wrongness",
     "apollo/overseer/xp.py": "apollo/overseer/xp",
     "apollo/parser/__init__.py": "apollo/conversation/parser/parser-llm",
     "apollo/parser/edge_resolver.py": "apollo/conversation/parser/edge-resolver",
@@ -178,8 +179,10 @@
     "apollo/schemas/procedure.py": "apollo/schemas/authoring-schemas",
     "apollo/schemas/variable_map.py": "apollo/schemas/authoring-schemas",
     "apollo/smart_questions/__init__.py": "apollo/conversation/questioning/controller",
+    "apollo/smart_questions/challenge.py": "apollo/conversation/questioning/challenge",
     "apollo/smart_questions/controller.py": "apollo/conversation/questioning/controller",
     "apollo/smart_questions/leakage.py": "apollo/conversation/questioning/leakage",
+    "apollo/smart_questions/prompts.py": "apollo/conversation/questioning/prompts",
     "apollo/smart_questions/selection.py": "apollo/conversation/questioning/selection",
     "apollo/smart_questions/unified.py": "apollo/conversation/questioning/unified",
     "apollo/solver/__init__.py": "apollo/solver/sympy-exec",
@@ -218,6 +221,8 @@
     "campaign/scripts/eval_authored_calc2.py": "campaign/scripts-diff-eval",
     "campaign/scripts/run_s1_s2.py": "campaign/scripts-run-s1-s2",
     "campaign/transcript_replay.py": "campaign/transcript-replay",
+    "campaign/turn_replay.py": "campaign/turn-replay",
+    "campaign/turn_replay_clients.py": "campaign/turn-replay",
     "chats/__init__.py": "chats/service",
     "chats/bundle_cache.py": "chats/bundle-cache",
     "chats/routes.py": "chats/routes",
@@ -570,6 +575,14 @@
         "apollo/parser/__init__.py"
       ]
     },
+    "apollo/conversation/questioning/challenge": {
+      "path": "docs/architecture/apollo/conversation/questioning/challenge.md",
+      "kind": "leaf",
+      "description": "The P3.2 done-gate \u2014 Apollo may not self-declare done while a graded node is owed a challenge; pure, deterministic, no extra LLM call.",
+      "owns": [
+        "apollo/smart_questions/challenge.py"
+      ]
+    },
     "apollo/conversation/questioning/controller": {
       "path": "docs/architecture/apollo/conversation/questioning/controller.md",
       "kind": "leaf",
@@ -587,10 +600,18 @@
         "apollo/smart_questions/leakage.py"
       ]
     },
+    "apollo/conversation/questioning/prompts": {
+      "path": "docs/architecture/apollo/conversation/questioning/prompts.md",
+      "kind": "leaf",
+      "description": "Model-facing contract for the unified questioning call \u2014 system prompt, optional WRONGNESS DUTY and CARRIED CHALLENGE blocks, JSON response schema, repair feedback strings.",
+      "owns": [
+        "apollo/smart_questions/prompts.py"
+      ]
+    },
     "apollo/conversation/questioning/selection": {
       "path": "docs/architecture/apollo/conversation/questioning/selection.md",
       "kind": "leaf",
-      "description": "Deterministic question-target policy \u2014 graded-first ordering, the 2-asks-per-node cap, and the graded budget reservation.",
+      "description": "Deterministic question-target policy \u2014 graded-first ordering, contested-first priority, the 2-asks-per-node cap, and the graded budget reservation.",
       "owns": [
         "apollo/smart_questions/selection.py"
       ]
@@ -849,6 +870,14 @@
         "apollo/overseer/__init__.py"
       ]
     },
+    "apollo/overseer/wrongness": {
+      "path": "docs/architecture/apollo/overseer/wrongness.md",
+      "kind": "leaf",
+      "description": "The pure P3.2 wrongness core \u2014 the single ladder-flag reader, ledger\u2192findings, and the S2\u2032 consequence predicate.",
+      "owns": [
+        "apollo/overseer/wrongness.py"
+      ]
+    },
     "apollo/overseer/xp": {
       "path": "docs/architecture/apollo/overseer/xp.md",
       "kind": "leaf",
@@ -866,7 +895,7 @@
     "apollo/persistence/done-write-linkage": {
       "path": "docs/architecture/apollo/persistence/done-write-linkage.md",
       "kind": "leaf",
-      "description": "Two small pure read-side resolvers the Done-time XP/mastery writers call \u2014 prior-graded-attempt detection and durable problem-bank id resolution.",
+      "description": "Small read-side resolvers the Done-time XP/mastery/questioning writers call \u2014 prior-graded-attempt detection, durable problem-bank id resolution, and the cross-attempt wrongness read.",
       "owns": [
         "apollo/persistence/attempt_history.py",
         "apollo/persistence/problem_linkage.py"
@@ -1447,11 +1476,20 @@
     "campaign/transcript-replay": {
       "path": "docs/architecture/campaign/transcript-replay.md",
       "kind": "leaf",
-      "description": "Deterministic transcript-grader fixture-replay entrypoint \u2014 the surface A7 kept.",
+      "description": "Deterministic transcript-grader fixture-replay entrypoint plus the shared offline grading core.",
       "owns": [
         "campaign/transcript_replay.py",
         "campaign/__init__.py",
         "campaign/README.md"
+      ]
+    },
+    "campaign/turn-replay": {
+      "path": "docs/architecture/campaign/turn-replay.md",
+      "kind": "leaf",
+      "description": "Turn-level replay of recorded prod attempts through the live questioning engine, with an injectable client seam.",
+      "owns": [
+        "campaign/turn_replay.py",
+        "campaign/turn_replay_clients.py"
       ]
     },
     "chats/_index": {
@@ -2062,8 +2100,10 @@
         "apollo/conversation/parser/extraction-schema",
         "apollo/conversation/parser/graph-context",
         "apollo/conversation/parser/parser-llm",
+        "apollo/conversation/questioning/challenge",
         "apollo/conversation/questioning/controller",
         "apollo/conversation/questioning/leakage",
+        "apollo/conversation/questioning/prompts",
         "apollo/conversation/questioning/selection",
         "apollo/conversation/questioning/unified",
         "apollo/conversation/routing/auth-deps",
@@ -2116,6 +2156,7 @@
         "apollo/overseer/topic-narrative",
         "apollo/overseer/topic-score",
         "apollo/overseer/transcript-coverage",
+        "apollo/overseer/wrongness",
         "apollo/overseer/xp"
       ]
     },
@@ -2226,7 +2267,8 @@
         "campaign/judges-s5",
         "campaign/scripts-diff-eval",
         "campaign/scripts-run-s1-s2",
-        "campaign/transcript-replay"
+        "campaign/transcript-replay",
+        "campaign/turn-replay"
       ]
     },
     "chats/_index": {

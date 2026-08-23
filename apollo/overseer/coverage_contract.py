@@ -31,11 +31,31 @@ class CoverageVerdict(TypedDict):
     # graph lane emits no basis at all, so every consumer must read it
     # defensively.
     basis: NotRequired[dict[str, str]]
+    # P3.2 (2026-08-12): an OPTIONAL, additive per-node corroboration map,
+    # ``{node_id: {contradicted, corrected_later, prompted}}``, present ONLY when
+    # the adjudicator was handed FLAGGED CLAIMS the questioning engine raised.
+    # The adjudicator is a CORROBORATOR here: it may confirm or deny a finding
+    # the per-turn tally already produced, it may never originate one, and it
+    # never supplies the span. Absent, the verdict is byte-identical to the
+    # pre-feature contract.
+    wrongness: NotRequired[dict[str, dict[str, bool]]]
 
 
 _KEYS = frozenset({"per_step", "procedure_scores", "confidences", "negotiation_counts"})
-_OPTIONAL_KEYS = frozenset({"hoot_assisted", "basis"})
+# THE P3.2 TRIPWIRE: emitting ``wrongness`` on a verdict WITHOUT listing it here
+# makes ``validate_coverage_verdict`` raise -> ``CoverageGradingError`` -> a 503
+# on EVERY Done, not just the ones carrying a finding. The emitter
+# (``transcript_coverage._to_coverage_verdict``) and this frozenset must always
+# land in the SAME commit; ``test_coverage_contract_wrongness.py::
+# test_wrongness_key_without_optional_keys_would_raise`` documents the failure.
+_OPTIONAL_KEYS = frozenset({"hoot_assisted", "basis", "wrongness"})
 _NEGOTIATION_KEYS = frozenset({"dual", "disputed", "paraphrased", "skipped"})
+# The three corroboration booleans, exactly. ``contradicted`` (P3.2) is a sibling
+# of the two the adjudicator schema has always emitted and every consumer has
+# always dropped; all three are finally READ. A row must carry all three, so a
+# partial row is a drift defect rather than data to pass downstream.
+WRONGNESS_FLAGS: tuple[str, ...] = ("contradicted", "corrected_later", "prompted")
+_WRONGNESS_FLAG_KEYS = frozenset(WRONGNESS_FLAGS)
 # The adjudicator's own enum (``build_transcript_grader_schema``). Keeping the
 # contract's vocabulary identical to the schema's is the point: a fifth value
 # means the two have drifted, which is a defect, not data to pass downstream.
@@ -84,12 +104,34 @@ def _validate_basis_map(value: object) -> None:
             raise ValueError(f"basis must map string node ids to one of {list(BASIS_VALUES)}")
 
 
+def _validate_wrongness_map(value: object) -> None:
+    """Validate the optional ``wrongness`` per-node corroboration map.
+
+    Mirrors ``_validate_assist_map``'s strictness one level deeper: keys must be
+    string node ids, each value must be a dict whose key set is EXACTLY
+    :data:`WRONGNESS_FLAGS`, and each flag must be a genuine ``bool`` (a truthy
+    ``1``/``"true"`` is rejected, never coerced). A finding is the input to a
+    student-visible consequence, so a half-populated row must fail loudly here
+    rather than read as ``False`` somewhere downstream."""
+    if not isinstance(value, dict):
+        raise ValueError("wrongness must be a dict")
+    for node_id, flags in value.items():
+        if not isinstance(node_id, str):
+            raise ValueError("wrongness must map string node ids to flag dicts")
+        if not isinstance(flags, dict) or set(flags) != _WRONGNESS_FLAG_KEYS:
+            raise ValueError(
+                f"wrongness[{node_id!r}] keys must be exactly {sorted(WRONGNESS_FLAGS)}"
+            )
+        if any(not isinstance(flag, bool) for flag in flags.values()):
+            raise ValueError(f"wrongness[{node_id!r}] values must be booleans")
+
+
 def validate_coverage_verdict(value: object) -> None:
     """Raise ``ValueError`` unless *value* matches the frozen schema.
 
     The four required keys must be present and exactly correct. ``hoot_assisted``
-    (INTERACTION5) and ``basis`` (2026-08-08) are the permitted OPTIONAL keys;
-    any other extra key is a contract violation."""
+    (INTERACTION5), ``basis`` (2026-08-08) and ``wrongness`` (P3.2) are the
+    permitted OPTIONAL keys; any other extra key is a contract violation."""
     if not isinstance(value, dict):
         raise ValueError(f"coverage keys must be exactly {sorted(_KEYS)}")
     keys = set(value)
@@ -115,10 +157,13 @@ def validate_coverage_verdict(value: object) -> None:
         _validate_assist_map(value["hoot_assisted"])
     if "basis" in value:
         _validate_basis_map(value["basis"])
+    if "wrongness" in value:
+        _validate_wrongness_map(value["wrongness"])
 
 
 __all__ = [
     "BASIS_VALUES",
+    "WRONGNESS_FLAGS",
     "CoverageVerdict",
     "NegotiationCounts",
     "validate_coverage_verdict",
