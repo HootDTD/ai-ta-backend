@@ -33,9 +33,16 @@ from apollo.handlers.intent import IntentVerdict
 from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
+    Concept,
+    LearnerEntity,
+    LearnerState,
+    MasteryEvent,
+    Problem,
     ProblemAttempt,
+    QuestionOpportunity,
     SessionPhase,
     SessionStatus,
+    StudentProgress,
     TutoringMessage,
     TutoringSession,
 )
@@ -58,20 +65,63 @@ async def db_two_sessions():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
+        Concept.__table__,
+        Problem.__table__,
+        QuestionOpportunity.__table__,
+        StudentProgress.__table__,
+        LearnerEntity.__table__,
+        LearnerState.__table__,
+        MasteryEvent.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
+        # A real concept + problem so the DONE arm of the byte-equivalence test
+        # can run the REAL `handle_done` (I4) instead of a stub. Inert for every
+        # ask-path test in this file, which patches `chat._find_problem`.
+        concept = Concept(
+            course_id=TEST_SPACE_ID,
+            subject_slug="physics",
+            subject_display_name="Physics",
+            slug="bernoulli_principle",
+            display_name="Bernoulli",
+        )
+        s.add(concept)
+        await s.commit()
+        await s.refresh(concept)
+        problem = Problem.from_inventory_payload(
+            {
+                "id": "P-EQ",
+                "difficulty": "intro",
+                "problem_text": "find P2",
+                "given_values": {},
+                "target_unknown": "",
+                "reference_solution": [
+                    {
+                        "step": 1,
+                        "entry_type": "equation",
+                        "id": "eq_bernoulli",
+                        "content": {"symbolic": "P1 - P2", "label": "Bernoulli"},
+                    }
+                ],
+            },
+            course_id=TEST_SPACE_ID,
+            concept_id=int(concept.id),
+            tier=2,
+        )
+        s.add(problem)
+        await s.commit()
+        await s.refresh(problem)
         ids = []
         for user_id in (TEST_USER_ID, TEST_USER_ID_2):
             sess = TutoringSession(
                 user_id=user_id,
                 search_space_id=TEST_SPACE_ID,
-                concept_id=1,
+                concept_id=int(concept.id),
                 status=SessionStatus.active.value,
                 phase=SessionPhase.TEACHING.value,
-                current_problem_id=1,
+                current_problem_id=int(problem.id),
                 pending_intent=None,
             )
             s.add(sess)
@@ -79,7 +129,7 @@ async def db_two_sessions():
             await s.refresh(sess)
             attempt = ProblemAttempt(
                 session_id=sess.id,
-                problem_id=1,
+                problem_id=int(problem.id),
                 difficulty="intro",
                 user_id=sess.user_id,
                 course_id=sess.course_id,
@@ -125,14 +175,62 @@ def _ask_planner():
     )
 
 
-async def test_blocking_payload_is_byte_identical_with_and_without_a_sink(db_two_sessions):
-    """The whole-payload pin. A sink may observe a turn; it may not change one."""
+def _done_planner():
+    return AsyncMock(
+        return_value=QuestionDecision(action="done", question=None, target_node_id=None)
+    )
+
+
+@pytest.mark.parametrize("action", ["ask", "done"])
+async def test_blocking_payload_is_byte_identical_with_and_without_a_sink(db_two_sessions, action):
+    """The whole-payload pin. A sink may observe a turn; it may not change one.
+
+    The `done` arm exists because the `ask` arm alone compared a payload with no
+    rubric, no band and no narrative in it (I4) — the entire grading surface the
+    streaming work was riskiest around was outside the comparison. It drives the
+    REAL `handle_done` (only the LLM narrative is stubbed, as in `test_done.py`),
+    so the compared payload carries the graded blob.
+    """
     db, ids = db_two_sessions
     (blocking_sid, _), (streamed_sid, _) = ids
     from apollo.handlers.chat import handle_chat
 
-    ps = _base_patches(_fake_store(), _ask_planner())
-    with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5]:
+    planner = _ask_planner() if action == "ask" else _done_planner()
+    ps = _base_patches(_fake_store(), planner)
+    with (
+        ps[0],
+        ps[1],
+        ps[2],
+        ps[3],
+        ps[4],
+        ps[5],
+        # The only two stubs in the DONE arm are the LLM boundaries — the
+        # adjudication call and the narrative call. Everything between them
+        # (topic score, rubric, letter, BAND, narrative assembly, payload
+        # shaping) is the real code, which is the whole point of the arm.
+        patch(
+            "apollo.handlers.done.compute_transcript_coverage_with_spans",
+            new=AsyncMock(
+                return_value=(
+                    {
+                        "per_step": {"eq_bernoulli": "covered"},
+                        "procedure_scores": {},
+                        "confidences": {"eq_bernoulli": 0.9},
+                    },
+                    {},
+                )
+            ),
+        ),
+        patch(
+            "apollo.handlers.done.generate_diagnostic",
+            return_value="You taught the continuity step clearly.",
+        ),
+        # `grading_runs` carries Postgres-only DDL that SQLite cannot create, so
+        # the telemetry INSERT is skipped (same seam `_wrongness_fixtures` uses).
+        # It writes a row; it does not shape the payload being compared.
+        patch("apollo.handlers.done.write_artifacts", new=AsyncMock(return_value=None)),
+        patch("apollo.handlers.done._project_mastery", new=AsyncMock()),
+    ):
         blocking = await handle_chat(
             db=db, neo=MagicMock(), session_id=blocking_sid, message="the same words"
         )
@@ -145,6 +243,14 @@ async def test_blocking_payload_is_byte_identical_with_and_without_a_sink(db_two
         )
 
     assert json.dumps(blocking, sort_keys=True) == json.dumps(streamed, sort_keys=True)
+    if action == "done":
+        # Not vacuous: the graded blob really is inside the compared payload,
+        # so the comparison now covers the rubric, the BAND and the narrative —
+        # the surface the ask-only version never touched.
+        graded = blocking["intent_executed"]["result"]
+        assert graded["rubric"]["overall"]["band"] is not None
+        assert graded["rubric"]["overall"]["letter"] is not None
+        assert graded["diagnostic_narrative"]
 
 
 async def test_student_row_is_durable_before_the_thinking_phase_is_announced(db_two_sessions):
