@@ -177,12 +177,21 @@ async def run_gate_done(
     wrongness_map: Any = DEFAULT,
     prior_findings: Sequence[Mapping[str, Any]] = (),
     concept_allowlist: str | None = None,
+    topic_score_side_effect: BaseException | None = None,
 ) -> GateRun:
     """Drive ONE ``handle_done`` at ``APOLLO_WRONGNESS_LEVEL=level``.
 
     Identical seeded state at every rung — the same ledger, the same recorded
     adjudication, the same reference graph — so a difference in the output is a
     difference the LADDER made and nothing else.
+
+    ``topic_score_side_effect`` selects the OTHER serving branch. The default
+    (``None``) leaves the real ``compute_topic_score`` on the path, which always
+    computes here, so every gate built on this harness lands on
+    ``serve_topic_score = True``. Passing an exception makes the scorer raise, so
+    ``_compute_topic_score_safe`` soft-fails and ``handle_done`` serves the
+    legacy axis-blend overall instead — the branch that would otherwise be
+    invisible to a whole-blob gate.
     """
     monkeypatch.setenv("APOLLO_WRONGNESS_LEVEL", str(level))
     if concept_allowlist is None:
@@ -256,6 +265,13 @@ async def run_gate_done(
         patch("apollo.handlers.done.write_artifacts", new=AsyncMock(side_effect=_write_artifacts)),
         patch("apollo.handlers.done._project_mastery", new=AsyncMock()),
     ]
+    if topic_score_side_effect is not None:
+        patches.append(
+            patch(
+                "apollo.handlers.done.compute_topic_score",
+                new=MagicMock(side_effect=topic_score_side_effect),
+            )
+        )
 
     started: dict[str, Any] = {}
     for p in patches:

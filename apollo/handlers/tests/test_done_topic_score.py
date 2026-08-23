@@ -511,7 +511,8 @@ async def test_served_overall_snapshot_persisted(monkeypatch):
 
 async def test_served_overall_snapshot_on_soft_fail_equals_raw_overall(monkeypatch):
     """When topic scoring soft-fails, the student saw the legacy overall, so
-    the snapshot must equal `rubric.overall` (still present, still a copy)."""
+    the snapshot must equal `rubric.overall` (still present, still a copy) —
+    plus the additive band, which the PERSISTED RAW rubric must NOT have."""
     capture: dict = {}
     out = await _run(
         monkeypatch, topic_score_side_effect=RuntimeError("boom"), capture=capture
@@ -520,6 +521,15 @@ async def test_served_overall_snapshot_on_soft_fail_equals_raw_overall(monkeypat
     report = capture["attempt"].diagnostic_report
     assert report["served_overall"] == {"score": 90, "letter": "A", "band": score_to_band(90)}
     assert report["served_overall"] == out["rubric"]["overall"]
+    # THE end-to-end raw-rubric assertion (2026-08-23 fix round): `_with_band`
+    # decorates a COPY, so the rubric that is persisted, handed to
+    # `write_artifacts`, and read by the teacher projections is band-free and
+    # whole-blob identical to what `compute_rubric` returned. A `{**d}` that
+    # accidentally became an in-place mutation would leak the band into the
+    # grade of record and every teacher surface, and only this assertion sees it.
+    assert report["rubric"] == _OLD_RUBRIC
+    assert report["rubric"]["overall"] == {"score": 90, "letter": "A"}
+    assert "band" not in report["rubric"]["overall"]
 
 
 async def test_topic_score_raising_artifact_receives_none(monkeypatch):

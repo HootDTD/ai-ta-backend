@@ -2,7 +2,7 @@
  "_source": "origin/staging@1f1eafc7 (pre-bands)",
  "_what": "Whole Done-path blobs recorded BEFORE the proficiency-band change. See tests/gates_bands/_baseline.py for how to regenerate.",
  "runs": {
-  "0": {
+  "L0": {
    "artifact": {
     "abstention": {
      "abstained": null,
@@ -360,7 +360,258 @@
     "xp_earned": 10
    }
   },
-  "1": {
+  "L0-softfail": {
+   "artifact": {
+    "abstention": {
+     "abstained": null,
+     "fallback_grade": 100,
+     "reasons": []
+    },
+    "clarification_trace": [],
+    "edge_ledger": [],
+    "grader_used": "llm_fallback",
+    "grading_latency_ms": "<neutralized wall clock>",
+    "misconceptions": [],
+    "node_ledger": [
+     {
+      "basis": null,
+      "canonical_key": "eq1",
+      "confidence": 0.9,
+      "evidence_span": null,
+      "method": null,
+      "status": "credited"
+     },
+     {
+      "basis": null,
+      "canonical_key": "c1",
+      "confidence": 0.9,
+      "evidence_span": null,
+      "method": null,
+      "status": "credited"
+     }
+    ],
+    "scores": {
+     "composite": 1.0,
+     "llm_rubric": {
+      "justification": {
+       "letter": "A+",
+       "present": true,
+       "score": 100
+      },
+      "misconception_corrected": {
+       "detected": 0,
+       "letter": "F",
+       "present": false,
+       "resolved": 0,
+       "score": 0
+      },
+      "overall": {
+       "letter": "A+",
+       "score": 100
+      },
+      "procedure": {
+       "letter": "F",
+       "present": false,
+       "score": 0
+      },
+      "simplification": {
+       "letter": "F",
+       "present": false,
+       "score": 0
+      }
+     },
+     "node_coverage": 1.0
+    },
+    "versions": {
+     "grader": "llm-fallback-v1",
+     "reference_graph_hash": null
+    }
+   },
+   "diagnostic_report": {
+    "coverage": {
+     "confidences": {
+      "c1": 0.9,
+      "eq1": 0.9
+     },
+     "per_step": {
+      "c1": "covered",
+      "eq1": "covered"
+     },
+     "procedure_scores": {},
+     "wrongness": {
+      "eq1": {
+       "contradicted": true,
+       "corrected_later": false,
+       "prompted": true
+      }
+     }
+    },
+    "narrative": "Fixed narrator output for the P3.2 gate suite.",
+    "rubric": {
+     "justification": {
+      "letter": "A+",
+      "present": true,
+      "score": 100
+     },
+     "misconception_corrected": {
+      "detected": 0,
+      "letter": "F",
+      "present": false,
+      "resolved": 0,
+      "score": 0
+     },
+     "overall": {
+      "letter": "A+",
+      "score": 100
+     },
+     "procedure": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     },
+     "simplification": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     }
+    },
+    "served_overall": {
+     "letter": "A+",
+     "score": 100
+    }
+   },
+   "score_details": {
+    "composite": 1.0,
+    "llm_rubric": {
+     "justification": {
+      "letter": "A+",
+      "present": true,
+      "score": 100
+     },
+     "misconception_corrected": {
+      "detected": 0,
+      "letter": "F",
+      "present": false,
+      "resolved": 0,
+      "score": 0
+     },
+     "overall": {
+      "letter": "A+",
+      "score": 100
+     },
+     "procedure": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     },
+     "simplification": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     }
+    },
+    "node_coverage": 1.0
+   },
+   "student_response": {
+    "coverage": {
+     "confidences": {
+      "c1": 0.9,
+      "eq1": 0.9
+     },
+     "per_step": {
+      "c1": "covered",
+      "eq1": "covered"
+     },
+     "procedure_scores": {},
+     "wrongness": {
+      "eq1": {
+       "contradicted": true,
+       "corrected_later": false,
+       "prompted": true
+      }
+     }
+    },
+    "diagnostic_narrative": "Fixed narrator output for the P3.2 gate suite.",
+    "grading_provenance": {
+     "docks": [],
+     "evidence_source": "transcript",
+     "grader_used": "llm_transcript",
+     "graph_lane": null,
+     "grounding": {
+      "doc_ids": [],
+      "snippet_count": 0,
+      "used": false
+     },
+     "reference_question_asides_used": 0,
+     "score_before_dock": null,
+     "topics": []
+    },
+    "level_after": 1,
+    "level_before": 1,
+    "level_up": false,
+    "progress": {
+     "level_after": 1,
+     "level_before": 1,
+     "level_progress_pct": 0.1,
+     "level_up": false,
+     "title_after": "Novice",
+     "xp_after": 10,
+     "xp_before": 0,
+     "xp_earned": 10,
+     "xp_to_next_level": 90
+    },
+    "rubric": {
+     "justification": {
+      "letter": "A+",
+      "present": true,
+      "score": 100
+     },
+     "misconception_corrected": {
+      "detected": 0,
+      "letter": "F",
+      "present": false,
+      "resolved": 0,
+      "score": 0
+     },
+     "overall": {
+      "letter": "A+",
+      "score": 100
+     },
+     "procedure": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     },
+     "simplification": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     }
+    },
+    "scorecard": {
+     "band": "Strong",
+     "clarifications": [],
+     "missing_or_unclear": [],
+     "score_0_100": 100,
+     "taught_well": [
+      {
+       "key": "eq1"
+      },
+      {
+       "key": "c1"
+      }
+     ],
+     "watch_out": [],
+     "watch_out_note": null,
+     "watch_out_status": "checked"
+    },
+    "transcript": [],
+    "xp_after": 10,
+    "xp_before": 0,
+    "xp_earned": 10
+   }
+  },
+  "L1": {
    "artifact": {
     "abstention": {
      "abstained": null,
@@ -718,7 +969,7 @@
     "xp_earned": 10
    }
   },
-  "2": {
+  "L2": {
    "artifact": {
     "abstention": {
      "abstained": null,
@@ -1076,7 +1327,7 @@
     "xp_earned": 10
    }
   },
-  "3": {
+  "L3": {
    "artifact": {
     "abstention": {
      "abstained": null,
@@ -1474,6 +1725,257 @@
       "weight": 0.5
      }
     ],
+    "transcript": [],
+    "xp_after": 10,
+    "xp_before": 0,
+    "xp_earned": 10
+   }
+  },
+  "L3-softfail": {
+   "artifact": {
+    "abstention": {
+     "abstained": null,
+     "fallback_grade": 100,
+     "reasons": []
+    },
+    "clarification_trace": [],
+    "edge_ledger": [],
+    "grader_used": "llm_fallback",
+    "grading_latency_ms": "<neutralized wall clock>",
+    "misconceptions": [],
+    "node_ledger": [
+     {
+      "basis": null,
+      "canonical_key": "eq1",
+      "confidence": 0.9,
+      "evidence_span": null,
+      "method": null,
+      "status": "credited"
+     },
+     {
+      "basis": null,
+      "canonical_key": "c1",
+      "confidence": 0.9,
+      "evidence_span": null,
+      "method": null,
+      "status": "credited"
+     }
+    ],
+    "scores": {
+     "composite": 1.0,
+     "llm_rubric": {
+      "justification": {
+       "letter": "A+",
+       "present": true,
+       "score": 100
+      },
+      "misconception_corrected": {
+       "detected": 0,
+       "letter": "F",
+       "present": false,
+       "resolved": 0,
+       "score": 0
+      },
+      "overall": {
+       "letter": "A+",
+       "score": 100
+      },
+      "procedure": {
+       "letter": "F",
+       "present": false,
+       "score": 0
+      },
+      "simplification": {
+       "letter": "F",
+       "present": false,
+       "score": 0
+      }
+     },
+     "node_coverage": 1.0
+    },
+    "versions": {
+     "grader": "llm-fallback-v1",
+     "reference_graph_hash": null
+    }
+   },
+   "diagnostic_report": {
+    "coverage": {
+     "confidences": {
+      "c1": 0.9,
+      "eq1": 0.9
+     },
+     "per_step": {
+      "c1": "covered",
+      "eq1": "covered"
+     },
+     "procedure_scores": {},
+     "wrongness": {
+      "eq1": {
+       "contradicted": true,
+       "corrected_later": false,
+       "prompted": true
+      }
+     }
+    },
+    "narrative": "Fixed narrator output for the P3.2 gate suite.",
+    "rubric": {
+     "justification": {
+      "letter": "A+",
+      "present": true,
+      "score": 100
+     },
+     "misconception_corrected": {
+      "detected": 0,
+      "letter": "F",
+      "present": false,
+      "resolved": 0,
+      "score": 0
+     },
+     "overall": {
+      "letter": "A+",
+      "score": 100
+     },
+     "procedure": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     },
+     "simplification": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     }
+    },
+    "served_overall": {
+     "letter": "A+",
+     "score": 100
+    }
+   },
+   "score_details": {
+    "composite": 1.0,
+    "llm_rubric": {
+     "justification": {
+      "letter": "A+",
+      "present": true,
+      "score": 100
+     },
+     "misconception_corrected": {
+      "detected": 0,
+      "letter": "F",
+      "present": false,
+      "resolved": 0,
+      "score": 0
+     },
+     "overall": {
+      "letter": "A+",
+      "score": 100
+     },
+     "procedure": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     },
+     "simplification": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     }
+    },
+    "node_coverage": 1.0
+   },
+   "student_response": {
+    "coverage": {
+     "confidences": {
+      "c1": 0.9,
+      "eq1": 0.9
+     },
+     "per_step": {
+      "c1": "covered",
+      "eq1": "covered"
+     },
+     "procedure_scores": {},
+     "wrongness": {
+      "eq1": {
+       "contradicted": true,
+       "corrected_later": false,
+       "prompted": true
+      }
+     }
+    },
+    "diagnostic_narrative": "Fixed narrator output for the P3.2 gate suite.",
+    "grading_provenance": {
+     "docks": [],
+     "evidence_source": "transcript",
+     "grader_used": "llm_transcript",
+     "graph_lane": null,
+     "grounding": {
+      "doc_ids": [],
+      "snippet_count": 0,
+      "used": false
+     },
+     "reference_question_asides_used": 0,
+     "score_before_dock": null,
+     "topics": []
+    },
+    "level_after": 1,
+    "level_before": 1,
+    "level_up": false,
+    "progress": {
+     "level_after": 1,
+     "level_before": 1,
+     "level_progress_pct": 0.1,
+     "level_up": false,
+     "title_after": "Novice",
+     "xp_after": 10,
+     "xp_before": 0,
+     "xp_earned": 10,
+     "xp_to_next_level": 90
+    },
+    "rubric": {
+     "justification": {
+      "letter": "A+",
+      "present": true,
+      "score": 100
+     },
+     "misconception_corrected": {
+      "detected": 0,
+      "letter": "F",
+      "present": false,
+      "resolved": 0,
+      "score": 0
+     },
+     "overall": {
+      "letter": "A+",
+      "score": 100
+     },
+     "procedure": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     },
+     "simplification": {
+      "letter": "F",
+      "present": false,
+      "score": 0
+     }
+    },
+    "scorecard": {
+     "band": "Strong",
+     "clarifications": [],
+     "missing_or_unclear": [],
+     "score_0_100": 100,
+     "taught_well": [
+      {
+       "key": "eq1"
+      },
+      {
+       "key": "c1"
+      }
+     ],
+     "watch_out": [],
+     "watch_out_note": null,
+     "watch_out_status": "checked"
+    },
     "transcript": [],
     "xp_after": 10,
     "xp_before": 0,
