@@ -504,7 +504,11 @@ _GRADE_CONNECTOR = r"(?:(?:of|is|was|sits at|comes to|came out to|stands at|at)\
 # both satisfy noun+connector+number, and only the tail tells them apart from
 # "Your score is 72," — a number followed by a SUBJECT-MATTER unit is a
 # measurement, not a grade.
-_GRADE_TAIL = rf"(?:\s*{_GRADE_UNIT}{_GRADE_SCOPE}|{_GRADE_SCOPE}(?=\s*(?:[.,;:!?)]|$)))"
+# `\.(?!\d)`, never a bare `.` (review fix, round 2): with `.` in the class the
+# frame could BACKTRACK `_GRADE_NUM` to the integer part of a decimal and treat
+# the decimal point as the clause close — "The motor rating is 7.5 kW at full
+# load." matched "rating is 7" and served "The motor.5 kW at full load."
+_GRADE_TAIL = rf"(?:\s*{_GRADE_UNIT}{_GRADE_SCOPE}|{_GRADE_SCOPE}(?=\s*(?:[,;:!?)]|\.(?!\d)|$)))"
 
 _SCORE_FRAME_RES = (
     # "you scored 72", "graded 84 overall" — strong verb, unit optional.
@@ -538,8 +542,14 @@ _SCORE_FRAME_RES = (
                re.IGNORECASE),
     # "that puts you at 72%", "you're at 60%" — second person + a standing, which
     # is a grade by construction in prose addressed to the student.
+    #
+    # The subject is pinned to a bare pronoun (review fix, round 2). Allowing ANY
+    # subject let a physical reading through: "The pump curve puts you at 80%
+    # efficiency." became "The pump curve efficiency." A named subject means the
+    # sentence is about that thing, not about the student's standing.
     re.compile(
-        rf"\b(?:(?:puts?|leaves?|has|had|got)\s+)?you(?:'re|\s+are|\s+were)?\s+at\s+"
+        rf"\b(?:(?:that|this|it)\s+(?:puts?|leaves?|has|had|got)\s+you|"
+        rf"you(?:'re|\s+are|\s+were))\s+at\s+"
         rf"(?:about\s+|around\s+|roughly\s+|nearly\s+)?{_GRADE_NUM}\s*(?:%|percent\b)",
         re.IGNORECASE,
     ),
@@ -582,7 +592,13 @@ _GRADING_ANCHOR_RE = re.compile(
 
 # Sentence bodies and their terminators, kept separately so the text rebuilds
 # exactly. `\n` terminates too: a paragraph break is a sentence break.
-_SENTENCE_KEEP_RE = re.compile(r"([.!?\n]+)")
+#
+# A `.` between two DIGITS is not a terminator (review fix, round 2). Splitting
+# "7.5" made an artificial clause-close that satisfied `_GRADE_TAIL`'s lookahead,
+# so "The motor rating is 7.5 kW at full load." served "The motor.5 kW at full
+# load." — and it split "87.5%" so a grade leaked back as "5%". A `.` still
+# terminates when only ONE side is a digit, so "Your score is 72." splits.
+_SENTENCE_KEEP_RE = re.compile(r"((?:[!?\n]|(?<!\d)\.|\.(?!\d))+)")
 
 # `"` and the two curly forms delimit a quoted span. Captured so `re.split`
 # keeps them and the text round-trips exactly when nothing is scrubbed.

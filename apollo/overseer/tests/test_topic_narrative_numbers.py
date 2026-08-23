@@ -324,6 +324,63 @@ def test_grade_and_rating_nouns_in_content_survive(why, text):
     assert sanitize_narrative(text) == text, why
 
 
+# ── 3b-iv. review fix round 2: DECIMAL measurements (2026-08-23) ─────────────
+#
+# The round-1 negatives above all used integer quantities, which hid two bugs
+# that only a decimal exposes: the sentence splitter treated `7.5`'s point as a
+# terminator, and `_GRADE_TAIL` accepted that same point as a clause close after
+# backtracking `_GRADE_NUM` to the integer part. Both served the fragment
+# ".5 kW". A decimal is the common case for a real measurement, so this family
+# gets its own block.
+
+
+@pytest.mark.parametrize(
+    ("why", "text"),
+    [
+        ("a decimal motor rating", "The motor rating is 7.5 kW at full load."),
+        ("a decimal pressure rating", "The pump has a rating of 3.5 bar before it cavitates."),
+        ("a decimal safety factor", "The safety factor rating is 2.5 for that beam."),
+        ("a decimal quantity mid-sentence", "The 1.5 kg mass slides 2.5 m before it stops."),
+    ],
+)
+def test_decimal_measurements_survive(why, text):
+    assert sanitize_narrative(text) == text, why
+
+
+def test_a_decimal_grade_is_scrubbed_whole():
+    """The recall half of the same bug: the splitter cut `87.5%` in two and the
+    frame ate only `87`, leaking a mangled `5%` back into the served prose."""
+    assert sanitize_narrative("Your score is 87.5% overall.") == ""
+    out = sanitize_narrative("Your score came out to 3.5. Next, the 20% rate matters.")
+    assert "3.5" not in out and "5." not in out
+    # ...and the content percentage in the FOLLOWING sentence is untouched: the
+    # anchor is per sentence, and the splitter no longer merges the two.
+    assert out == "Next, the 20% rate matters."
+
+
+# ── 3b-v. review fix round 2: the second-person standing frame ───────────────
+#
+# `puts/leaves/has you at NN%` ran unanchored, so any subject qualified and a
+# physical reading was mangled. The subject is now a bare pronoun.
+
+
+@pytest.mark.parametrize(
+    ("why", "text"),
+    [
+        ("a pump curve operating point", "The pump curve puts you at 80% efficiency."),
+        ("a capacity reading", "That operating point leaves you at 60% of capacity."),
+        ("a conversion on an isotherm", "Following the isotherm has you at 40% conversion."),
+    ],
+)
+def test_a_named_subject_keeps_the_you_at_reading_physical(why, text):
+    assert sanitize_narrative(text) == text, why
+
+
+def test_a_bare_pronoun_subject_is_still_a_standing():
+    assert sanitize_narrative("That puts you at 72%.") == ""
+    assert "60%" not in sanitize_narrative("You're at 60% on this topic.")
+
+
 # ── 3b-iii. the residuals, pinned rather than omitted ────────────────────────
 
 
@@ -340,6 +397,37 @@ def test_accepted_content_loss_a_parenthetical_percentage():
     assert sanitize_narrative("The pump efficiency (85%) held steady.") == (
         "The pump efficiency held steady."
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "You were graded on the section covering the 30% tax rate.",
+            "You were graded on the section covering the tax rate.",
+        ),
+        (
+            "The rubric asks for the 45% split between the two funds.",
+            "The rubric asks for the split between the two funds.",
+        ),
+        (
+            "Your score depends on whether you used the 12% discount rate.",
+            "Your score depends on whether you used the discount rate.",
+        ),
+    ],
+)
+def test_accepted_content_loss_a_content_percentage_in_a_grading_sentence(text, expected):
+    """ACCEPTED LOSS, pinned so it stays visible.
+
+    Sentence anchoring is coarser than adjacency: a CONTENT percentage that
+    happens to share a sentence with a grading word loses its number. The
+    alternative — requiring adjacency for the token tier too — would let
+    "Only 40% of the rubric landed." through, and the sentence is the smallest
+    unit in which "is this about the grade?" is answerable at all. Each result
+    below is still a true, grammatical sentence, which is what makes the trade
+    payable; the number is the only casualty.
+    """
+    assert sanitize_narrative(text) == expected
 
 
 def test_accepted_residual_leak_a_percentage_with_no_anchor():
