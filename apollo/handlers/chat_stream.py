@@ -138,6 +138,23 @@ def get_turn_session_opener() -> TurnSessionOpener:
 _BACKGROUND_TURNS: set[asyncio.Task] = set()
 
 
+def _release_background_turn(task: asyncio.Task) -> None:
+    """Drop the strong ref AND retrieve the task's exception.
+
+    `set.discard` alone (the original callback) never touched the result, so a
+    turn that died on a BaseException was garbage-collected with its exception
+    unretrieved — asyncio's "exception was never retrieved" warning is not a log
+    line anyone alerts on. This is the ONE server-side signal for the failure
+    mode the `_KIND_END` terminal frame covers on the client side.
+    """
+    _BACKGROUND_TURNS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        _LOG.error("apollo_stream_turn_task_failed", exc_info=exc)
+
+
 # ----------------------------------------------------------------------
 # Framing
 # ----------------------------------------------------------------------
@@ -297,7 +314,7 @@ async def stream_chat_turn(
         )
     )
     _BACKGROUND_TURNS.add(task)
-    task.add_done_callback(_BACKGROUND_TURNS.discard)
+    task.add_done_callback(_release_background_turn)
 
     # Both of these precede any awaited work, so "visible activity < 1s" is a
     # property of the framing, not of how fast the LLM chain happens to be.

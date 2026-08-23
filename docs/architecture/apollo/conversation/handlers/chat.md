@@ -136,9 +136,14 @@ every other in-flight Apollo request on that worker.
 - **`on_phase` is a VIEW, provably inert**: the blocking route passes nothing,
   so each `_emit` is one identity check and the blocking payload stays
   byte-identical (whole-payload pin, `tests/test_chat_phase_sink.py`); `_emit`
-  swallows sink exceptions. `TURN_PHASE_REPLY` fires as soon as `validated` is
-  set — before `_persist_apollo_reply` and before auto-done grading. Never emit
-  from a worker thread (sinks assume the running loop).
+  swallows sink exceptions. `TURN_PHASE_REPLY` fires once the reply row is
+  DURABLE — after `_persist_apollo_reply`, still before auto-done grading, so the
+  reply is never held hostage to the 6-14s grading run but a commit failure can
+  never leave the student reading a reply no refresh shows (pinned by
+  `test_the_reply_row_is_durable_before_the_reply_frame_is_emitted`; the student
+  UI's `ApolloChat` keep-rule comment cites this ordering). Never emit from a
+  worker thread, and never from inside the executor — sinks assume the running
+  loop, so every `_emit` happens on it, before entering the executor.
 
 ## Related
 

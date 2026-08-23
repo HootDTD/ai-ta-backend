@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -273,17 +274,80 @@ async def test_a_base_exception_in_the_real_turn_runner_still_terminates():
     with patch.object(cs, "handle_chat", new=AsyncMock(side_effect=_Shutdown())):
         before = set(cs._BACKGROUND_TURNS)
         gen = _stream(_request_with_handlers())
-        events = parse_sse(await _drain(gen))
-        task = (set(cs._BACKGROUND_TURNS) - before or {None}).pop()
+        # Capture the task while it is still registered — the done-callback
+        # removes it, so reading the set AFTER the drain raced the callback and
+        # the old `(… or {None}).pop()` + `if task is not None` guard let this
+        # assertion pass VACUOUSLY. Same first-`__anext__` pattern as
+        # `test_the_turn_task_is_strongly_referenced_while_it_runs`.
+        first = await gen.__anext__()
+        spawned = set(cs._BACKGROUND_TURNS) - before
+        assert len(spawned) == 1
+        (task,) = spawned
+        events = parse_sse([first, *await _drain(gen)])
 
     assert [name for name, _ in events] == ["received", "working", "error"]
     assert events[-1][1]["status"] == 500
     assert events[-1][1]["message"] == cs._GENERIC_ERROR_BODY["message"]
     # The BaseException is deliberately NOT swallowed by `_run_turn` — it stays
-    # on the task, where the loop's own handling applies.
-    if task is not None:
-        with pytest.raises(_Shutdown):
-            task.result()
+    # on the task, where the loop's own handling applies. No guard: the task is
+    # captured deterministically above, so this always runs.
+    with pytest.raises(_Shutdown):
+        task.result()
+
+
+async def test_a_dead_turn_task_is_logged_not_silently_collected(caplog):
+    """The done-callback was `set.discard`, which never touched the result, so a
+    turn that died on a BaseException was collected with its exception
+    unretrieved — asyncio's "exception was never retrieved" warning is not
+    something anyone alerts on. This ERROR is the one server-side signal for the
+    failure mode `_KIND_END` covers on the client side."""
+
+    class _Shutdown(BaseException):
+        pass
+
+    with (
+        patch.object(cs, "handle_chat", new=AsyncMock(side_effect=_Shutdown())),
+        caplog.at_level(logging.ERROR, logger=cs.__name__),
+    ):
+        await _drain(_stream(_request_with_handlers()))
+        await asyncio.sleep(0)
+
+    # Two ERRORs: the generator's existing "turn vanished" (client side of the
+    # failure) and this one (server side, carrying the actual exception).
+    failed = [r for r in caplog.records if r.message == "apollo_stream_turn_task_failed"]
+    assert len(failed) == 1
+    assert failed[0].exc_info is not None
+    assert isinstance(failed[0].exc_info[1], _Shutdown)
+
+
+async def test_a_healthy_turn_logs_nothing_and_leaves_the_registry_empty(caplog):
+    before = set(cs._BACKGROUND_TURNS)
+    with (
+        patch.object(cs, "handle_chat", new=AsyncMock(return_value={"apollo_reply": "hi"})),
+        caplog.at_level(logging.ERROR, logger=cs.__name__),
+    ):
+        await _drain(_stream(_request_with_handlers()))
+        await asyncio.sleep(0)
+
+    assert caplog.records == []
+    assert set(cs._BACKGROUND_TURNS) - before == set()
+
+
+async def test_a_cancelled_turn_task_is_released_without_touching_its_result():
+    """`Task.exception()` RAISES on a cancelled task, so the callback has to
+    check `cancelled()` first — worker shutdown cancels in-flight turns."""
+
+    async def _forever():
+        await asyncio.Event().wait()
+
+    task = asyncio.ensure_future(_forever())
+    cs._BACKGROUND_TURNS.add(task)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    cs._release_background_turn(task)  # must not raise
+    assert task not in cs._BACKGROUND_TURNS
 
 
 def test_error_event_mirrors_the_body_message_at_top_level():

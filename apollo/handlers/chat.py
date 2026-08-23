@@ -910,11 +910,6 @@ async def handle_chat(
         validated = decision.question or "Can you explain that part one more time?"
     else:
         validated = "Thanks — I have enough to grade what you taught me."
-    # The student-visible reply is final here — release it to a streaming
-    # client BEFORE the reply persist and (on the auto-done branch) before the
-    # 6-14s grading run, so the reply is never held hostage to grading.
-    _emit(on_phase, TURN_PHASE_REPLY, text=validated)
-
     await _persist_apollo_reply(
         db,
         session_id=session_id,
@@ -922,6 +917,14 @@ async def handle_chat(
         attempt_id=int(current_attempt.id),
         apollo_msg=validated,
     )
+    # The frame goes out only once the row is DURABLE (review wave). Emitting
+    # first put the reply on the wire ahead of the commit, so a commit failure
+    # left the student reading a reply that no refresh could ever show again.
+    # It still runs before the auto-done branch below, so the reply is never
+    # held hostage to the 6-14s grading run — the cost of the correct order is
+    # one local INSERT + commit. `ApolloChat`'s keep-rule comment in the student
+    # UI cites exactly this ordering; that citation is now true by construction.
+    _emit(on_phase, TURN_PHASE_REPLY, text=validated)
     if decision.action == "done":
         from apollo.errors import GradingInProgressError  # noqa: PLC0415
         from apollo.handlers.done import handle_done  # noqa: PLC0415

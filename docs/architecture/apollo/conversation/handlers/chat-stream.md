@@ -8,6 +8,7 @@ related:
   - apollo/conversation/routing/router
   - apollo/conversation/routing/errors
   - database/session
+  - platform/http-server
 last_verified: 2026-08-23
 stub: false
 ---
@@ -74,7 +75,12 @@ proxy idle timeouts (`/ask/stream` runs 30-60s gaps on the same chain).
   bound the queue.
 - **`_BACKGROUND_TURNS` is load-bearing**: asyncio only weak-refs tasks and the
   creating frame dies on disconnect — dropping the strong ref would let the GC
-  kill the very turn this design exists to protect.
+  kill the very turn this design exists to protect. Its done-callback is
+  `_release_background_turn`, not `set.discard`: it also RETRIEVES the task's
+  exception and logs it at ERROR (`apollo_stream_turn_task_failed`), which is
+  the one server-side signal for the failure mode `_KIND_END` covers on the
+  wire. It checks `cancelled()` first, because `Task.exception()` raises on a
+  cancelled task and worker shutdown cancels in-flight turns.
 - **The turn owns its own DB session** (`get_turn_session_opener`, an
   `asynccontextmanager` over `get_db_session`). It must NOT borrow the
   request-scoped session: FastAPI closes dependency sessions once the response

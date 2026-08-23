@@ -196,6 +196,70 @@ async def test_student_row_is_durable_before_the_thinking_phase_is_announced(db_
     assert timeline[3][1] == {"text": "tell me more"}
 
 
+async def test_the_reply_row_is_durable_before_the_reply_frame_is_emitted(db_two_sessions):
+    """Review wave: the frame used to go out BEFORE `_persist_apollo_reply`, so
+    a commit failure left the student reading a reply no refresh could show.
+
+    Pinned at the seam rather than by wall-clock ordering: the persist wrapper
+    records how many apollo rows are committed at the moment it returns, and the
+    sink records the frame — `persist` must come first, with the row already
+    there. The student UI's `ApolloChat` keep-rule comment cites this ordering,
+    so the citation is only true while this test is.
+    """
+    from apollo.handlers import chat as chat_module
+
+    db, ids = db_two_sessions
+    session_id, attempt_id = ids[0]
+    timeline: list[str] = []
+    real_persist = chat_module._persist_apollo_reply
+
+    async def _tracking_persist(db_arg, **kwargs):
+        await real_persist(db_arg, **kwargs)
+        rows = (
+            (
+                await db_arg.execute(
+                    select(TutoringMessage).where(
+                        TutoringMessage.attempt_id == attempt_id,
+                        TutoringMessage.role == "apollo",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        timeline.append(f"persisted:{len(rows)}")
+
+    planner = AsyncMock(
+        return_value=QuestionDecision(action="ask", question="tell me more", target_node_id=None)
+    )
+    ps = _base_patches(_fake_store(), planner)
+    from apollo.handlers.chat import handle_chat
+
+    with (
+        ps[0],
+        ps[1],
+        ps[2],
+        ps[3],
+        ps[4],
+        ps[5],
+        patch.object(chat_module, "_persist_apollo_reply", new=_tracking_persist),
+    ):
+        await handle_chat(
+            db=db,
+            neo=MagicMock(),
+            session_id=session_id,
+            message="my best explanation",
+            on_phase=lambda phase, _fields: timeline.append(phase),
+        )
+
+    assert timeline == [
+        TURN_PHASE_READING,
+        TURN_PHASE_THINKING,
+        "persisted:1",
+        TURN_PHASE_REPLY,
+    ]
+
+
 async def test_auto_done_announces_grading_before_dispatching_handle_done(db_two_sessions):
     """The reply is released BEFORE the 6-14s grading run, then `grading` says
     why the stream is still open."""
