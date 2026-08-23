@@ -176,6 +176,26 @@ def _lookup_exception_handler(app: Any, exc: BaseException) -> Callable[..., Any
     return None
 
 
+def _error_event(status: int, body: Any) -> dict[str, Any]:
+    """`error` frame data: `{status, body, message}`.
+
+    `message` is a TOP-LEVEL mirror of the body's own student-facing text. The
+    `/ask/stream` reader the student UI is built around does
+    `payload.message || '[error] Unknown error'` in its error branch, so
+    without this a reader that reuses that shape renders nothing. Precedence:
+    the Apollo handlers' `message`, then Starlette's `HTTPException` `detail`,
+    then the generic envelope's message.
+    """
+    message = _GENERIC_ERROR_BODY["message"]
+    if isinstance(body, dict):
+        for key in ("message", "detail"):
+            candidate = body.get(key)
+            if isinstance(candidate, str) and candidate:
+                message = candidate
+                break
+    return {"status": status, "body": body, "message": message}
+
+
 async def _error_frame(request: Request, exc: BaseException) -> tuple[int, Any]:
     """Render a failed turn as `(status, body)` using the SAME registered
     handler the blocking route would have hit.
@@ -310,7 +330,21 @@ async def stream_chat_turn(
             return
         elif kind == _KIND_ERROR:
             status, body = await _error_frame(request, value)
-            yield sse_frame(EVENT_ERROR, {"status": status, "body": body})
+            yield sse_frame(EVENT_ERROR, _error_event(status, body))
             return
-        else:  # _KIND_END without a terminal event — defensive only.
+        else:
+            # `_KIND_END` is only ever READ when the turn task died without
+            # pushing a terminal item — `_run_turn` catches `Exception`, so a
+            # BaseException (worker-shutdown `CancelledError`, `SystemExit`, an
+            # escaping `BaseExceptionGroup`) skips its error branch while the
+            # `finally` still enqueues this sentinel. Emit the generic terminal
+            # error rather than closing silently, so "exactly one terminal
+            # event, always" is structurally true instead of contingent on
+            # which exception hierarchy the turn died from.
+            _LOG.error(
+                "apollo_chat_stream_turn_vanished session_id=%s — turn task ended "
+                "with no terminal event (BaseException?)",
+                session_id,
+            )
+            yield sse_frame(EVENT_ERROR, _error_event(500, dict(_GENERIC_ERROR_BODY)))
             return

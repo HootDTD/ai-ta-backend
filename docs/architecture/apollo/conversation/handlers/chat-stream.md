@@ -45,13 +45,23 @@ also parses standalone.
 | `working` | `{stage, message}` | `accepted` immediately, then `reading` / `thinking` / `grading` from the turn's own phases |
 | `reply` | `{apollo_reply}` | Apollo's student-visible text is final |
 | `complete` | `{payload}` | terminal — `payload` is the blocking route's JSON body |
-| `error` | `{status, body}` | terminal — `body` rendered by the SAME registered exception handler the blocking route would hit |
+| `error` | `{status, body, message}` | terminal — `body` rendered by the SAME registered exception handler the blocking route would hit; `message` mirrors its student-facing text at top level |
 
-Ordering: `received` → `working(accepted)` → zero or more `working` →
-**exactly one** `reply` → `complete`. On `error` the stream ends there and
-`reply` may not have been sent. There is no heartbeat: the widest gap is the
-~8-12s unified call, well inside proxy idle timeouts (`/ask/stream` runs
-30-60s gaps on the same chain).
+Ordering:
+
+```
+received → working(accepted) → working* → reply → working* → (complete | error)
+```
+
+`working` events appear on BOTH sides of `reply`: an auto-done turn emits
+`working(grading)` AFTER the reply, because the reply is released before the
+grading run (see `handlers/chat`). Exactly one `reply` always precedes
+`complete`. **Exactly one terminal event, always** — `complete` or `error`,
+never both, never neither (the `_KIND_END` branch emits the generic `error`
+rather than closing silently, so the guarantee survives a turn task killed by
+a BaseException). On `error`, `reply` may or may not already have been sent.
+There is no heartbeat: the widest gap is the ~8-12s unified call, well inside
+proxy idle timeouts (`/ask/stream` runs 30-60s gaps on the same chain).
 
 ## Invariants & gotchas
 
@@ -82,7 +92,18 @@ Ordering: `received` → `working(accepted)` → zero or more `working` →
   inside the turn become `error` events — headers are already sent by then.
 - **Errors are rendered by the registered handler**, not re-mapped here, so
   `error.body` is byte-equal to the blocking route's body and the FE's existing
-  409 `session_frozen` / 503 handling works unchanged.
+  409 `session_frozen` / 503 handling works unchanged. `error.message` is a
+  TOP-LEVEL mirror of that body's student-facing text (`body.message`, else
+  `body.detail`, else the generic envelope's), because the `/ask/stream` reader
+  the UI is built around does `payload.message || …` — without it, a reader
+  reusing that shape renders nothing.
+- **A terminal event is structural, not best-effort.** `_run_turn` catches
+  `Exception`, so a BaseException (worker-shutdown `CancelledError`,
+  `SystemExit`, an escaping `BaseExceptionGroup`) reaches only its `finally`
+  and the sentinel. The generator's `_KIND_END` branch therefore emits the
+  generic 500 `error` and logs `apollo_chat_stream_turn_vanished` — never
+  close a stream with no terminal event; a client waiting on one would hang on
+  its own state machine.
 - **`complete.payload` runs through `jsonable_encoder`** — the encoder FastAPI
   applies to the blocking route's return value — so the two are equal, not
   merely similar.

@@ -241,10 +241,12 @@ async def test_unknown_phase_never_reaches_the_wire():
     assert [name for name, _ in events] == ["received", "working", "reply", "complete"]
 
 
-async def test_sentinel_without_a_terminal_event_closes_the_stream():
-    """Backstop: `_run_turn` always emits complete-or-error before its
-    sentinel, but the generator must still terminate if it somehow does not —
-    a hung stream is worse than a truncated one."""
+async def test_a_turn_that_dies_without_a_terminal_item_still_gets_one():
+    """`_run_turn` catches `Exception`, so a BaseException (worker-shutdown
+    CancelledError, SystemExit, an escaping BaseExceptionGroup) reaches only
+    the `finally` and its sentinel. The stream must STILL terminate with an
+    `error` — "exactly one terminal event, always" has to be structural, not
+    contingent on which exception hierarchy killed the turn."""
 
     async def _only_end(*, queue, **_kwargs):
         queue.put_nowait((cs._KIND_END, None))
@@ -252,7 +254,57 @@ async def test_sentinel_without_a_terminal_event_closes_the_stream():
     with patch.object(cs, "_run_turn", new=_only_end):
         events = parse_sse(await _drain(_stream(_request_with_handlers())))
 
-    assert [name for name, _ in events] == ["received", "working"]
+    assert [name for name, _ in events] == ["received", "working", "error"]
+    assert events[-1][1] == {
+        "event": "error",
+        "status": 500,
+        "body": cs._GENERIC_ERROR_BODY,
+        "message": cs._GENERIC_ERROR_BODY["message"],
+    }
+
+
+async def test_a_base_exception_in_the_real_turn_runner_still_terminates():
+    """The same guarantee through the REAL `_run_turn`, driven by an actual
+    BaseException rather than a hand-built queue."""
+
+    class _Shutdown(BaseException):
+        pass
+
+    with patch.object(cs, "handle_chat", new=AsyncMock(side_effect=_Shutdown())):
+        before = set(cs._BACKGROUND_TURNS)
+        gen = _stream(_request_with_handlers())
+        events = parse_sse(await _drain(gen))
+        task = (set(cs._BACKGROUND_TURNS) - before or {None}).pop()
+
+    assert [name for name, _ in events] == ["received", "working", "error"]
+    assert events[-1][1]["status"] == 500
+    assert events[-1][1]["message"] == cs._GENERIC_ERROR_BODY["message"]
+    # The BaseException is deliberately NOT swallowed by `_run_turn` — it stays
+    # on the task, where the loop's own handling applies.
+    if task is not None:
+        with pytest.raises(_Shutdown):
+            task.result()
+
+
+def test_error_event_mirrors_the_body_message_at_top_level():
+    data = cs._error_event(409, {"error_code": "session_frozen", "message": "frozen"})
+    assert data == {
+        "status": 409,
+        "body": {"error_code": "session_frozen", "message": "frozen"},
+        "message": "frozen",
+    }
+
+
+def test_error_event_falls_back_to_http_exception_detail():
+    assert cs._error_event(403, {"detail": "nope"})["message"] == "nope"
+
+
+def test_error_event_falls_back_to_generic_copy_for_a_textless_body():
+    """A handler may return a non-object body; the reader still gets copy."""
+    assert cs._error_event(500, ["boom"])["message"] == cs._GENERIC_ERROR_BODY["message"]
+    assert (
+        cs._error_event(500, {"error_code": "x"})["message"] == (cs._GENERIC_ERROR_BODY["message"])
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +327,8 @@ async def test_error_event_mirrors_the_blocking_route_status_and_body():
         "message": "Session '7' is frozen; writes rejected",
         "session_id": "7",
     }
+    # Top-level mirror, so an /ask/stream-shaped reader renders real copy.
+    assert events[2][1]["message"] == "Session '7' is frozen; writes rejected"
 
 
 async def test_http_exceptions_raised_inside_a_turn_keep_their_status():
@@ -309,7 +363,12 @@ async def test_a_broken_exception_handler_still_produces_an_error_event():
     ):
         events = parse_sse(await _drain(_stream(SimpleNamespace(app=app))))
 
-    assert events[-1][1] == {"event": "error", "status": 500, "body": cs._GENERIC_ERROR_BODY}
+    assert events[-1][1] == {
+        "event": "error",
+        "status": 500,
+        "body": cs._GENERIC_ERROR_BODY,
+        "message": cs._GENERIC_ERROR_BODY["message"],
+    }
 
 
 async def test_a_failure_opening_the_turn_session_becomes_an_error_event():
