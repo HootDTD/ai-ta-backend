@@ -478,14 +478,18 @@ _GRADE_SCOPE = r"(?:\s+(?:overall|in total|so far|here|today|on this (?:topic|at
 # Determiners in front of a score noun, swallowed for the same reason.
 _GRADE_DET = r"(?:\b(?:your|the|a|an|this|that|its|their|his|her|our)\s+)?(?:overall\s+)?"
 # Verbs strong enough to make even a BARE integer a grade ("you scored 72").
-_STRONG_SCORE_VERB = r"scored|scores|scoring|graded|grades|grading|marked"
+_STRONG_SCORE_VERB = r"scored|scores|scoring|graded|grades|grading"
 # Verbs that need the unit to disambiguate: "you got 90%" is a grade, "you got 3
-# of the 5 steps" is not.
+# of the 5 steps" is not. `marked` sits here rather than above because "mark 3
+# assumptions on the diagram" is a next-step the narrator plausibly writes.
 _WEAK_SCORE_VERB = (
     r"earned|earns|earn|received|receives|receive|got|awarded|awards|lost|loses|"
-    r"deducted|docked|worth"
+    r"deducted|docked|worth|marked|marks"
 )
-_GRADE_NOUN = r"score|grade|mark|rating"
+# `mark` is deliberately absent — it is a grade noun only in British usage, while
+# "Mark 3 key assumptions" is ordinary coaching prose. Its UNIT form ("18 marks")
+# still counts, so the collocations are covered without the imperative risk.
+_GRADE_NOUN = r"score|grade|rating"
 
 _SCORE_FRAME_RES = (
     # "you scored 72", "graded 84 overall" — strong verb, unit optional.

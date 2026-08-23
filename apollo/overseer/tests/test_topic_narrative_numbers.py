@@ -255,6 +255,10 @@ def test_a_field_that_was_only_a_grade_statement_goes_empty():
         ("the unavailable placeholder",
          "[Diagnostic narrative unavailable — the grade above is still accurate.]"),
         ("short genuine prose", "That's it."),
+        ("a grounded citation marker", "Re-read the pressure section [Lecture 4, p. 12]."),
+        ("`mark` as an imperative, not a grade noun", "Mark 3 key assumptions explicitly."),
+        ("`marked` on a bare count", "You marked 3 steps as done before checking them."),
+        ("a road grade in degrees", "The grade of the ramp is 3 degrees at the top."),
     ],
 )  # fmt: skip
 def test_content_numbers_survive_untouched(why, text):
