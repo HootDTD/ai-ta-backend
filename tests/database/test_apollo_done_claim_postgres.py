@@ -238,7 +238,14 @@ async def test_stored_grade_payload_replays_without_side_effects(pg_committing_s
         result = await _stored_grade_payload(db, sess=sess, attempt=attempt)
 
     assert result is not None
-    assert result["rubric"]["overall"] == report["served_overall"]
+    # The replay serves the snapshot verbatim PLUS the additive band. This row is
+    # seeded WITHOUT one (a pre-2026-08-23 grade), so the band is derived from the
+    # snapshot's own score — the fallback half of `band_from_served_overall`'s
+    # snapshot-first rule, exercised here against real Postgres JSONB.
+    assert result["rubric"]["overall"] == {
+        **report["served_overall"],
+        "band": score_to_band(report["served_overall"]["score"]),
+    }
     assert result["diagnostic_narrative"] == report["narrative"]
     assert result["coverage"] == report["coverage"]
     assert result["already_graded"] is True

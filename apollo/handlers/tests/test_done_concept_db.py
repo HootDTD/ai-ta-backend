@@ -16,6 +16,7 @@ import pytest
 from apollo.conftest import TEST_USER_ID
 from apollo.handlers.done import _find_problem, handle_done
 from apollo.ontology import KGGraph
+from apollo.overseer.rubric import score_to_band
 from apollo.persistence.models import (
     ProblemAttempt,
     SessionPhase,
@@ -138,7 +139,9 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
     ):
         out = await handle_done(db=db_session, neo=MagicMock(), session_id=sess.id)
 
-    assert out["rubric"] == {"overall": {"score": 0.5}}
+    # Whole-blob: the mocked axis rubric plus the additive `band` the soft-fail
+    # serving branch attaches to the overall (study-prep 2026-08-23).
+    assert out["rubric"] == {"overall": {"score": 0.5, "band": score_to_band(0)}}
     # The reference graph passed to the grader came from the DB problem payload.
     assert captured["reference_nodes"]
 
