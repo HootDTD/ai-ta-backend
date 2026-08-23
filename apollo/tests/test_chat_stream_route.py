@@ -17,11 +17,13 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import apollo.auth_deps as deps
@@ -80,9 +82,9 @@ def app_factory():
                 lambda sc: Base.metadata.create_all(
                     sc,
                     tables=[
-                        TutoringSession.__table__,
-                        ProblemAttempt.__table__,
-                        TutoringMessage.__table__,
+                        cast(Table, TutoringSession.__table__),
+                        cast(Table, ProblemAttempt.__table__),
+                        cast(Table, TutoringMessage.__table__),
                     ],
                 )
             )
@@ -110,7 +112,7 @@ def app_factory():
                     )
                 )
                 await s.commit()
-                seeded[course_id] = sess.id
+                seeded[course_id] = cast(int, sess.id)
         return seeded
 
     seeded = asyncio.run(_bootstrap())
