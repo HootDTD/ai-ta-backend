@@ -370,15 +370,47 @@ def test_a_decimal_grade_is_scrubbed_whole():
         ("a pump curve operating point", "The pump curve puts you at 80% efficiency."),
         ("a capacity reading", "That operating point leaves you at 60% of capacity."),
         ("a conversion on an isotherm", "Following the isotherm has you at 40% conversion."),
+        # Round 3: the SAME readings one anaphor later. Prose names the subject in
+        # one sentence and continues with that/this/it in the next, so this is the
+        # common form, and the pronoun restriction alone let all three through —
+        # dropping subject AND verb ("It puts you at 80% efficiency." -> ".").
+        ("an anaphoric pump reading", "It puts you at 80% efficiency."),
+        ("an anaphoric capacity reading", "This leaves you at 60% of capacity."),
+        ("a pronoun subject with a named quantity",
+         "That puts you at 80% efficiency on the pump curve."),
+        ("an anaphoric flow fraction", "It has you at 30% of the design flow."),
+        ("an anaphoric margin", "This puts you at 15% margin on the deal."),
     ],
-)
-def test_a_named_subject_keeps_the_you_at_reading_physical(why, text):
+)  # fmt: skip
+def test_a_following_noun_keeps_the_you_at_reading_physical(why, text):
+    """The TAIL is what separates a grade from a measurement.
+
+    A percentage followed by a noun or an of-phrase measures a NAMED QUANTITY;
+    only one that closes its clause (or carries an adverbial of scope) is the
+    student's standing. Restricting the subject to a pronoun was not enough —
+    the anaphoric form is exactly the one prose reaches for.
+    """
     assert sanitize_narrative(text) == text, why
 
 
-def test_a_bare_pronoun_subject_is_still_a_standing():
-    assert sanitize_narrative("That puts you at 72%.") == ""
-    assert "60%" not in sanitize_narrative("You're at 60% on this topic.")
+@pytest.mark.parametrize(
+    "text",
+    [
+        "That puts you at 72%.",
+        "That puts you at 72% overall.",
+        "That puts you at 72% for the attempt.",
+        "You're at 60% on this topic.",
+        "You are at 40% so far.",
+    ],
+)
+def test_a_standing_that_closes_its_clause_is_still_a_grade(text):
+    """The other direction, pinned too: trailing punctuation or an adverbial of
+    scope keeps the frame firing, so tightening the tail cost no recall."""
+    assert "%" not in sanitize_narrative(text)
+
+
+def test_a_standing_mid_sentence_keeps_the_clause_after_it():
+    assert sanitize_narrative("It puts you at 65%, which is a start.") == "which is a start."
 
 
 # ── 3b-iii. the residuals, pinned rather than omitted ────────────────────────

@@ -480,6 +480,13 @@ _GRADE_UNIT = (
 # Trailing scope words a leak habitually carries; swallowed so the residue of a
 # pure score sentence is a bare subject the residue sweep can then drop.
 _GRADE_SCOPE = r"(?:\s+(?:overall|in total|so far|here|today|on this (?:topic|attempt)))?"
+# The same idea for the second-person standing frame, which needs the wider set:
+# what may follow "you're at 72%" and still be a GRADE is an adverbial of scope,
+# never a noun ("80% efficiency") or an of-phrase ("60% of capacity").
+_STANDING_SCOPE = (
+    r"(?:\s+(?:overall|in total|so far|here|today|now|"
+    r"(?:on|for|in) (?:this|the) (?:topic|attempt|problem|explanation|one)))?"
+)
 # Determiners in front of a score noun, swallowed for the same reason.
 _GRADE_DET = r"(?:\b(?:your|the|a|an|this|that|its|their|his|her|our)\s+)?(?:overall\s+)?"
 # Verbs strong enough to make even a BARE integer a grade ("you scored 72").
@@ -540,17 +547,23 @@ _SCORE_FRAME_RES = (
     # "18 points out of 25" — a points tally against any denominator.
     re.compile(rf"\b{_GRADE_NUM}\s*(?:points?|pts?|marks?)\s+out of\s+{_GRADE_NUM}\b",
                re.IGNORECASE),
-    # "that puts you at 72%", "you're at 60%" — second person + a standing, which
-    # is a grade by construction in prose addressed to the student.
+    # "that puts you at 72%", "you're at 60% on this topic" — second person + a
+    # standing, which is a grade by construction in prose addressed to the student.
     #
-    # The subject is pinned to a bare pronoun (review fix, round 2). Allowing ANY
-    # subject let a physical reading through: "The pump curve puts you at 80%
-    # efficiency." became "The pump curve efficiency." A named subject means the
-    # sentence is about that thing, not about the student's standing.
+    # THE TAIL is what separates a grade from a measurement (review fix, round 3).
+    # Round 2 pinned the SUBJECT to a bare pronoun, but prose names a thing in one
+    # sentence and continues with that/this/it in the next, so the anaphoric form
+    # is the COMMON one and the mangling survived one sentence later: "It puts you
+    # at 80% efficiency." -> "efficiency." The percentage must therefore close its
+    # clause or carry a standing adverbial; a following NOUN or of-phrase means it
+    # measures a named quantity ("80% efficiency", "60% of capacity",
+    # "40% conversion"), not the student. The pronoun subject is kept as well —
+    # the two conditions are independent and cheap.
     re.compile(
         rf"\b(?:(?:that|this|it)\s+(?:puts?|leaves?|has|had|got)\s+you|"
         rf"you(?:'re|\s+are|\s+were))\s+at\s+"
-        rf"(?:about\s+|around\s+|roughly\s+|nearly\s+)?{_GRADE_NUM}\s*(?:%|percent\b)",
+        rf"(?:about\s+|around\s+|roughly\s+|nearly\s+)?{_GRADE_NUM}\s*(?:%|percent\b)"
+        rf"{_STANDING_SCOPE}(?=\s*(?:[,;:!?)]|\.(?!\d)|$))",
         re.IGNORECASE,
     ),
 )  # fmt: skip
