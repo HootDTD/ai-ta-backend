@@ -32,6 +32,7 @@ from apollo.handlers.done import (
     handle_done,
 )
 from apollo.ontology import KGGraph
+from apollo.overseer.rubric import score_to_band
 from apollo.persistence.models import (
     ProblemAttempt,
     SessionPhase,
@@ -39,7 +40,6 @@ from apollo.persistence.models import (
     TutoringMessage,
     TutoringSession,
 )
-from apollo.overseer.rubric import score_to_band
 from apollo.persistence.progress_repo import apply_xp
 from database.models import Course
 
