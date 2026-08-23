@@ -502,6 +502,12 @@ _WEAK_SCORE_VERB = (
 # "Mark 3 key assumptions" is ordinary coaching prose. Its UNIT form ("18 marks")
 # still counts, so the collocations are covered without the imperative risk.
 _GRADE_NOUN = r"score|grade|rating"
+# A letter verdict: A-F with an optional +/-. The trailing guard is what keeps it
+# off ordinary prose — a following word char or hyphen disqualifies it, so
+# "an A380", "a D-shaped duct" and "0xAB" are all safe while "a B+ on this
+# attempt" and "a B-." are caught. Case-sensitive on purpose (the frames that use
+# it are IGNORECASE, so it is spelled as a class that admits only capitals).
+_LETTER_GRADE = r"[A-F](?:[+-])?(?![-\w])"
 # MANDATORY in the noun frame (review fix): without it the frame degenerated to
 # "grade noun somewhere near a number" and ate "Use grade 8 bolts for the
 # flange." Every real verdict phrasing carries one.
@@ -547,6 +553,22 @@ _SCORE_FRAME_RES = (
     # "18 points out of 25" — a points tally against any denominator.
     re.compile(rf"\b{_GRADE_NUM}\s*(?:points?|pts?|marks?)\s+out of\s+{_GRADE_NUM}\b",
                re.IGNORECASE),
+    # "you earned a B+ on this attempt", "your grade is a B-", "a B+ grade".
+    # A LETTER is more of a verdict than a percentage under the user ruling, and
+    # it slipped the backstop entirely. Held behind the same verb/noun anchors as
+    # every other frame — a bare letter is never touched.
+    re.compile(
+        rf"\b(?:you(?:'ve|'d| have| had)?\s+)?"
+        rf"(?:{_STRONG_SCORE_VERB}|{_WEAK_SCORE_VERB})\s+(?:an?|the)\s*{_LETTER_GRADE}"
+        rf"{_GRADE_SCOPE}",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"{_GRADE_DET}\b(?:{_GRADE_NOUN})s?\b\s*{_GRADE_CONNECTOR}"
+        rf"\s*(?:an?|the)?\s*{_LETTER_GRADE}{_GRADE_SCOPE}",
+        re.IGNORECASE,
+    ),
+    re.compile(rf"\b(?:an?|the)\s+{_LETTER_GRADE}\s+(?:{_GRADE_NOUN})s?\b", re.IGNORECASE),
     # "that puts you at 72%", "you're at 60% on this topic" — second person + a
     # standing, which is a grade by construction in prose addressed to the student.
     #
@@ -640,24 +662,57 @@ def _scrub_grade_numbers(text: str) -> str:
 
     Sentence granularity is what lets the percentage tier be anchored: the frames
     prove a grading context by adjacency and run everywhere, but a bare
-    percentage is only a grade if the sentence around it says so.
+    percentage is only a grade if the sentence around it says so. It is also what
+    lets a grade statement be removed WHOLE (see :func:`_scrub_sentence`): a
+    dropped sentence takes its terminator with it, so the neighbours close up
+    cleanly instead of leaving a doubled full stop.
     """
     parts = _SENTENCE_KEEP_RE.split(text)
     # Even indices are sentence bodies, odd ones the terminators that separate
     # them; both are re-joined verbatim so nothing but a match is ever lost.
-    return "".join(part if index % 2 else _scrub_sentence(part) for index, part in enumerate(parts))
+    out: list[str] = []
+    drop_terminator = False
+    for index, part in enumerate(parts):
+        if index % 2:  # the terminator that closed the body before it
+            out.append("" if drop_terminator else part)
+            drop_terminator = False
+            continue
+        scrubbed, dropped = _scrub_sentence(part)
+        out.append(scrubbed)
+        drop_terminator = dropped
+    return "".join(out)
 
 
-def _scrub_sentence(sentence: str) -> str:
-    """Frames everywhere; bare grade tokens only inside a grading sentence.
+def _scrub_sentence(sentence: str) -> tuple[str, bool]:
+    """Scrub one sentence; report whether the WHOLE sentence was dropped.
 
-    A parenthetical holding nothing but a percentage is removed either way — it
-    is an annotation, not prose, so it needs no sentence-level evidence.
+    A grade statement is removed WHOLE, not carved out of (review wave). Phrase
+    deletion shipped broken prose on every realistic leak — "You scored 72%
+    overall, which is a solid start." served "which is a solid start.", "You
+    earned 80% on causality and 100% on the definition." served "on causality and
+    on the definition." The residue sweep cannot rescue those: they still hold
+    content words. Dropping the sentence is safe because the prompt puts the
+    substance in the OTHER fields (per-topic notes, the next step) and
+    ``narrative_consistency`` now substitutes a fallback for any field this
+    empties — the two changes are one contract, do not split them.
+
+    The trigger is the frame tier OR the anchored token tier. The review named
+    frames; the token tier is folded in because it carries the same evidence and
+    the same breakage — "Apollo credited 2 of the 3 topics, giving you 67%." has
+    no frame, only the ``credited`` anchor, and phrase deletion left
+    "…giving you."
+
+    The paren-only annotation keeps PHRASE deletion: removing "(80%)" from
+    "You covered causality well (80%)." is provably clean, and that sentence is
+    real praise worth keeping.
     """
     framed = _outside_quotes(sentence, _apply_frames)
-    if _is_grading_sentence(sentence, framed):
-        return _outside_quotes(framed, _apply_tokens)
-    return _outside_quotes(framed, _apply_paren_only)
+    if not _is_grading_sentence(sentence, framed):
+        return _outside_quotes(framed, _apply_paren_only), False
+    scrubbed = _outside_quotes(framed, _apply_tokens)
+    if scrubbed != sentence:
+        return "", True
+    return scrubbed, False
 
 
 def _apply_paren_only(span: str) -> str:

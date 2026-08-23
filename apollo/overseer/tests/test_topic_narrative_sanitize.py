@@ -59,9 +59,12 @@ def test_percentages_are_no_longer_preserved():
     full pattern inventory lives in ``test_topic_narrative_numbers.py``.
     """
     text = "You earned 80% on the causality topic and 100% on the definition."
-    out = sanitize_narrative(text, canonical_keys=_KEYS)
-    assert "80%" not in out and "100%" not in out
-    assert "causality topic" in out and "definition" in out
+    # Whole-string equality, never a substring assertion: the review wave found
+    # that "80% not in out" hid the broken residue this used to serve
+    # ("on the causality topic and on the definition."). A grade statement is
+    # now removed WHOLE, and the only way to see that is to assert the whole
+    # output.
+    assert sanitize_narrative(text, canonical_keys=_KEYS) == ""
 
 
 def test_inline_scoring_fragments_without_parens_are_stripped():

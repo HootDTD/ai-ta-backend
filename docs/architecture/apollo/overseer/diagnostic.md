@@ -90,8 +90,7 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
 - **Quotes are code-gated:** a quote survives only when it exactly equals the
   gated `evidence_span` for its canonical topic and is already sanitizer-clean;
   otherwise it becomes null.
-- **Attribution rules** match the topic narrative: address the student as
-  "you"/"your"; never present a reference detail as something the student said.
+- **Attribution rules** match the topic narrative: address the student as "you"/"your"; never present a reference detail as something the student said.
 - **`topic_feedback[].hoot_assisted` (INTERACTION5) is code-injected from the
   ledger, never the LLM** — copied from each `TopicCredit.hoot_assisted` so the
   flat Hoot-assist cap can't be argued away by prose. `False` for un-assisted
@@ -105,6 +104,7 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
 - **`course_evidence=None` (the default, and what an OFF flag or NULL bundle
   produces) keeps both prompt paths byte-identical to the pre-INTERACTION2
   build**, so grounding can never silently move a grade.
+- **An EMPTY prose field is repaired on BOTH branches** (2026-08-23). The uncredited path gets `FALLBACK_HEADLINE` / the deterministic next step from `_repair_prose`; the all-credited early return now runs `_fill_empty_prose` first, substituting `FALLBACK_HEADLINE_CREDITED` / `FALLBACK_NEXT_STEP_CREDITED` — a blank field is reachable because the grade scrub drops whole grade statements, and a fully credited attempt is exactly where the model most wants to headline the number (`FALLBACK_HEADLINE`, "what Apollo did not get", would be a lie there). A non-blank field is returned untouched.
 - **The consistency gate never decides anything and never raises.** It edits
   prose only; credits, letters, quotes, `recap[]`, `hoot_assisted`, and every
   other key pass through. With no topic under `PRAISE_FLOOR` — and for a topic

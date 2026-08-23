@@ -139,17 +139,15 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
   `credited`, `percentile`). Bare `grade`, `credit`, `mark`, `rate` and the band
   words are excluded from that anchor set on purpose — "a 5% grade" is a road,
   "an intermediate step" is a step, "the 20% discount rate" is MGMT content.
-  A BARE INTEGER is never touched at all. The one unanchored shape is a
-  parenthetical holding nothing but a percentage (`(80%)`), the observed staging
-  leak. Prose repairs (dangling conjunction, orphan punctuation,
-  function-word-only sentence) run ONLY when a scrub fired, so untouched text is
-  returned byte-identical; a field that was nothing BUT a grade statement goes
-  empty, the gate's fallback headline/next step takes over, and
-  `diagnostic._flatten_topic_feedback` drops the empty part instead of serving a
-  bare `Next step:` label. The inventory — positives, the content negatives, and
-  the two pinned residuals (a parenthesised content percentage loses its number;
-  an unanchored `rated … NN percent` survives) — is
+  A BARE INTEGER is never touched at all. A LETTER verdict (`earned a B+`,
+  `grade is a B-`, `a B+ grade`) is caught behind the same verb/noun anchors, with
+  a trailing guard so `an A380`, `a D-shaped duct` and `point B` survive. The one
+  unanchored shape is a parenthetical holding nothing but a percentage (`(80%)`),
+  the observed staging leak. Prose repairs run ONLY when a scrub fired, so
+  untouched text is returned byte-identical. The inventory — positives, the
+  content negatives, and the pinned residuals — is
   `apollo/overseer/tests/test_topic_narrative_numbers.py`.
+- **A grade statement is removed WHOLE, not carved out of.** Phrase deletion shipped broken prose on every realistic leak ("You scored 72% overall, which is a solid start." -> "which is a solid start."), so a sentence in which the frame tier or the anchored token tier fired is dropped entirely, taking its terminator with it; the neighbouring sentences survive untouched. Only the paren-only annotation keeps phrase deletion, because removing `(80%)` is provably clean. This is ONE contract with the gate's empty-field fallback below — do not change either half alone. Costs, both pinned: a content percentage sharing a sentence with a grading word loses the sentence, and so does a student quote that shares one with a grade statement.
 - **QUOTED SPANS ARE EXEMPT from the grade scrub.** Everything the narrative
   quotes is the student's own words (the prompt allows a quote only from a
   verbatim `You said` span and [diagnostic](diagnostic.md) enforces exact

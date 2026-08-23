@@ -212,19 +212,48 @@ def test_each_grade_family_is_scrubbed(family, text, gone):
 def test_a_frame_makes_its_whole_sentence_a_grading_sentence():
     """The percentage tier is sentence-anchored, and a frame IS the anchor: once
     a scoring word sits next to a number, every other percentage in that
-    sentence belongs to the same statement."""
+    sentence belongs to the same statement — and the statement goes whole."""
     out = sanitize_narrative("You earned 80% on the causality topic and 100% on the definition.")
-    assert "80%" not in out and "100%" not in out
-    assert "causality topic" in out and "definition" in out
+    assert out == ""
 
 
-def test_a_leak_mid_sentence_keeps_the_feedback_around_it():
-    """Phrase deletion, not sentence deletion: the real feedback in the same
-    sentence as the leak is what the student came for."""
-    out = sanitize_narrative(
-        "You explained continuity clearly and scored 88% overall, so keep it up."
+# ── 3a-i. review wave: a grade STATEMENT is removed whole ────────────────────
+#
+# Phrase deletion left broken prose on every realistic leak. These are the
+# reviewer's five reproductions, asserted as EXACT output — the two tests that
+# used substring assertions hid exactly this class, so nothing here may use one.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "You earned 80% on causality and 100% on the definition.",
+        "You scored 72% overall, which is a solid start.",
+        "Overall you scored 65%; the friction term is the gap.",
+        "Your score is 72, so keep pushing on the energy balance.",
+        "Apollo credited 2 of the 3 topics, giving you 67%.",
+    ],
+)
+def test_a_grade_statement_is_removed_whole_not_carved_out(text):
+    """Dropping the sentence is safe because the prompt puts the substance in
+    the other fields, and `enforce_narrative_consistency` supplies a fallback
+    for any field this empties."""
+    assert sanitize_narrative(text) == ""
+
+
+def test_only_the_grade_sentence_goes_when_others_carry_feedback():
+    """The whole point of sentence granularity: the neighbours survive intact,
+    and the dropped sentence takes its terminator with it (no doubled stop)."""
+    assert (
+        sanitize_narrative(
+            "You scored 72% overall. Your continuity explanation was the strongest part."
+        )
+        == "Your continuity explanation was the strongest part."
     )
-    assert out == "You explained continuity clearly, so keep it up."
+    assert (
+        sanitize_narrative("Great start. You earned a B+. Keep the energy balance explicit.")
+        == "Great start. Keep the energy balance explicit."
+    )
 
 
 def test_a_field_that_was_only_a_grade_statement_goes_empty():
@@ -409,8 +438,10 @@ def test_a_standing_that_closes_its_clause_is_still_a_grade(text):
     assert "%" not in sanitize_narrative(text)
 
 
-def test_a_standing_mid_sentence_keeps_the_clause_after_it():
-    assert sanitize_narrative("It puts you at 65%, which is a start.") == "which is a start."
+def test_a_standing_statement_goes_whole():
+    """Same rule as every other frame since the review wave: the sentence goes,
+    not just the phrase, so no "which is a start." fragment ships."""
+    assert sanitize_narrative("It puts you at 65%, which is a start.") == ""
 
 
 # ── 3b-iii. the residuals, pinned rather than omitted ────────────────────────
@@ -432,34 +463,26 @@ def test_accepted_content_loss_a_parenthetical_percentage():
 
 
 @pytest.mark.parametrize(
-    ("text", "expected"),
+    "text",
     [
-        (
-            "You were graded on the section covering the 30% tax rate.",
-            "You were graded on the section covering the tax rate.",
-        ),
-        (
-            "The rubric asks for the 45% split between the two funds.",
-            "The rubric asks for the split between the two funds.",
-        ),
-        (
-            "Your score depends on whether you used the 12% discount rate.",
-            "Your score depends on whether you used the discount rate.",
-        ),
+        "You were graded on the section covering the 30% tax rate.",
+        "The rubric asks for the 45% split between the two funds.",
+        "Your score depends on whether you used the 12% discount rate.",
     ],
 )
-def test_accepted_content_loss_a_content_percentage_in_a_grading_sentence(text, expected):
+def test_accepted_content_loss_a_content_percentage_in_a_grading_sentence(text):
     """ACCEPTED LOSS, pinned so it stays visible.
 
     Sentence anchoring is coarser than adjacency: a CONTENT percentage that
-    happens to share a sentence with a grading word loses its number. The
-    alternative — requiring adjacency for the token tier too — would let
-    "Only 40% of the rubric landed." through, and the sentence is the smallest
-    unit in which "is this about the grade?" is answerable at all. Each result
-    below is still a true, grammatical sentence, which is what makes the trade
-    payable; the number is the only casualty.
+    happens to share a sentence with a grading word takes the WHOLE sentence
+    with it since the review wave. That is a bigger loss than the "number only"
+    version this test used to pin, and it is the price of never shipping broken
+    prose — carving the number out of these three left them grammatical, but the
+    same carve left "on causality and on the definition." one sentence over, and
+    the two cases are not separable by regex. The other prose fields still carry
+    the feedback, and an emptied field gets a fallback.
     """
-    assert sanitize_narrative(text) == expected
+    assert sanitize_narrative(text) == ""
 
 
 def test_accepted_residual_leak_a_percentage_with_no_anchor():
@@ -520,10 +543,24 @@ def test_a_score_collocation_inside_a_quote_survives_too():
     assert sanitize_narrative(text) == text
 
 
-def test_the_exemption_does_not_shelter_prose_after_the_quote():
-    out = sanitize_narrative('Great: "we hit 30% margin" and then you scored 88%.')
-    assert '"we hit 30% margin"' in out
-    assert "88%" not in out
+def test_the_exemption_does_not_shelter_prose_in_a_LATER_sentence():
+    """The quoted span survives; the grade statement beside it does not. Split
+    across two sentences because a grade statement is now removed WHOLE — see
+    `test_accepted_loss_a_quote_sharing_a_sentence_with_a_grade` for what that
+    costs when the two share one sentence."""
+    out = sanitize_narrative('Great: "we hit 30% margin". Then you scored 88%.')
+    assert out == 'Great: "we hit 30% margin".'
+
+
+def test_accepted_loss_a_quote_sharing_a_sentence_with_a_grade():
+    """ACCEPTED LOSS, pinned so it stays visible.
+
+    Whole-sentence removal and the quotes exemption meet here: a student span
+    quoted INSIDE a grade statement goes with the statement. Keeping the
+    sentence to save the quote would ship exactly the broken residue the review
+    wave removed ("Great: \"we hit 30% margin\" and then."), and the quote is
+    still served in its own exact-gated `quote` field."""
+    assert sanitize_narrative('Great: "we hit 30% margin" and then you scored 88%.') == ""
 
 
 def test_an_unterminated_quote_fails_closed():
@@ -570,6 +607,56 @@ def test_the_flattened_narrative_never_serves_a_bare_next_step_label():
         "Solid start.\n\nNice link.\n\nYou negotiated 2 entries with Apollo."
         "\n\nNext step: Walk through continuity out loud."
     )
+
+
+def test_a_fully_credited_attempt_still_gets_a_fallback_for_an_emptied_field():
+    """The other half of the whole-sentence rule (review wave).
+
+    `enforce_narrative_consistency` early-returns when nothing is uncredited, so
+    an emptied headline/next step used to be served BLANK on exactly the
+    attempts where the model most wants to headline the number — a 100% attempt.
+    The fallback now runs before that early return, and it uses the
+    all-credited wording, because `FALLBACK_HEADLINE` ("what Apollo did not get")
+    would be a lie on a fully credited card.
+    """
+    credited = _topic("eq1", 1.0, "covered")
+    scrubbed_headline = sanitize_narrative("You scored 100% overall.")
+    assert scrubbed_headline == ""
+
+    repaired = nc.enforce_narrative_consistency(
+        {
+            "headline": scrubbed_headline,
+            "topic_feedback": [{"canonical_key": "eq1", "note": "You nailed the streamline."}],
+            "next_step": "",
+        },
+        topics=[credited],
+    )
+    assert repaired["headline"] == nc.FALLBACK_HEADLINE_CREDITED
+    assert repaired["next_step"] == nc.FALLBACK_NEXT_STEP_CREDITED
+    assert repaired["headline"] and repaired["next_step"]
+    # The all-credited wording, never the uncredited one.
+    assert repaired["headline"] != nc.FALLBACK_HEADLINE
+
+
+def test_a_fully_credited_attempt_with_real_prose_is_untouched():
+    """The early return still returns the payload unchanged when nothing is
+    blank — the fallback is a repair, not a rewrite."""
+    payload = {
+        "headline": "Your explanation held together end to end.",
+        "topic_feedback": [{"canonical_key": "eq1", "note": "Nice link."}],
+        "next_step": "Try it again without notes.",
+    }
+    assert nc.enforce_narrative_consistency(payload, topics=[_topic("eq1", 1.0)]) == payload
+
+
+def test_the_ledger_path_residue_is_swept_not_served():
+    """Regression pin for a pre-existing output the repair block changed.
+
+    Before the repair block, the ledger scrub left "Your weight 0.5." as "Your."
+    — a bare pronoun sentence. It now sweeps to "". Unpinned until the review
+    wave caught it; the change is correct, so it is pinned rather than reverted.
+    """
+    assert sanitize_narrative("Your weight 0.5.") == ""
 
 
 def test_the_gated_quote_field_drops_rather_than_mangles():
