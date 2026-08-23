@@ -49,7 +49,7 @@ so this narrative LLM call no longer blocks the event loop. Code validates topic
 keys/order, exact-gates each quote against that topic's `evidence_span`,
 sanitizes every prose field, appends deterministic misconception + negotiation
 entries in `recap[]`, runs the consistency gate LAST, then flattens headline →
-topic notes → recap → prefixed next step for back compatibility. Otherwise it
+topic notes → recap → prefixed next step for back compatibility, **dropping any empty part** (2026-08-23: `sanitize_narrative` can now return "" for a field that was nothing but a numeric grade statement, and an unconditional join served a bare `Next step:` label). Otherwise it
 uses the unchanged axis prompt and returns the legacy sanitized narrative plus
 null feedback.
 

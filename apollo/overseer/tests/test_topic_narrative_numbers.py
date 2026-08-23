@@ -186,8 +186,9 @@ def test_unprobed_is_passed_through_untouched():
 @pytest.mark.parametrize(
     ("family", "text", "gone"),
     [
-        ("percent", "That puts you at 72% for the attempt.", "72%"),
-        ("percent-word", "Apollo rated your teaching 65 percent.", "65 percent"),
+        ("percent-second-person", "That puts you at 72% for the attempt.", "72%"),
+        ("percent-anchored-rubric", "Only 40% of the rubric landed this time.", "40%"),
+        ("percent-anchored-grader", "The grader credited 80 percent of it.", "80 percent"),
         ("percent-paren", "You covered causality well (80%).", "80%"),
         ("out-of-100", "That works out to 72 out of 100.", "72 out of 100"),
         ("slash-100", "Your final tally was 72/100.", "72/100"),
@@ -206,6 +207,15 @@ def test_each_grade_family_is_scrubbed(family, text, gone):
     out = sanitize_narrative(text)
     assert gone not in out, family
     assert sanitize_narrative(out) == out, f"{family} is not idempotent"
+
+
+def test_a_frame_makes_its_whole_sentence_a_grading_sentence():
+    """The percentage tier is sentence-anchored, and a frame IS the anchor: once
+    a scoring word sits next to a number, every other percentage in that
+    sentence belongs to the same statement."""
+    out = sanitize_narrative("You earned 80% on the causality topic and 100% on the definition.")
+    assert "80%" not in out and "100%" not in out
+    assert "causality topic" in out and "definition" in out
 
 
 def test_a_leak_mid_sentence_keeps_the_feedback_around_it():
@@ -265,6 +275,87 @@ def test_content_numbers_survive_untouched(why, text):
     assert sanitize_narrative(text) == text, why
 
 
+# ── 3b-i. review fix: content PERCENTAGES outside quotes (2026-08-23) ────────
+#
+# The first cut scrubbed every percentage unconditionally, on the theory that
+# the result stays grammatical. Review reproduced otherwise, and the inventory
+# above had no content-percentage case at all, so the loss was invisible. These
+# are the reviewer's own reproductions, pinned so the anchoring cannot regress.
+# None of these sentences carries a grading anchor, and no frame fires in one.
+
+
+@pytest.mark.parametrize(
+    ("why", "text"),
+    [
+        ("sentence-final percentage", "The tax rate is 30%."),
+        ("sentence-initial percentage", "About 30% of the head is lost to friction."),
+        ("a rate the problem supplies", "Use a 20% discount rate in the NPV calculation."),
+        ("a certainty, not a grade", "There is a 100% chance the pressure drops."),
+        ("a named statistical interval", "You correctly used the 90 percent confidence interval."),
+        ("efficiency is a quantity", "The pump runs at 85% efficiency under full load."),
+        ("a margin", "The firm holds a 12% margin on that product line."),
+    ],
+)
+def test_content_percentages_outside_quotes_survive(why, text):
+    assert sanitize_narrative(text) == text, why
+
+
+# ── 3b-ii. review fix: the grade/rating NOUN frames (2026-08-23) ─────────────
+#
+# F3/F4 had every element optional but the number, so they degenerated to
+# "grade noun near a number". "Pump/motor rating" is ordinary vocabulary in the
+# very fluids domain these fixtures use. The connector is now mandatory, the
+# number must close its clause or carry a GRADE unit, and the reversed frame
+# takes a bare number for `grade`/`rating` (so "a 5% grade" is a road, not a
+# verdict).
+
+
+@pytest.mark.parametrize(
+    ("why", "text"),
+    [
+        ("a motor rating with a subject-matter unit", "The motor rating is 5 kW at full load."),
+        ("a rating in kVA", "A rating of 500 kVA is plenty for that load."),
+        ("a road grade as a percentage", "The road has a 5% grade over that stretch."),
+        ("a bolt grade, no connector", "Use grade 8 bolts for the flange."),
+        ("a pump rating", "The pump has a rating of 12 bar before it cavitates."),
+    ],
+)
+def test_grade_and_rating_nouns_in_content_survive(why, text):
+    assert sanitize_narrative(text) == text, why
+
+
+# ── 3b-iii. the residuals, pinned rather than omitted ────────────────────────
+
+
+def test_accepted_content_loss_a_parenthetical_percentage():
+    """ACCEPTED LOSS, pinned so it stays visible.
+
+    A parenthetical holding nothing but a percentage is scrubbed with no
+    sentence anchor, because it is the exact staging leak shape
+    ("You covered causality well (80%).") and content percentages are written
+    inline rather than parenthesised. A content percentage that IS parenthesised
+    loses its number — the cost of keeping that one annotation shape. The
+    sentence stays true and grammatical, which is why the trade is taken.
+    """
+    assert sanitize_narrative("The pump efficiency (85%) held steady.") == (
+        "The pump efficiency held steady."
+    )
+
+
+def test_accepted_residual_leak_a_percentage_with_no_anchor():
+    """ACCEPTED RESIDUAL LEAK, pinned so it stays visible.
+
+    "rated" cannot join the anchor set: "the pump is rated at 95% efficiency" is
+    exactly the fluids content this scrub must not touch. So a grade stated with
+    an unanchored verb survives the backstop. That is the precision-over-recall
+    trade the brief demands, and it is acceptable because the PROMPT is the
+    primary control — it supplies no percentage anywhere and forbids numeric
+    grades outright, so there is no number for the narrator to recite.
+    """
+    text = "Apollo rated your teaching 65 percent."
+    assert sanitize_narrative(text) == text
+
+
 @pytest.mark.parametrize("token", ["beginner", "intermediate", "advanced"])
 def test_band_words_still_pass(token):
     """Task 2's contract, re-pinned from the scrub side: the vocabulary that
@@ -320,6 +411,45 @@ def test_an_unterminated_quote_fails_closed():
     reading, because the alternative exempts the whole rest of the field."""
     out = sanitize_narrative('You said "I got 80% of it')
     assert "80%" not in out
+
+
+def test_the_flattened_narrative_never_serves_a_bare_next_step_label():
+    """The empty-field edge this change opened, closed at the other end.
+
+    `sanitize_narrative` returns "" for a field that was nothing but a numeric
+    grade statement, and `_flatten_topic_feedback` used to join unconditionally
+    — serving the label "Next step: " with nothing behind it. Empty parts are
+    now dropped, the way `_deterministic_recap` already drops empty appender
+    output.
+    """
+    from apollo.overseer.diagnostic import _flatten_topic_feedback
+
+    flattened = _flatten_topic_feedback(
+        {
+            "headline": "",
+            "topic_feedback": [
+                {"canonical_key": "eq1", "note": "Make the continuity step explicit."},
+                {"canonical_key": "c1", "note": "   "},
+            ],
+            "recap": [],
+            "next_step": "",
+        }
+    )
+    assert flattened == "Make the continuity step explicit."
+    assert "Next step:" not in flattened
+
+    # ...and a populated payload still flattens in the unchanged order.
+    assert _flatten_topic_feedback(
+        {
+            "headline": "Solid start.",
+            "topic_feedback": [{"canonical_key": "eq1", "note": "Nice link."}],
+            "recap": ["You negotiated 2 entries with Apollo."],
+            "next_step": "Walk through continuity out loud.",
+        }
+    ) == (
+        "Solid start.\n\nNice link.\n\nYou negotiated 2 entries with Apollo."
+        "\n\nNext step: Walk through continuity out loud."
+    )
 
 
 def test_the_gated_quote_field_drops_rather_than_mangles():

@@ -58,13 +58,7 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
 ## Invariants & gotchas
 
 - **NO NUMBER THAT STANDS FOR A GRADE reaches student-facing prose
-  (study-prep 2026-08-23, user ruling).** Two independent controls:
-  1. **the prompt (primary).** The topic line ends at the status word — the
-     trailing `— {pct}%` is gone — and the system prompt forbids any score,
-     percentage, points, "out of 100" or letter grade outright, while explicitly
-     welcoming SUBJECT-MATTER numbers so the rule cannot be read as "avoid
-     numbers". No percentage is supplied anywhere, so there is nothing to recite.
-  2. **`sanitize_narrative` (backstop).** See the scrub invariant below.
+  (study-prep 2026-08-23, user ruling).** Two independent controls: (1) **the prompt, primary** — the topic line ends at the status word (the trailing `— {pct}%` is gone) and the system prompt forbids any score, percentage, points, "out of 100" or letter grade outright while explicitly welcoming SUBJECT-MATTER numbers, so the rule cannot be read as "avoid numbers" and no percentage is supplied anywhere to recite; (2) **`sanitize_narrative`, backstop** — see the scrub invariant below.
   Grading semantics are untouched: scores, credits, artifacts and grader payloads
   are unchanged, and `band` beside `letter` is [rubric](rubric.md)'s business.
 - **`CREDIT CONSISTENCY` is a base-prompt rule (P2.1, 2026-08-07; renamed from
@@ -87,7 +81,7 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
   `missing`, and `unprobed` passes through untouched (it is not a credit verdict).
   The vocabulary is still `_status_label`'s — no parallel one was invented — and
   a parametrized property test pins word ⇔ `narrative_consistency._is_uncredited`
-  across the whole credit range.
+  across the whole credit range **for a non-Hoot topic**. Hoot-assist is the deliberate exception on both sides: the flat `0.5` cap renders "partially covered" while `_is_uncredited` exempts it (a policy penalty, not absent evidence), so the narrator withholds praise and the gate appends no gap sentence — the old "covered — 50%" outcome without its contradiction.
 - **Reference wording is never attributed to the student** unless it appears
   verbatim in a quoted `You said:` line; a topic with no gated span is credited
   in general terms only. Topic descriptions are the reference solution's wording,
@@ -135,20 +129,26 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
   dropping legitimate prose like `weight = mg`. It is also why the level-4
   ceiling is leak-proof for free — and the number never enters the prompt at all,
   so it cannot be stated anyway.
-- **The grade scrub is PRECISION over recall (2026-08-23).** It used to preserve
-  whole-number percentages deliberately; it now removes them, plus `NN/100`,
-  `NN out of 100`, and numbers in a score/grade collocation (`scored NN`,
-  `earned NN points`, `your score is NN`, `an NN grade`, `worth NN points`). It
-  never touches a BARE INTEGER — a step, problem, section or equation reference,
-  a year, a quantity, a computed value all survive — and `basis points`,
-  `percentage points` and `the index fell 200 points` are left alone, because a
-  scrub that mangles physics or business content is worse than the residual leak
-  the prompt already closes. Removing a percentage is cheap even when it was
-  content: "the 12% growth rate" degrades to "the growth rate". Prose repairs
-  (dangling conjunction, orphan punctuation, function-word-only sentence) run
-  ONLY when a scrub fired, so untouched text is returned byte-identical; a field
-  that was nothing BUT a grade statement goes empty and the gate's fallback
-  headline/next step takes over. The pattern inventory with its negatives is
+- **The grade scrub is PRECISION over recall (2026-08-23).** Two tiers.
+  **Frames** run everywhere and delete a number that sits next to a scoring word
+  (`scored NN`, `earned NN points`, `your score is NN`, `an NN grade`,
+  `worth NN points`, `puts you at NN%`). The **bare-token** tier (`NN%`,
+  `NN percent`, `NN/100`, `NN out of 100`) is SENTENCE-ANCHORED: it fires only
+  where a frame already fired in that sentence or the sentence carries an
+  unambiguous grading word (`score(d)`, `graded`, `grader`, `rubric`,
+  `credited`, `percentile`). Bare `grade`, `credit`, `mark`, `rate` and the band
+  words are excluded from that anchor set on purpose — "a 5% grade" is a road,
+  "an intermediate step" is a step, "the 20% discount rate" is MGMT content.
+  A BARE INTEGER is never touched at all. The one unanchored shape is a
+  parenthetical holding nothing but a percentage (`(80%)`), the observed staging
+  leak. Prose repairs (dangling conjunction, orphan punctuation,
+  function-word-only sentence) run ONLY when a scrub fired, so untouched text is
+  returned byte-identical; a field that was nothing BUT a grade statement goes
+  empty, the gate's fallback headline/next step takes over, and
+  `diagnostic._flatten_topic_feedback` drops the empty part instead of serving a
+  bare `Next step:` label. The inventory — positives, the content negatives, and
+  the two pinned residuals (a parenthesised content percentage loses its number;
+  an unanchored `rated … NN percent` survives) — is
   `apollo/overseer/tests/test_topic_narrative_numbers.py`.
 - **QUOTED SPANS ARE EXEMPT from the grade scrub.** Everything the narrative
   quotes is the student's own words (the prompt allows a quote only from a

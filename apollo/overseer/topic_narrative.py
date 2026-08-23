@@ -459,11 +459,16 @@ _MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
 #
 # PRECISION OVER RECALL is the design rule: mangled physics or business content
 # is worse than a residual leak, so a bare integer is NEVER touched (it is a
-# step, a problem id, a year, a quantity, a computed value) and only two shapes
-# are removed on sight — a PERCENTAGE, and a number carrying an explicit grade
-# unit. Removing a percentage is cheap even when it was content: "the 12% growth
-# rate" degrades to "the growth rate", which is still a true, grammatical
-# sentence. Removing a bare integer is not: "step 2" degrades to "step".
+# step, a problem id, a year, a quantity, a computed value).
+#
+# REVIEW FIX (2026-08-23): the percentage tier was unconditional in the first
+# cut, on the theory that removing a percentage always leaves a grammatical
+# sentence. It does not — "The tax rate is 30%." -> "The tax rate is.",
+# "About 30% of the head is lost to friction." -> "of the head is lost to
+# friction." — and it also contradicted the prompt rule that tells the model
+# subject-matter numbers are welcome. A percentage is now removed only where the
+# SENTENCE is demonstrably about the grade (:func:`_is_grading_sentence`), which
+# is the same evidence standard the frames already meet by adjacency.
 _GRADE_NUM = r"\d{1,3}(?:\.\d+)?"
 # A grade unit: the currency itself, never a subject-matter unit.
 # One group, so `{_GRADE_UNIT}?` makes the WHOLE unit optional rather than just
@@ -490,6 +495,16 @@ _WEAK_SCORE_VERB = (
 # "Mark 3 key assumptions" is ordinary coaching prose. Its UNIT form ("18 marks")
 # still counts, so the collocations are covered without the imperative risk.
 _GRADE_NOUN = r"score|grade|rating"
+# MANDATORY in the noun frame (review fix): without it the frame degenerated to
+# "grade noun somewhere near a number" and ate "Use grade 8 bolts for the
+# flange." Every real verdict phrasing carries one.
+_GRADE_CONNECTOR = r"(?:(?:of|is|was|sits at|comes to|came out to|stands at|at)\s*[:=]?|[:=])"
+# A grade number ends a clause or carries a grade unit. Also a review fix:
+# "The motor rating is 5 kW at full load." and "A rating of 500 kVA is plenty"
+# both satisfy noun+connector+number, and only the tail tells them apart from
+# "Your score is 72," — a number followed by a SUBJECT-MATTER unit is a
+# measurement, not a grade.
+_GRADE_TAIL = rf"(?:\s*{_GRADE_UNIT}{_GRADE_SCOPE}|{_GRADE_SCOPE}(?=\s*(?:[.,;:!?)]|$)))"
 
 _SCORE_FRAME_RES = (
     # "you scored 72", "graded 84 overall" — strong verb, unit optional.
@@ -504,19 +519,30 @@ _SCORE_FRAME_RES = (
         rf"(?:an?|the)?\s*{_GRADE_NUM}\s*{_GRADE_UNIT}{_GRADE_SCOPE}",
         re.IGNORECASE,
     ),
-    # "your score is 72", "overall grade: 84%", "a rating of 70".
+    # "your score is 72,", "overall grade: 84%", "a rating of 70" — connector
+    # mandatory, and the number must close its clause or carry a grade unit.
     re.compile(
-        rf"{_GRADE_DET}\b(?:{_GRADE_NOUN})s?\b"
-        rf"\s*(?:of|is|was|sits at|comes to|came out to|stands at|at)?"
-        rf"\s*[:=]?\s*(?:an?|the)?\s*{_GRADE_NUM}\s*{_GRADE_UNIT}?{_GRADE_SCOPE}",
+        rf"{_GRADE_DET}\b(?:{_GRADE_NOUN})s?\b\s*{_GRADE_CONNECTOR}"
+        rf"\s*(?:an?|the)?\s*{_GRADE_NUM}{_GRADE_TAIL}",
         re.IGNORECASE,
     ),
-    # "a 72% score", "an 85 grade" — the same collocation, reversed.
-    re.compile(rf"\b(?:an?|the)?\s*{_GRADE_NUM}\s*{_GRADE_UNIT}?\s*(?:{_GRADE_NOUN})s?\b",
-               re.IGNORECASE),
+    # "a 72% score", "an 85 score" — the reversed collocation. `score` only: its
+    # twins ("a 5% grade" on a road, "a 5% approval rating") are content, and a
+    # UNIT does not separate them, so only a bare number qualifies for those two.
+    re.compile(rf"\b(?:an?|the)?\s*{_GRADE_NUM}\s*{_GRADE_UNIT}?\s*scores?\b", re.IGNORECASE),
+    # "an 85 grade", "a 70 rating" — bare number only, so "a 5% grade" (a road)
+    # and "a 500 kVA rating" (a motor) are both untouched.
+    re.compile(rf"\b(?:an?|the)\s*{_GRADE_NUM}\s*(?:grade|rating)s?\b", re.IGNORECASE),
     # "18 points out of 25" — a points tally against any denominator.
     re.compile(rf"\b{_GRADE_NUM}\s*(?:points?|pts?|marks?)\s+out of\s+{_GRADE_NUM}\b",
                re.IGNORECASE),
+    # "that puts you at 72%", "you're at 60%" — second person + a standing, which
+    # is a grade by construction in prose addressed to the student.
+    re.compile(
+        rf"\b(?:(?:puts?|leaves?|has|had|got)\s+)?you(?:'re|\s+are|\s+were)?\s+at\s+"
+        rf"(?:about\s+|around\s+|roughly\s+|nearly\s+)?{_GRADE_NUM}\s*(?:%|percent\b)",
+        re.IGNORECASE,
+    ),
 )  # fmt: skip
 
 # A leading connective the token scrub swallows so the number's slot closes
@@ -526,12 +552,37 @@ _SCORE_FRAME_RES = (
 _GRADE_LEAD = (
     r"(?:\b(?:to|at|of|around|about|roughly|nearly|approximately|just|only|above|below)\s+)?"
 )
+# Applied ONLY inside a grading sentence — see `_is_grading_sentence`.
 _SCORE_TOKEN_RES = (
-    # A percentage, anywhere: the grade currency the report no longer shows.
+    # A percentage: the grade currency the report no longer shows.
     re.compile(rf"{_GRADE_LEAD}\b{_GRADE_NUM}\s*(?:%|percent\b)", re.IGNORECASE),
     # "72 out of 100" / "72/100" — a denominator of 100 is a grade, not a ratio.
     re.compile(rf"{_GRADE_LEAD}\b{_GRADE_NUM}\s*(?:/\s*|\s+out of\s+)100\b", re.IGNORECASE),
 )
+
+# A parenthetical holding NOTHING but a percentage is a score annotation, not
+# prose — "You covered causality well (80%)." is the exact staging leak shape.
+# Content percentages are written inline ("a 12% growth rate"), so this one shape
+# is scrubbed without a sentence anchor. The accepted cost is pinned as a test:
+# "The pump efficiency (85%) held steady." loses its number (and stays
+# grammatical, which is why the trade is worth taking).
+_PAREN_PCT_RE = re.compile(r"\(\s*\d{1,3}(?:\.\d+)?\s*%\s*\)")
+
+# What makes a sentence a GRADING sentence, on top of a frame firing in it.
+# Deliberately narrow: bare `grade`, `credit`, `mark`, `rate` and the band words
+# are all excluded, because "a 5% grade" is a road, "credit" is an accounting
+# entry, "an intermediate step" is a step, and "the 20% discount rate" is
+# ordinary MGMT content. Every word here is one a narrator has no reason to
+# write about the SUBJECT MATTER of a fluids or business problem.
+_GRADING_ANCHOR_RE = re.compile(
+    r"\b(?:scores?|scored|scoring|graded|grading|grader|rubric|credited|uncredited|percentile)\b"
+    r"|/\s*100\b|\bout of\s+100\b",
+    re.IGNORECASE,
+)
+
+# Sentence bodies and their terminators, kept separately so the text rebuilds
+# exactly. `\n` terminates too: a paragraph break is a sentence break.
+_SENTENCE_KEEP_RE = re.compile(r"([.!?\n]+)")
 
 # `"` and the two curly forms delimit a quoted span. Captured so `re.split`
 # keeps them and the text round-trips exactly when nothing is scrubbed.
@@ -555,8 +606,69 @@ _RESIDUE_WORDS = frozenset(
 )  # fmt: skip
 
 
-def _scrub_outside_quotes(text: str) -> str:
-    """Apply the grade scrub to every span that is NOT inside a quotation.
+def _scrub_grade_numbers(text: str) -> str:
+    """Remove grade-shaped numbers, one SENTENCE at a time.
+
+    Sentence granularity is what lets the percentage tier be anchored: the frames
+    prove a grading context by adjacency and run everywhere, but a bare
+    percentage is only a grade if the sentence around it says so.
+    """
+    parts = _SENTENCE_KEEP_RE.split(text)
+    # Even indices are sentence bodies, odd ones the terminators that separate
+    # them; both are re-joined verbatim so nothing but a match is ever lost.
+    return "".join(part if index % 2 else _scrub_sentence(part) for index, part in enumerate(parts))
+
+
+def _scrub_sentence(sentence: str) -> str:
+    """Frames everywhere; bare grade tokens only inside a grading sentence.
+
+    A parenthetical holding nothing but a percentage is removed either way — it
+    is an annotation, not prose, so it needs no sentence-level evidence.
+    """
+    framed = _outside_quotes(sentence, _apply_frames)
+    if _is_grading_sentence(sentence, framed):
+        return _outside_quotes(framed, _apply_tokens)
+    return _outside_quotes(framed, _apply_paren_only)
+
+
+def _apply_paren_only(span: str) -> str:
+    return _PAREN_PCT_RE.sub("", span)
+
+
+def _is_grading_sentence(original: str, framed: str) -> bool:
+    """Two kinds of evidence that this sentence is about the grade.
+
+    1. a FRAME fired in it — a scoring word sat next to a number, which is the
+       adjacency standard the frames are built on, so anything else numeric in
+       the same sentence is part of the same statement
+       ("You earned 80% on causality and 100% on the definition.");
+    2. it carries an unambiguous grading word (:data:`_GRADING_ANCHOR_RE`).
+
+    The anchor is tested against the ORIGINAL sentence, quotes included: a
+    student span that says "scored" still tells us what the sentence is about,
+    even though the span itself is never scrubbed.
+    """
+    return framed != original or bool(_GRADING_ANCHOR_RE.search(original))
+
+
+def _apply_frames(span: str) -> str:
+    for pattern in _SCORE_FRAME_RES:
+        span = pattern.sub("", span)
+    return span
+
+
+def _apply_tokens(span: str) -> str:
+    """Bare grade tokens. Frames already ran, so a collocation went whole —
+    with the order reversed ``"you scored 72%"`` would lose ``72%`` and serve
+    the dangling verb ``"you scored"``."""
+    span = _PAREN_PCT_RE.sub("", span)
+    for pattern in _SCORE_TOKEN_RES:
+        span = pattern.sub("", span)
+    return span
+
+
+def _outside_quotes(text: str, transform) -> str:  # noqa: ANN001 - Callable[[str], str]
+    """Run ``transform`` over every span that is NOT inside a quotation.
 
     QUOTES ARE EXEMPT — deliberately. Everything the narrative quotes is the
     STUDENT'S own words: the prompt allows a quote only from a verbatim
@@ -581,22 +693,8 @@ def _scrub_outside_quotes(text: str) -> str:
             out.append(piece)
             continue
         quoted = (index // 2) % 2 == 1 and not (unbalanced and index == len(pieces) - 1)
-        out.append(piece if quoted else _scrub_grade_numbers(piece))
+        out.append(piece if quoted else transform(piece))
     return "".join(out)
-
-
-def _scrub_grade_numbers(span: str) -> str:
-    """Remove grade-shaped numbers from one unquoted span.
-
-    Frames run BEFORE bare tokens so a collocation is removed whole: with the
-    order reversed, ``"you scored 72%"`` would lose ``72%`` and serve the
-    dangling verb ``"you scored"``.
-    """
-    for pattern in _SCORE_FRAME_RES:
-        span = pattern.sub("", span)
-    for pattern in _SCORE_TOKEN_RES:
-        span = pattern.sub("", span)
-    return span
 
 
 def _drop_residue_sentences(cleaned: str, original: str) -> str:
@@ -632,7 +730,7 @@ def sanitize_narrative(text: str, canonical_keys: Sequence[str] = ()) -> str:
     Study-prep 2026-08-23 (user ruling — students see a proficiency band, never a
     number) added the grade scrub: percentages and numbers carrying a grade unit
     or a score/grade collocation are removed OUTSIDE quoted spans (see
-    :func:`_scrub_outside_quotes`). Bare integers are never touched, so step,
+    :func:`_outside_quotes`). Bare integers are never touched, so step,
     problem, section, equation, year and quantity references survive intact.
 
     The prose repairs at the end run ONLY when a scrub actually fired, so text
@@ -645,7 +743,7 @@ def sanitize_narrative(text: str, canonical_keys: Sequence[str] = ()) -> str:
         cleaned = re.sub(rf"`?\b{re.escape(key)}\b`?", "", cleaned)
     cleaned = _SCORING_PAREN_RE.sub("", cleaned)
     cleaned = _SCORING_INLINE_RE.sub("", cleaned)
-    cleaned = _scrub_outside_quotes(cleaned)
+    cleaned = _scrub_grade_numbers(cleaned)
     cleaned = _EMPTY_PAREN_RE.sub("", cleaned)
     cleaned = _DANGLING_COMMA_RE.sub("", cleaned)
     cleaned = _EMPTY_SENTENCE_RE.sub("", cleaned)

@@ -350,13 +350,22 @@ def _deterministic_recap(
 
 
 def _flatten_topic_feedback(feedback: dict[str, Any]) -> str:
-    """Flatten structured feedback in one stable back-compat order."""
+    """Flatten structured feedback in one stable back-compat order.
+
+    Empty parts are dropped, matching how `_deterministic_recap` already skips
+    empty appender output. Study-prep 2026-08-23 made an empty prose field
+    reachable — `sanitize_narrative` returns "" for a field that was nothing but
+    a numeric grade statement — and an unconditional join served the bare label
+    "Next step: " with nothing after it.
+    """
+    next_step = feedback["next_step"]
     parts = [
         feedback["headline"],
         *(item["note"] for item in feedback["topic_feedback"]),
         *feedback["recap"],
-        f"Next step: {feedback['next_step']}",
+        f"Next step: {next_step}" if str(next_step).strip() else "",
     ]
+    parts = [part for part in parts if str(part).strip()]
     return "\n\n".join(parts)
 
 
