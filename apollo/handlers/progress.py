@@ -124,9 +124,11 @@ async def handle_get_progress_detail(
                 "letter": overall.get("letter"),
                 # Study-prep 2026-08-23: additive student-facing band beside the
                 # UNCHANGED letter. Snapshot-first (see
-                # `rubric.band_from_served_overall`); None on exactly the rows
-                # where `letter` is already None, so the two keys never disagree
-                # about whether this attempt has a grade to show.
+                # `rubric.band_from_served_overall`); None whenever `overall`
+                # carries no usable score. That is NOT the same row set as
+                # `letter is None` — a row with a letter but no usable score
+                # yields a letter and a null band, so do not read the two keys
+                # as agreeing about whether this attempt has a grade to show.
                 "band": band_from_served_overall(overall),
                 "created_at": attempt.created_at.isoformat(),
             }

@@ -92,16 +92,21 @@ def score_to_letter(score: int) -> str:
 # is an ADDITIVE key beside it, because on a study-prep tool a letter reads as a
 # verdict where a proficiency band reads as a position.
 #
-# `PROFICIENCY_CUTS` is the §A.4 priors, placed at existing `LETTER_BANDS`
-# floors so the two vocabularies agree at their boundaries: 85 is the A- floor
-# (advanced), 50 the C floor (intermediate). They are deliberately NOT derived
-# from `LETTER_BANDS` at runtime — a letter rescale must FAIL a test rather than
-# silently drag the student-facing bands along with it. That tripwire is
-# `overseer/tests/test_rubric_bands.py`, built on the P3.2 ceiling-pin pattern
-# (`test_ceiling_letter_bands.py`).
+# `PROFICIENCY_CUTS` is FROZEN at 50/85 by the 2026-08-23 user sign-off — these
+# are decided cuts, not priors awaiting calibration. They sit on existing
+# `LETTER_BANDS` floors so the two vocabularies agree at their boundaries: 85 is
+# the A- floor (advanced), 50 the C floor (intermediate). They are deliberately
+# NOT derived from `LETTER_BANDS` at runtime — a letter rescale must FAIL a test
+# rather than silently drag the student-facing bands along with it. That
+# tripwire is `overseer/tests/test_rubric_bands.py`, built on the P3.2
+# ceiling-pin pattern (`test_ceiling_letter_bands.py`).
 #
-# Changing the cuts after the §A.4 lattice sign-off is ONE line: nothing else in
-# the tree re-declares these numbers.
+# Moving a cut is a COORDINATED TWO-REPO change, not one line: the student UI
+# re-declares the same numbers in `ai-ta-student-ui/lib/apollo/bands.ts`
+# (`ADVANCED_FLOOR = 85` / `INTERMEDIATE_FLOOR = 50`, lines 23-24) as a
+# defensive fallback for a payload with no `band` token. The backend stays the
+# source of truth and its token always wins, but a cut that moves here and not
+# there is a silent disagreement. Nothing else in THIS tree re-declares them.
 PROFICIENCY_CUTS: tuple[int, int] = (50, 85)
 
 _INTERMEDIATE_FLOOR, _ADVANCED_FLOOR = PROFICIENCY_CUTS
