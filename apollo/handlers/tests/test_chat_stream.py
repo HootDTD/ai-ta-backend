@@ -110,6 +110,16 @@ def test_sse_frame_keeps_non_ascii_readable():
     assert "…" in frame
 
 
+def test_turn_session_opener_hands_out_the_real_session_machinery():
+    """Route tests override this dependency, so pin that the un-overridden
+    version is genuinely `get_db_session` — an RLS-enforced session, not a
+    second, unenforced session path."""
+    from database.session import get_db_session
+
+    assert cs.get_turn_session_opener() is cs._open_turn_session
+    assert cs._open_turn_session.__wrapped__ is get_db_session
+
+
 def test_unknown_turn_phase_is_dropped_not_forwarded():
     assert cs._phase_frame("teleporting", {}) is None
 

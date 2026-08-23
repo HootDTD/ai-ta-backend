@@ -187,6 +187,12 @@ async def _error_frame(request: Request, exc: BaseException) -> tuple[int, Any]:
     """
     handler = _lookup_exception_handler(request.app, exc)
     if handler is None:
+        # No registered handler means a genuine bug, and this route answers 200
+        # + an in-band event — so neither Starlette's ERROR log nor an HTTP 5xx
+        # dashboard would ever show it. Log it at ERROR here instead.
+        _LOG.error(
+            "apollo_chat_stream_unhandled_turn_error type=%s", type(exc).__name__, exc_info=exc
+        )
         return 500, dict(_GENERIC_ERROR_BODY)
     try:
         response = handler(request, exc)
