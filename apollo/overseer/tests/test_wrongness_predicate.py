@@ -365,6 +365,7 @@ def test_a_non_mapping_second_reader_never_raises() -> None:
     `validate_coverage_verdict` admits as an optional key without checking its
     type. A raise here lands on the grade path AFTER the Done claim is taken,
     so the module's totality contract has to cover its own argument."""
+    garbage: object
     for garbage in ([], "none", 7, None):
         findings = wrongness.select_findings(
             findings=wrongness.ledger_findings([_Row(evidence=[_entry()])]),
