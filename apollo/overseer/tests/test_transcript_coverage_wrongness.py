@@ -56,14 +56,29 @@ _TRANSCRIPT = (
 _QUOTE = "The gap between the informed and uninformed widens."
 _CANDIDATES = {"p1": _QUOTE}
 
-# sha256 of the PRE-FEATURE (origin/staging @7c51fbe) builds, computed from that
-# revision's module rather than from this one. These are the level-0 guarantee:
-# if any of them moves, the flag-off adjudication prompt/schema changed and every
-# calibration measurement taken against it is invalid.
-_BASELINE_SCHEMA_SHA = "7ee52f2543ec5c7d1e4fd4acb1e67453cae08f12bb770ed99c4cfe3e657d2415"
-_BASELINE_SCHEMA_ASIDE_SHA = "cded41b64cd126ec900cd1e0f6718ce48c0ed2e129ece4dc72e5a255ffd37552"
+# sha256 of the flag-off builds. Originally the PRE-FEATURE (origin/staging
+# @7c51fbe) values; these are the level-0 guarantee, and a move means the flag-off
+# adjudication prompt/schema changed and every calibration measurement taken
+# against it is invalid. That is a TRIPWIRE, not a prohibition: it fires on any
+# change from any axis, and re-pinning is allowed only with a measurement that
+# re-establishes calibration on the new build.
+#
+# Re-pinned 2026-08-24 for the 0.3 credit anchor — a deliberate, measured change
+# (5 transcripts x 2 arms x 4 samples; phantom-0.6 cells 18 -> 0 with the 0.85/1.0
+# credit counts byte-identical between arms). THREE of the five moved and the
+# split is itself the evidence that the change is scoped to the anchor set:
+#   * SCHEMA / SCHEMA_ASIDE — the `credit` enum gained 0.3. Expected.
+#   * SYSTEM               — the anchor prose gained 0.3. Expected.
+#   * SCHEMA_NOENUM        — UNCHANGED, and must stay so: the enum-free downgrade
+#     build is `{"type": "number"}`, so a move here would mean the anchor change
+#     leaked into the provider-rejection fallback path.
+#   * USER                 — UNCHANGED, and must stay so: anchors live in the
+#     system prompt only, so a move here would mean per-call anchor text started
+#     riding along with the transcript.
+_BASELINE_SCHEMA_SHA = "61517fde1a1c914e3a7784fd0bbe47d72242437e2c7752d22a8a19c28771a62f"
+_BASELINE_SCHEMA_ASIDE_SHA = "67c464f5c3dc8b1fdfac4451c212e0f585c9f6b74701cee47ee63113ae4d57ae"
 _BASELINE_SCHEMA_NOENUM_SHA = "4f6e483c25e65d633f3d79495d8776855c89668368cee69ff5127abff464bd91"
-_BASELINE_SYSTEM_SHA = "a9471cb7b6e0b3e9bd4938025a6713f57584332205c0645e498719597d952650"
+_BASELINE_SYSTEM_SHA = "96e93ee870933853993ead2f6c9f85cf2000d6b1361d19843c87e8c5409ecd39"
 _BASELINE_USER_SHA = "3f0c711f9ae139991d81e8ba85c33568cf6e80af8a64ed7a5f161a6d250e15a3"
 
 

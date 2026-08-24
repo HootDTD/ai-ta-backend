@@ -66,7 +66,7 @@ def test_prompt_uses_knowledge_demonstration_basis_and_preserves_evidence_rails(
 
 
 def test_prompt_states_grader_of_record_and_no_verbatim_requirement():
-    """The credit VALUES stopped being guidance at P1.1 (they are a four-point
+    """The credit VALUES stopped being guidance at P1.1 (they are a five-point
     enum now — see test_transcript_coverage_anchor_credit.py), but which anchor
     an item earns is still the adjudicator's judgement, and it is still never
     required to find a verbatim span before crediting."""
@@ -86,10 +86,13 @@ def test_prompt_uses_loosened_credit_anchors_and_credits_dialogue_contribution()
     deliberately retained.
 
     P1.1 hardened the loosened anchors from "around 0.85 / around 0.6" prose
-    into the four-value enum {0, 0.6, 0.85, 1.0} — the VALUES are unchanged, so
-    this test now pins them in their enum form. The 0.7 anchor stays retired."""
+    into an enum — the VALUES were unchanged, so this test pins them in their
+    enum form. 2026-08-24 ADDED one value, 0.3, below every existing anchor:
+    {0, 0.3, 0.6, 0.85, 1.0}. Nothing here was redefined — 0.6 keeps the exact
+    meaning it was loosened to — so the loosening this test guards is intact.
+    The 0.7 anchor stays retired."""
     prompt = build_system_prompt(_problem())
-    assert "0, 0.6, 0.85, or 1.0" in prompt
+    assert "0, 0.3, 0.6, 0.85, or 1.0" in prompt
     assert "0.7" not in prompt
     assert "Lean toward crediting genuine understanding" in prompt
     assert "confirms, corrects, or builds on" in prompt
@@ -228,8 +231,11 @@ async def test_basis_no_longer_overrides_credit():
 @pytest.mark.asyncio
 async def test_sub_half_credit_is_missing_in_per_step_and_anchored_in_procedure_scores():
     """A verdict below the covered threshold stays "missing" for the binary axis
-    consumers. Post-P1.1 the only sub-0.5 anchor is 0, so a 0.3 verdict snaps to
-    a real zero rather than carrying an un-reachable 0.3 into the topic lane."""
+    consumers. Since 2026-08-24 there are TWO sub-0.5 anchors (0 and 0.3), so a
+    0.3 verdict is now on-anchor: it stays 0.3 into the topic lane while every
+    binary consumer still reads it as missing. This test guards the split — the
+    new anchor moved the SCORE for a hedged topic, it did not promote it to
+    covered, and the 0.5 threshold was deliberately not touched."""
     payload = {
         "verdicts": [
             {
@@ -249,7 +255,7 @@ async def test_sub_half_credit_is_missing_in_per_step_and_anchored_in_procedure_
             [("student", "I integrate")], _graph(), _problem()
         )
     assert result["per_step"]["p1"] == "missing"
-    assert result["procedure_scores"]["p1"] == pytest.approx(0.0)
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.3)
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@ doc: apollo/overseer/_index
 description: Router for Apollo's grading, scoring, narrative, XP, and selection brains — home of the grading-path invariants.
 owns: []
 related: []
-last_verified: 2026-08-12
+last_verified: 2026-08-24
 stub: false
 ---
 
@@ -42,11 +42,11 @@ Done grade is assembled by [done.md](../conversation/handlers/done.md) — recip
 - **Flow:** transcript coverage → rubric + topic score → diagnostic/topic
   narrative → consistency gate (P2.1: prose never praises an uncredited topic;
   every zeroed topic that COUNTED names its gap) → remediation → XP.
-- **Per-node credit is a FOUR-POINT SCALE (2026-08-07 P1.1).** Every credit leaving
-  [transcript-coverage](transcript-coverage.md) is exactly one of `CREDIT_ANCHORS =
-  (0, 0.6, 0.85, 1.0)` (schema enum + code snap, ties down), so both consumers —
-  [topic-score](topic-score.md), axis [rubric](rubric.md) — see only anchors. The one
-  non-anchor value is the later [aside-penalty](aside-penalty.md) cap (0.5).
+- **Per-node credit is a FIVE-POINT SCALE (2026-08-07 P1.1; 0.3 added 2026-08-24).** Every credit leaving
+  [transcript-coverage](transcript-coverage.md) is exactly one of `CREDIT_ANCHORS = (0, 0.3, 0.6, 0.85, 1.0)` (schema
+  enum + code snap, ties down), so [topic-score](topic-score.md) and axis [rubric](rubric.md) see only anchors; the lone
+  non-anchor is [aside-penalty](aside-penalty.md)'s 0.5 cap. The THRESHOLDS are not anchors and did NOT move with 0.3
+  (`per_step` covered `>= 0.5`; praise only at `PRAISE_FLOOR = 0.6`), so 0.3 is uncredited everywhere but still scores.
 - **Course grounding is strictly additive (INTERACTION2, default OFF).**
   [grounding](grounding.md) reframes the adjudication + narrative prompts with one
   capped block; `None` reproduces both prompts BYTE FOR BYTE. It truncates only the

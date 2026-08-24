@@ -172,8 +172,10 @@ FLAGGED CLAIMS (only when a topic line carries a "Misconception" entry):
 
 
 # The credit at or above which prose may claim the student earned a topic.
-# Mirrors the adjudication anchor set {0, 0.6, 0.85, 1.0} (P1.1): 0.6 is the
-# lowest anchor that means "landed".
+# Mirrors the adjudication anchor set {0, 0.3, 0.6, 0.85, 1.0} (P1.1, 0.3 added
+# 2026-08-24): 0.6 is still the lowest anchor that means "landed", and the floor
+# deliberately did NOT move with the new anchor — 0.3 is the bare/tangential-
+# mention anchor, so it stays on the uncredited side of the split.
 #
 # Declared HERE since study-prep 2026-08-23, not in ``narrative_consistency``
 # (which re-exports it and stays the public name): once the topic line renders a

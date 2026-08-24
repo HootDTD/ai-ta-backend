@@ -9,7 +9,7 @@ related:
   - apollo/conversation/questioning/unified
   - apollo/conversation/questioning/controller
   - apollo/conversation/handlers/done
-last_verified: 2026-08-12
+last_verified: 2026-08-24
 stub: false
 ---
 
@@ -118,7 +118,9 @@ kinds. `test_jsonl_row_schema_is_the_p31_contract` pins both key sets.
 - **`recorded.served_score` is provenance, not an assertion target.** The
   fixtures' verdict credits were reconstructed at curation time from stored topic
   credits, and the live adjudicator path snaps credit onto
-  `transcript_coverage.CREDIT_ANCHORS` (0.3→0.0, 0.9→0.85, 0.95→1.0). Replay and
+  `transcript_coverage.CREDIT_ANCHORS` (0.9→0.85, 0.95→1.0). Since 2026-08-24 0.3 IS
+  an anchor, so `attempt_124`'s reconstructed `0.3` passes through instead of
+  collapsing to `0.0` — one fewer divergence, not a new one. Replay and
   the recorded prod score therefore differ on 083/124/167 — verified NOT to be a
   harness artifact: recorded-ledger, replayed-ledger and ledger-less grading all
   agree with each other.
