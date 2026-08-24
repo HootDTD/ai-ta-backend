@@ -27,6 +27,7 @@ from neo4j.exceptions import ServiceUnavailable
 from apollo.errors import CoverageGradingError, RetentionError
 from apollo.handlers.done import handle_done
 from apollo.handlers.tests._done_fixtures import _old_path_patches
+from apollo.overseer.rubric import score_to_band
 
 pytestmark = pytest.mark.unit
 
@@ -141,6 +142,8 @@ async def test_stamp_graded_at_retention_error_healthy_graph_still_serves(monkey
             p.stop()
 
     # Grade served byte-identically to the golden OLD-path payload (topic
-    # scoring is neutralized in the base golden, so served_rubric is rubric).
-    assert out["rubric"] == {"overall": {"score": 0.5}}
+    # scoring is neutralized in the base golden, so the served rubric is the
+    # golden axis rubric) — plus the additive `band` the soft-fail serving
+    # branch attaches to the overall (study-prep 2026-08-23). Whole-blob.
+    assert out["rubric"] == {"overall": {"score": 0.5, "band": score_to_band(0)}}
     assert out["xp_earned"] == 10

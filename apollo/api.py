@@ -14,7 +14,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,17 @@ from apollo.errors import (
 )
 from apollo.handlers.browse import handle_list_problems
 from apollo.handlers.chat import handle_chat
+from apollo.handlers.chat_stream import (
+    MEDIA_TYPE as CHAT_STREAM_MEDIA_TYPE,
+)
+from apollo.handlers.chat_stream import (
+    STREAM_HEADERS as CHAT_STREAM_HEADERS,
+)
+from apollo.handlers.chat_stream import (
+    TurnSessionOpener,
+    get_turn_session_opener,
+    stream_chat_turn,
+)
 from apollo.handlers.done import handle_done
 from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_retry
 from apollo.handlers.negotiate import (
@@ -216,6 +227,48 @@ async def chat(
         session_id=session_id,
         message=body.message,
         ask_hoot=body.ask_hoot,
+    )
+
+
+@router.post("/sessions/{session_id}/chat/stream")
+async def chat_stream(
+    session_id: int,
+    body: ChatRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
+    open_session: TurnSessionOpener = Depends(get_turn_session_opener),
+    auth: AuthContext = Depends(require_session_owner),
+) -> StreamingResponse:
+    """Streaming sibling of `POST /sessions/{id}/chat` (study-prep B.1 Tier 1).
+
+    Same request body, same turn, same final payload — delivered as SSE phase
+    events so the student sees activity immediately instead of a 10-17s dead
+    spinner. The blocking route above is untouched and stays the fallback /
+    kill switch (the student UI picks between them behind a flag).
+
+    Everything resolvable BEFORE the turn starts (401/403/404 from the owner
+    gate, 422 from body validation) is still a real HTTP status; only failures
+    raised inside the turn become in-band `error` events, because the 200 and
+    its headers are already on the wire by then.
+    """
+    # The owner gate is the ONLY use of the request-scoped session here — the
+    # turn runs on its own detached session. Release this one's pooled
+    # connection now rather than pinning it for the 10-17s the stream stays
+    # open; otherwise a streaming turn would hold two pool slots where the
+    # blocking route holds one.
+    await db.rollback()
+    return StreamingResponse(
+        stream_chat_turn(
+            request=request,
+            neo=neo,
+            open_session=open_session,
+            session_id=session_id,
+            message=body.message,
+            ask_hoot=body.ask_hoot,
+        ),
+        media_type=CHAT_STREAM_MEDIA_TYPE,
+        headers=CHAT_STREAM_HEADERS,
     )
 
 

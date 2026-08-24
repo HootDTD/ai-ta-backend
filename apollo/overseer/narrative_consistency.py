@@ -56,7 +56,11 @@ import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from apollo.overseer.topic_narrative import humanize_key, nameable_misconception_keys
+from apollo.overseer.topic_narrative import (
+    PRAISE_FLOOR,
+    humanize_key,
+    nameable_misconception_keys,
+)
 from apollo.overseer.topic_score import MAX_REFERENCE_TEXT_REVEALS, TopicCredit
 
 _LOG = logging.getLogger(__name__)
@@ -64,7 +68,12 @@ _LOG = logging.getLogger(__name__)
 # Below this credit the adjudicator did not find sufficient evidence, so prose
 # may not credit the student for it. Mirrors the adjudication anchor set
 # {0, 0.6, 0.85, 1.0} (P1.1): 0.6 is the lowest anchor that means "landed".
-PRAISE_FLOOR = 0.6
+#
+# Re-exported, not declared: since study-prep 2026-08-23 the topic line renders a
+# status WORD instead of a percentage, so `topic_narrative._credit_status` has to
+# split credited from uncredited at the exact same credit this gate does. It owns
+# the literal (this module already imports from it — the reverse would be a
+# cycle); the public name stays here, where every caller already reads it.
 
 # The gate's own sentences quote the topic's display name — which IS the
 # reference solution's wording — so they are a reveal channel exactly like D2's
@@ -86,6 +95,15 @@ PRAISE_FLOOR = 0.6
 MAX_REFERENCE_NAME_QUOTES = MAX_REFERENCE_TEXT_REVEALS
 
 FALLBACK_HEADLINE = "Here is what Apollo did not get from your teaching yet."
+# Used when a prose field arrives EMPTY on an attempt with nothing uncredited —
+# `FALLBACK_HEADLINE` would be a lie there. Reachable since the grade scrub
+# started dropping whole sentences (study-prep 2026-08-23): a headline that was
+# nothing but "You scored 100% overall." is scrubbed to "", and a fully credited
+# attempt is exactly where the model most wants to headline the number.
+FALLBACK_HEADLINE_CREDITED = "Here is how your explanation landed."
+FALLBACK_NEXT_STEP_CREDITED = (
+    "Teach this one again from memory and see how much you can add without your notes."
+)
 # Topic names are the reference solution's own wording (prod median 220 chars,
 # always sentence-shaped), so they are quoted and shortened rather than dropped
 # inline — the flattened back-compat narrative has no topic headings, so the
@@ -195,7 +213,12 @@ def enforce_narrative_consistency(
     """
     uncredited = {t.canonical_key: t for t in topics if _is_uncredited(t)}
     if not uncredited:
-        return dict(feedback)
+        # An EMPTY prose field still has to be repaired here (review wave). The
+        # uncredited path gets its fallback from `_repair_prose` below, but this
+        # early return used to hand "" straight back — on precisely the attempts
+        # (everything credited) where the model most wants to headline the score,
+        # and where the grade scrub therefore most often empties the field.
+        return _fill_empty_prose(feedback)
     credited = [t for t in topics if t.canonical_key not in uncredited]
     # P3.2 L3: whatever the prompt builder already spent on named misconceptions
     # comes off this gate's quota. Recomputed rather than passed in — it is a
@@ -241,6 +264,24 @@ def enforce_narrative_consistency(
             fallback=next_step_fallback,
         ),
     }
+
+
+def _fill_empty_prose(feedback: dict[str, Any]) -> dict[str, Any]:
+    """Replace a blank headline / next step with the all-credited fallbacks.
+
+    Pure and total: a non-blank field, a non-string field, and a payload with
+    neither key are all returned unchanged, so a fully credited attempt whose
+    prose survived the scrub is still byte-identical to its input.
+    """
+    filled = dict(feedback)
+    for key, fallback in (
+        ("headline", FALLBACK_HEADLINE_CREDITED),
+        ("next_step", FALLBACK_NEXT_STEP_CREDITED),
+    ):
+        value = filled.get(key)
+        if isinstance(value, str) and not value.strip():
+            filled[key] = fallback
+    return filled
 
 
 def _is_uncredited(topic: TopicCredit) -> bool:
@@ -501,6 +542,8 @@ def _names_uncredited_topic(
 
 __all__ = [
     "FALLBACK_HEADLINE",
+    "FALLBACK_HEADLINE_CREDITED",
+    "FALLBACK_NEXT_STEP_CREDITED",
     "MAX_REFERENCE_NAME_QUOTES",
     "PRAISE_FLOOR",
     "enforce_narrative_consistency",

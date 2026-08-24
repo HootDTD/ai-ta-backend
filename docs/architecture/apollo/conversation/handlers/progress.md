@@ -7,7 +7,7 @@ related:
   - apollo/conversation/routing/router
   - apollo/persistence/progress-repo
   - apollo/overseer/xp
-last_verified: 2026-07-26
+last_verified: 2026-08-23
 stub: false
 ---
 
@@ -33,8 +33,13 @@ progress within one course.
 (`ProblemAttempt.diagnostic_report`, filtered to `result == "graded"`). Each
 attempt's score/letter prefers the report's `served_overall` snapshot (the
 grade the student was shown — see `handlers/done`) and falls back to the raw
-`rubric.overall` for rows graded before the snapshot existed. Level
-title/threshold come from `overseer/xp` (`title_for_level`, `next_tier_threshold`).
+`rubric.overall` for rows graded before the snapshot existed. Each recent
+attempt also carries `band` (study-prep 2026-08-23) — the additive
+student-facing proficiency token from `overseer/rubric`'s
+`band_from_served_overall`, resolved off whichever overall won above: the
+persisted token when there is one, else derived from that overall's score.
+Level title/threshold come from `overseer/xp` (`title_for_level`,
+`next_tier_threshold`).
 
 ## Invariants & gotchas
 
@@ -44,6 +49,10 @@ title/threshold come from `overseer/xp` (`title_for_level`, `next_tier_threshold
 - Course membership + session ownership are enforced upstream (`routing/auth-deps`).
 - The recent-attempts query deliberately uses the narrow `"graded"` literal — do
   not widen it, or null-score legacy rows pollute the dashboard.
+- **`band` is additive and never replaces `letter`** (which stays on the wire for
+  unmigrated clients and the research corpus). It is `None` on exactly the rows
+  where `letter` is already `None`, so the two keys can never disagree about
+  whether an attempt has a grade to show.
 
 ## Related
 

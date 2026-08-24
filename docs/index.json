@@ -1,7 +1,7 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-08-13",
+  "generated_at": "2026-08-23",
   "repo": "ai-ta-backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
@@ -56,6 +56,7 @@
     "apollo/handlers/artifact_writer.py": "apollo/conversation/handlers/grading-artifact-writer",
     "apollo/handlers/browse.py": "apollo/conversation/handlers/browse",
     "apollo/handlers/chat.py": "apollo/conversation/handlers/chat",
+    "apollo/handlers/chat_stream.py": "apollo/conversation/handlers/chat-stream",
     "apollo/handlers/done.py": "apollo/conversation/handlers/done",
     "apollo/handlers/done_turn_order.py": "apollo/conversation/handlers/done-turn-order",
     "apollo/handlers/history.py": "apollo/conversation/handlers/history",
@@ -452,6 +453,14 @@
         "apollo/handlers/__init__.py"
       ]
     },
+    "apollo/conversation/handlers/chat-stream": {
+      "path": "docs/architecture/apollo/conversation/handlers/chat-stream.md",
+      "kind": "leaf",
+      "description": "apollo/handlers/chat_stream.py \u2014 SSE view over a teaching turn (POST /sessions/{id}/chat/stream), its event contract, and the disconnect invariant",
+      "owns": [
+        "apollo/handlers/chat_stream.py"
+      ]
+    },
     "apollo/conversation/handlers/done": {
       "path": "docs/architecture/apollo/conversation/handlers/done.md",
       "kind": "leaf",
@@ -837,7 +846,7 @@
     "apollo/overseer/rubric": {
       "path": "docs/architecture/apollo/overseer/rubric.md",
       "kind": "leaf",
-      "description": "Pure weighted-axis grade computation, the letter-band map, and the retained misconception signal value objects.",
+      "description": "Pure weighted-axis grade computation, the letter-band and proficiency-band maps, and the retained misconception signal value objects.",
       "owns": [
         "apollo/overseer/rubric.py",
         "apollo/overseer/misconception.py"
@@ -2085,6 +2094,7 @@
         "apollo/conversation/curriculum/registry",
         "apollo/conversation/handlers/browse",
         "apollo/conversation/handlers/chat",
+        "apollo/conversation/handlers/chat-stream",
         "apollo/conversation/handlers/done",
         "apollo/conversation/handlers/done-turn-order",
         "apollo/conversation/handlers/grading-artifact-writer",

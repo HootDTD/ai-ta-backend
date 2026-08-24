@@ -3,13 +3,13 @@ doc: apollo/conversation/_index
 description: Router + Apollo teaching-turn end-to-end authority — routing, handlers, agent, parser, questioning, curriculum, session entry
 owns: []
 related: []
-last_verified: 2026-08-12
+last_verified: 2026-08-23
 stub: false
 ---
 
 # Apollo conversation — the teaching-turn path
 
-Live path: `api.py` (routing/router) → session_init → chat (parser + questioning) → done (grade). Neo4j is optional; the transcript LLM grader is the sole grading lane. The questioning/ leaves own `apollo/smart_questions/` (renamed in the doc tree, not on disk). Grading-path recipe (D21): to change grading, start at handlers/done (the orchestrator) and follow its directional related chain; the full recipe + grading invariants live in [overseer/_index](../overseer/_index.md).
+Live path: `api.py` (routing/router) → session_init → chat (parser + questioning) → done (grade). The chat turn is served two ways — blocking (`chat`) and streamed (`chat-stream`, a VIEW of the same `handle_chat`, never a second writer). Neo4j is optional; the transcript LLM grader is the sole grading lane. The questioning/ leaves own `apollo/smart_questions/` (renamed in the doc tree, not on disk). Grading-path recipe (D21): to change grading, start at handlers/done (the orchestrator) and follow its directional related chain; the full recipe + grading invariants live in [overseer/_index](../overseer/_index.md).
 
 ## Cross-cutting invariants
 - The transcript adjudicator is the ONLY grading lane; a grading failure returns a retryable 503, never a fallback grade.
@@ -27,6 +27,7 @@ Live path: `api.py` (routing/router) → session_init → chat (parser + questio
 | Leaf | Role · owns |
 |---|---|
 | [chat](handlers/chat.md) | handle_chat full V3 teaching turn · handlers/chat.py |
+| [chat-stream](handlers/chat-stream.md) | SSE view over that same turn (B.1 Tier 1) · handlers/chat_stream.py |
 | [done](handlers/done.md) | handle_done grade-of-record ORCHESTRATOR · handlers/done.py |
 | [grading-artifact-writer](handlers/grading-artifact-writer.md) | write_artifacts canonical GradingRun row · handlers/artifact_writer.py |
 | [negotiate](handlers/negotiate.md) | P3 challenge/paraphrase/skip/trace · handlers/negotiate.py |

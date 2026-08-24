@@ -11,10 +11,16 @@ Aggregates coverage into three axis scores:
 If an axis has zero reference entries (absent), its weight is redistributed
 proportionally across the remaining axes. If no axis is present, overall is 0.
 
+Also the home of the two 0-100 → label maps: `LETTER_BANDS`/`score_to_letter`
+(the teacher/research vocabulary, on every payload) and `PROFICIENCY_BANDS`/
+`score_to_band` (the additive student-facing vocabulary, study-prep 2026-08-23).
+Neither enters `compute_rubric`'s own output.
+
 No LLM. Deterministic, auditable, reproducible."""
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any, Dict, List, Tuple
 
 from apollo.ontology import Node, NodeType
@@ -75,6 +81,77 @@ def score_to_letter(score: int) -> str:
         if score >= threshold:
             return letter
     return "F"
+
+
+# --------------------------------------------------------------------------- #
+# Proficiency bands (study-prep 2026-08-23, spec §A.1/§A.2)                     #
+# --------------------------------------------------------------------------- #
+#
+# The STUDENT-facing vocabulary. Letters are a teacher/research vocabulary and
+# stay on every payload untouched (`letter` is never removed anywhere); `band`
+# is an ADDITIVE key beside it, because on a study-prep tool a letter reads as a
+# verdict where a proficiency band reads as a position.
+#
+# `PROFICIENCY_CUTS` is FROZEN at 50/85 by the 2026-08-23 user sign-off — these
+# are decided cuts, not priors awaiting calibration. They sit on existing
+# `LETTER_BANDS` floors so the two vocabularies agree at their boundaries: 85 is
+# the A- floor (advanced), 50 the C floor (intermediate). They are deliberately
+# NOT derived from `LETTER_BANDS` at runtime — a letter rescale must FAIL a test
+# rather than silently drag the student-facing bands along with it. That
+# tripwire is `overseer/tests/test_rubric_bands.py`, built on the P3.2
+# ceiling-pin pattern (`test_ceiling_letter_bands.py`).
+#
+# Moving a cut is a COORDINATED TWO-REPO change, not one line: the student UI
+# re-declares the same numbers in `ai-ta-student-ui/lib/apollo/bands.ts`
+# (`ADVANCED_FLOOR = 85` / `INTERMEDIATE_FLOOR = 50`, lines 23-24) as a
+# defensive fallback for a payload with no `band` token. The backend stays the
+# source of truth and its token always wins, but a cut that moves here and not
+# there is a silent disagreement. Nothing else in THIS tree re-declares them.
+PROFICIENCY_CUTS: tuple[int, int] = (50, 85)
+
+_INTERMEDIATE_FLOOR, _ADVANCED_FLOOR = PROFICIENCY_CUTS
+
+# (min_score_inclusive, band) in descending order — same shape as LETTER_BANDS.
+# Wire values are lowercase tokens; the display strings ("Beginner", ...) belong
+# to the UI and must never appear in a payload.
+PROFICIENCY_BANDS: tuple[tuple[int, str], ...] = (
+    (_ADVANCED_FLOOR, "advanced"),
+    (_INTERMEDIATE_FLOOR, "intermediate"),
+    (0, "beginner"),
+)
+
+#: The wire vocabulary, for validating a band read back off a persisted payload.
+BAND_TOKENS: frozenset[str] = frozenset(band for _threshold, band in PROFICIENCY_BANDS)
+
+
+def score_to_band(score: int) -> str:
+    """Map an integer 0-100 score to a student-facing proficiency band."""
+    for threshold, band in PROFICIENCY_BANDS:
+        if score >= threshold:
+            return band
+    return "beginner"
+
+
+def band_from_served_overall(overall: Mapping[str, Any]) -> str | None:
+    """The band for a RE-SERVED grade (browse cards, progress recents, the
+    already-graded Done replay).
+
+    Snapshot FIRST. `diagnostic_report.served_overall` is the grade the student
+    was actually shown, and this module's standing rule is that re-serving
+    surfaces read that snapshot rather than re-deriving, so a later cut move can
+    never retroactively relabel an attempt somebody already saw. Rows graded
+    BEFORE this key existed have no served band to preserve, so those alone fall
+    back to `score_to_band` over the snapshot's own (verbatim, never recomputed)
+    score. Returns None when there is no usable score either — exactly the rows
+    on which `letter` is already None on those surfaces.
+    """
+    band = overall.get("band")
+    if isinstance(band, str) and band in BAND_TOKENS:
+        return band
+    score = overall.get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        return None
+    return score_to_band(int(round(score)))
 
 
 def _axis_for(node_type: str) -> str | None:

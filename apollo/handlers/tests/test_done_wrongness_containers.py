@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from apollo.handlers.tests import _wrongness_fixtures as wf
+from apollo.overseer.rubric import score_to_band
 
 pytestmark = pytest.mark.unit
 
@@ -149,8 +150,17 @@ async def test_level_4_is_the_only_rung_that_moves_the_score(monkeypatch):
     level3, _ = await wf.run_done(monkeypatch, level=3)
     level4, started = await wf.run_done(monkeypatch, level=4)
 
-    assert level3["rubric"]["overall"] == {"score": 100, "letter": "A+"}
-    assert level4["rubric"]["overall"] == {"score": 84, "letter": "B+"}
+    # Whole-dict: score + letter + the additive study-prep band, nothing else.
+    assert level3["rubric"]["overall"] == {
+        "score": 100,
+        "letter": "A+",
+        "band": score_to_band(100),
+    }
+    assert level4["rubric"]["overall"] == {
+        "score": 84,
+        "letter": "B+",
+        "band": score_to_band(84),
+    }
     topic_score = started["write_artifacts"].await_args.kwargs["topic_score"]
     assert topic_score.misconception_dock == 16.0
     assert level4["grading_provenance"]["docks"][0]["points"] == 16.0

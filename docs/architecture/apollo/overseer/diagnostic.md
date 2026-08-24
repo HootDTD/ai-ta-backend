@@ -12,7 +12,7 @@ related:
   - apollo/overseer/aside-penalty
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-08-12
+last_verified: 2026-08-23
 stub: false
 ---
 
@@ -36,6 +36,7 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
   -> feedback` — pure, total, idempotent verdict-consistency gate (P2.1);
   `PRAISE_FLOOR = 0.6`, `FALLBACK_HEADLINE` and `MAX_REFERENCE_NAME_QUOTES`
   (imported from [topic-score](topic-score.md)) are its public constants.
+  `PRAISE_FLOOR` is RE-EXPORTED, not declared, since 2026-08-23: [topic-narrative](topic-narrative.md) now needs the same literal to pick a topic line's status word, so it owns it (the reverse import would be a cycle) while the public name stays here. Behaviour unchanged — the P3.2 gate digest is byte-identical.
 
 ## Data flow
 
@@ -48,7 +49,7 @@ so this narrative LLM call no longer blocks the event loop. Code validates topic
 keys/order, exact-gates each quote against that topic's `evidence_span`,
 sanitizes every prose field, appends deterministic misconception + negotiation
 entries in `recap[]`, runs the consistency gate LAST, then flattens headline →
-topic notes → recap → prefixed next step for back compatibility. Otherwise it
+topic notes → recap → prefixed next step for back compatibility, **dropping any empty part** (2026-08-23: `sanitize_narrative` can now return "" for a field that was nothing but a numeric grade statement, and an unconditional join served a bare `Next step:` label). Otherwise it
 uses the unchanged axis prompt and returns the legacy sanitized narrative plus
 null feedback.
 
@@ -73,9 +74,8 @@ stripping empties gets a neutral "did not count toward your grade" line instead,
 and such a topic is never chosen as the next-step subject.
 
 `course_evidence` (INTERACTION2, supplied by `handlers/done.py` from
-[grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY.
-The axis prompt is the soft-fail fallback and stays frozen — grounding must not
-change the shape of a degraded narrative.
+[grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY; the
+axis prompt is the frozen soft-fail fallback, so grounding never changes the shape of a degraded narrative.
 With `INTERACTION3` enabled and the problem concept allowed by
 `INTERACTION_CONCEPTS`, `done.py` passes successful structured feedback to
 `remediation.py`. A non-null session grounding bundle is reused exclusively;
@@ -90,8 +90,7 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
 - **Quotes are code-gated:** a quote survives only when it exactly equals the
   gated `evidence_span` for its canonical topic and is already sanitizer-clean;
   otherwise it becomes null.
-- **Attribution rules** match the topic narrative: address the student as
-  "you"/"your"; never present a reference detail as something the student said.
+- **Attribution rules** match the topic narrative: address the student as "you"/"your"; never present a reference detail as something the student said.
 - **`topic_feedback[].hoot_assisted` (INTERACTION5) is code-injected from the
   ledger, never the LLM** — copied from each `TopicCredit.hoot_assisted` so the
   flat Hoot-assist cap can't be argued away by prose. `False` for un-assisted
@@ -105,6 +104,7 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
 - **`course_evidence=None` (the default, and what an OFF flag or NULL bundle
   produces) keeps both prompt paths byte-identical to the pre-INTERACTION2
   build**, so grounding can never silently move a grade.
+- **An EMPTY prose field is repaired on BOTH branches** (2026-08-23). The uncredited path gets `FALLBACK_HEADLINE` / the deterministic next step from `_repair_prose`; the all-credited early return now runs `_fill_empty_prose` first, substituting `FALLBACK_HEADLINE_CREDITED` / `FALLBACK_NEXT_STEP_CREDITED` — a blank field is reachable because the grade scrub drops whole grade statements, and a fully credited attempt is exactly where the model most wants to headline the number (`FALLBACK_HEADLINE`, "what Apollo did not get", would be a lie there). A non-blank field is returned untouched.
 - **The consistency gate never decides anything and never raises.** It edits
   prose only; credits, letters, quotes, `recap[]`, `hoot_assisted`, and every
   other key pass through. With no topic under `PRAISE_FLOOR` — and for a topic

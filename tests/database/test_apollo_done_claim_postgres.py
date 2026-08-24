@@ -32,6 +32,7 @@ from apollo.handlers.done import (
     handle_done,
 )
 from apollo.ontology import KGGraph
+from apollo.overseer.rubric import score_to_band
 from apollo.persistence.models import (
     ProblemAttempt,
     SessionPhase,
@@ -43,6 +44,13 @@ from apollo.persistence.progress_repo import apply_xp
 from database.models import Course
 
 pytestmark = pytest.mark.integration
+
+
+# What `compute_rubric` is patched to return (the RAW axis overall) vs what the
+# serving layer hands the student and persists in `served_overall`: the same
+# score/letter plus the additive `band` (study-prep 2026-08-23). Written as one
+# constant so the two can never drift apart in this file.
+_B_MINUS_SERVED = {"score": 71, "letter": "B-", "band": score_to_band(71)}
 
 
 async def _seed_session(maker, slug_prefix: str, *, phase: str | None) -> int:
@@ -230,7 +238,14 @@ async def test_stored_grade_payload_replays_without_side_effects(pg_committing_s
         result = await _stored_grade_payload(db, sess=sess, attempt=attempt)
 
     assert result is not None
-    assert result["rubric"]["overall"] == report["served_overall"]
+    # The replay serves the snapshot verbatim PLUS the additive band. This row is
+    # seeded WITHOUT one (a pre-2026-08-23 grade), so the band is derived from the
+    # snapshot's own score — the fallback half of `band_from_served_overall`'s
+    # snapshot-first rule, exercised here against real Postgres JSONB.
+    assert result["rubric"]["overall"] == {
+        **report["served_overall"],
+        "band": score_to_band(report["served_overall"]["score"]),
+    }
     assert result["diagnostic_narrative"] == report["narrative"]
     assert result["coverage"] == report["coverage"]
     assert result["already_graded"] is True
@@ -382,7 +397,7 @@ async def test_double_done_grades_once_and_awards_xp_once(pg_committing_sessions
             await db.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt_id))
         ).scalar_one()
         assert attempt.result == "graded"
-        assert attempt.diagnostic_report["served_overall"] == {"score": 71, "letter": "B-"}
+        assert attempt.diagnostic_report["served_overall"] == _B_MINUS_SERVED
     assert await _phase(maker, session_id) == SessionPhase.REPORT.value
 
 
@@ -411,7 +426,7 @@ async def test_a_second_done_after_the_first_finishes_replays_the_stored_grade(
     assert "already_graded" not in first
     assert second["already_graded"] is True
     assert second["xp_earned"] == 0
-    assert second["rubric"]["overall"] == {"score": 71, "letter": "B-"}
+    assert second["rubric"]["overall"] == _B_MINUS_SERVED
 
     async with maker() as db:
         progress = (
@@ -493,7 +508,7 @@ async def test_terminal_fence_rejects_a_done_reclaimed_out_from_under_it(
             await db.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt_id))
         ).scalar_one()
         assert attempt.result == "graded"
-        assert attempt.diagnostic_report["served_overall"] == {"score": 71, "letter": "B-"}
+        assert attempt.diagnostic_report["served_overall"] == _B_MINUS_SERVED
 
         progress = (
             await db.execute(
@@ -586,7 +601,7 @@ async def test_post_claim_recheck_serves_the_stored_grade_after_a_stale_hoist(
     assert len(served_stored) == 1
     assert graded_fresh[0]["xp_earned"] == 10
     assert served_stored[0]["xp_earned"] == 0
-    assert served_stored[0]["rubric"]["overall"] == {"score": 71, "letter": "B-"}
+    assert served_stored[0]["rubric"]["overall"] == _B_MINUS_SERVED
 
     # XP was NOT double-awarded, and the session lands back on REPORT — the
     # accidental claim-winner's release restored the TRUE phase (REPORT, the

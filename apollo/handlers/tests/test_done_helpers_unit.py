@@ -18,8 +18,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from apollo.handlers.done import _find_problem, handle_done
+from apollo.handlers.done import (
+    _find_problem,
+    _served_overall_block,
+    _with_band,
+    handle_done,
+)
 from apollo.handlers.tests._done_fixtures import _old_path_patches
+from apollo.overseer.rubric import score_to_band
 
 pytestmark = pytest.mark.unit
 
@@ -137,3 +143,37 @@ async def test_mastery_projection_skipped_when_layer3_live(monkeypatch):
     render_spy.assert_called_once_with(_CANONICAL_SENTINEL)
     assert out["scorecard"] == {"score_0_100": 50}
     mastery_spy.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _served_overall_block / _with_band — the additive band on the served overall
+# ---------------------------------------------------------------------------
+
+
+def test_served_overall_block_is_score_letter_band_and_nothing_else():
+    """The topic-score serving branch's whole dict. `letter` stays (backward
+    compat, teacher surfaces, research corpus); `band` is the addition."""
+    assert _served_overall_block(88, "A-") == {
+        "score": 88,
+        "letter": "A-",
+        "band": score_to_band(88),
+    }
+
+
+def test_with_band_is_additive_over_whatever_the_axis_rubric_produced():
+    """The soft-fail branch spreads the incoming dict rather than rebuilding it,
+    so every key `compute_rubric` emitted survives verbatim."""
+    overall = {"score": 90, "letter": "A", "present": True}
+
+    assert _with_band(overall) == {**overall, "band": score_to_band(90)}
+    # ...and the input is never mutated — `rubric` is still handed unchanged to
+    # `write_artifacts` and persisted as `diagnostic_report["rubric"]`.
+    assert overall == {"score": 90, "letter": "A", "present": True}
+
+
+@pytest.mark.parametrize("overall", [None, "F", 7, [], {}, {"score": None}])
+def test_with_band_leaves_an_unbandable_overall_exactly_as_it_was(overall):
+    """No usable score means no band to state. Returned UNCHANGED (and, for the
+    non-dict shapes a test double can produce, without raising) rather than
+    decorated with a fiction."""
+    assert _with_band(overall) == overall

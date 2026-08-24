@@ -5,6 +5,7 @@ owns:
   - apollo/handlers/chat.py
   - apollo/handlers/__init__.py
 related:
+  - apollo/conversation/handlers/chat-stream
   - apollo/conversation/handlers/intent
   - apollo/conversation/handlers/done
   - apollo/conversation/hoot-bridge-reference-answer
@@ -15,23 +16,27 @@ related:
   - apollo/knowledge-graph/store
   - apollo/overseer/problem-selector
   - apollo/persistence/neo4j-client
-last_verified: 2026-08-12
+last_verified: 2026-08-23
 stub: false
 ---
 
 # handlers/chat — the V3 teaching turn
 
-`handle_chat` is `POST /apollo/sessions/{id}/chat`. `apollo/handlers/__init__.py`
+`handle_chat` serves BOTH `POST /apollo/sessions/{id}/chat` (blocking) and
+`POST .../chat/stream` (`handlers/chat-stream`). `apollo/handlers/__init__.py`
 is empty namespace glue riding here (§4.0.7).
 
 ## Interface
 
-- `handle_chat(*, db, neo, session_id, message, ask_hoot=False) -> dict` — the
-  only public entry (called by `routing/router`). Returns `{apollo_reply,
-  kg_entries_added, kg, covered_topics, graded_topic_total, open_graded_topics,
-  question_target?}`, an `intent_*` variant when the intent gate fires, or the
-  `reference_aside` variant (see below) when the request explicitly sets
-  `ask_hoot=true`.
+- `handle_chat(*, db, neo, session_id, message, ask_hoot=False, on_phase=None)
+  -> dict` — the only public entry (called by `routing/router` and
+  `handlers/chat-stream`). Returns `{apollo_reply, kg_entries_added, kg,
+  covered_topics, graded_topic_total, open_graded_topics, question_target?}`,
+  an `intent_*` variant when the intent gate fires, or the `reference_aside`
+  variant (see below) when the request explicitly sets `ask_hoot=true`.
+- `PhaseSink` + `TURN_PHASE_READING`/`_THINKING`/`_REPLY`/`_GRADING` — the
+  optional `on_phase` progress channel (2026-08-23 B.1). TURN phases only; the
+  wire events, copy and ordering live in `handlers/chat-stream`.
 
 ## Data flow
 
@@ -84,43 +89,11 @@ every other in-flight Apollo request on that worker.
 `_maybe_execute_reference_aside` is the sole entry to
 `_execute_reference_question`:
 
-1. The caller must set request field `ask_hoot=true`. The helper checks
-   `INTERACTION4` and
-   `interaction_allowed_for_concept(problem.concept_id)` before entering the
-   executor. An unset/empty `INTERACTION_CONCEPTS` preserves flag-only
-   behavior; either rejected rollout gate returns `None`, so the utterance
-   continues through the ordinary teaching turn.
-2. Empty/whitespace question → instant aside-shaped reply ("Type your
-   question above first, then click Ask."), logged at INFO as
-   `apollo_reference_question_empty`, persisted through the shared
-   `_persist_reference_aside_turn` envelope. No LLM, no retrieval, no
-   exception, and the aside counter is NOT incremented — refusing a
-   non-question is correct behavior and must cost nothing.
-3. Per-session cap: `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]` (default
-   0) at or above `MAX_ASIDES_PER_SESSION` (3) → a persona redirect turn, no
-   bridge call.
-4. Otherwise calls `hoot_bridge.reference_answer.answer_reference_question`.
-   Any exception → logged, `db.rollback()` FIRST (the failure may have aborted
-   the transaction — persisting on it escaped as a 500 in the 2026-08-01
-   halfvec schema-drift incident), then the persona apology turn persisted
-   best-effort (its own failure is logged, never raised) — **never a 5xx**. The
-   "failure ⇒ persona apology + fall through as a teaching turn" contract lives
-   here, not in the bridge (the bridge raises on genuine failure by design).
-5. On success: increments the session's aside counter, then persists via the
-   shared `_persist_reference_aside_turn` helper — the student question
-   (untagged — the adjudicator keeps it), the aside text tagged
-   `intent=ASIDE_MESSAGE_INTENT_TAG` (`handlers/done._full_transcript`
-   excludes this row from grading) with the structured payload stored in the
-   row's `message_metadata` as `{"aside": {citations, in_scope}}` (text is
-   the row content) so `handlers/lifecycle`'s snapshot can replay citations
-   after a reload, and the persona resume line (untagged). The resume line is
-   scope-dependent: `in_scope=True` asks how the answer fits into the lesson
-   (`_REFERENCE_QUESTION_RESUME_LINE`); `in_scope=False` (the bridge's
-   out-of-scope refusal) redirects back to the teaching thread instead
-   (`_REFERENCE_QUESTION_OUT_OF_SCOPE_RESUME_LINE`) — there is nothing to
-   "fit in". Returns `message_kind: "reference_aside"` plus an
-   `aside: {text, citations, in_scope}` payload — the serializer shape the
-   student-UI types against (see `hoot-bridge-reference-answer`).
+1. The caller must set request field `ask_hoot=true`; the helper then checks `INTERACTION4` and `interaction_allowed_for_concept(problem.concept_id)`. An unset/empty `INTERACTION_CONCEPTS` preserves flag-only behavior; either rejected rollout gate returns `None`, so the utterance continues through the ordinary teaching turn.
+2. Empty/whitespace question → instant aside-shaped reply ("Type your question above first, then click Ask."), logged at INFO as `apollo_reference_question_empty`, persisted through the shared `_persist_reference_aside_turn` envelope. No LLM, no retrieval, no exception, and the aside counter is NOT incremented — refusing a non-question is correct behavior and must cost nothing.
+3. Per-session cap: `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]` (default 0) at or above `MAX_ASIDES_PER_SESSION` (3) → a persona redirect turn, no bridge call.
+4. Otherwise calls `hoot_bridge.reference_answer.answer_reference_question`. Any exception → logged, `db.rollback()` FIRST (the failure may have aborted the transaction — persisting on it escaped as a 500 in the 2026-08-01 halfvec schema-drift incident), then the persona apology turn persisted best-effort (its own failure is logged, never raised) — **never a 5xx**. The "failure ⇒ persona apology + fall through as a teaching turn" contract lives here, not in the bridge (the bridge raises on genuine failure by design).
+5. On success: increments the session's aside counter, then persists via the shared `_persist_reference_aside_turn` helper — the student question (untagged — the adjudicator keeps it), the aside text tagged `intent=ASIDE_MESSAGE_INTENT_TAG` (`handlers/done._full_transcript` excludes this row from grading) with the structured payload stored in the row's `message_metadata` as `{"aside": {citations, in_scope}}` (text is the row content) so `handlers/lifecycle`'s snapshot can replay citations after a reload, and the persona resume line (untagged). The resume line is scope-dependent: `in_scope=True` asks how the answer fits into the lesson (`_REFERENCE_QUESTION_RESUME_LINE`); `in_scope=False` (the bridge's out-of-scope refusal) redirects back to the teaching thread instead (`_REFERENCE_QUESTION_OUT_OF_SCOPE_RESUME_LINE`) — there is nothing to "fit in". Returns `message_kind: "reference_aside"` plus an `aside: {text, citations, in_scope}` payload — the serializer shape the student-UI types against (see `hoot-bridge-reference-answer`).
 
 ## Invariants & gotchas
 
@@ -160,10 +133,21 @@ every other in-flight Apollo request on that worker.
 - **Typed turns cannot trigger an aside**: `ask_hoot` defaults to false, and
   `_execute_reference_question` is reachable only through
   `_maybe_execute_reference_aside`.
+- **`on_phase` is a VIEW, provably inert**: the blocking route passes nothing,
+  so each `_emit` is one identity check and the blocking payload stays
+  byte-identical (whole-payload pin, `tests/test_chat_phase_sink.py`); `_emit`
+  swallows sink exceptions. `TURN_PHASE_REPLY` fires once the reply row is
+  DURABLE — after `_persist_apollo_reply`, still before auto-done grading, so the
+  reply is never held hostage to the 6-14s grading run but a commit failure can
+  never leave the student reading a reply no refresh shows (pinned by
+  `test_the_reply_row_is_durable_before_the_reply_frame_is_emitted`; the student
+  UI's `ApolloChat` keep-rule comment cites this ordering). Never emit from a
+  worker thread, and never from inside the executor — sinks assume the running
+  loop, so every `_emit` happens on it, before entering the executor.
 
 ## Related
 
-Intent gate: `handlers/intent`; grading dispatch: `handlers/done`; hint-lane
+Streaming view: `handlers/chat-stream`. Intent gate: `handlers/intent`; grading dispatch: `handlers/done`; hint-lane
 bridge: `hoot-bridge-reference-answer`; parse: `parser/parser-llm` +
 `parser/graph-context`; reply: `questioning/controller`; concept load:
 `curriculum/db`; KG: `knowledge-graph/store` + `persistence/neo4j-client`;

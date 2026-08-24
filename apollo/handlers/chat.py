@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import select
@@ -80,6 +81,50 @@ _REFERENCE_QUESTION_APOLOGY = (
     "Hmm, I couldn't look that up right now. Let's keep going — what were you saying?"
 )
 _REFERENCE_QUESTION_EMPTY = "Type your question above first, then click Ask."
+
+# ----------------------------------------------------------------------
+# Turn phase notifications (2026-08-23 study-prep B.1 Tier 1).
+#
+# The streaming route (`handlers/chat_stream`) is a VIEW of a turn, never a
+# second writer: it passes an `on_phase` sink so it can tell the student what
+# this turn is doing while the 10-17s LLM chain runs. The BLOCKING route passes
+# nothing, so every emit below is a no-op and the blocking payload is
+# byte-identical to its pre-streaming behavior (pinned by
+# tests/test_chat_phase_sink.py's whole-payload comparison).
+#
+# These are TURN phases, not wire events — the SSE event names, human-readable
+# copy, and ordering guarantees all live in `handlers/chat_stream`.
+# ----------------------------------------------------------------------
+
+# Student message is durable (P0.3); the parse/KG chain starts now.
+TURN_PHASE_READING = "reading"
+# About to enter the unified question-decision call (the 7.8-12s long pole).
+TURN_PHASE_THINKING = "thinking"
+# Apollo's student-visible reply text is final; `fields["text"]` carries it.
+TURN_PHASE_REPLY = "reply"
+# The questioning engine self-declared done; auto-`handle_done` starts now.
+TURN_PHASE_GRADING = "grading"
+
+# ``(phase, fields) -> None``. Called from `handle_chat`'s own coroutine, never
+# from a worker thread, so a sink may assume the running event loop.
+PhaseSink = Callable[[str, dict[str, Any]], None]
+
+
+def _emit(on_phase: PhaseSink | None, phase: str, **fields: Any) -> None:
+    """Best-effort turn-phase notification. NEVER raises.
+
+    A progress channel must not be able to fail a teaching turn: a broken sink
+    (client gone, queue misuse, serialization bug) is logged and swallowed, so
+    the streaming turn degrades to "no visible progress" rather than losing the
+    student's work. With `on_phase=None` (the blocking route) this is a single
+    identity check.
+    """
+    if on_phase is None:
+        return
+    try:
+        on_phase(phase, fields)
+    except Exception:  # noqa: BLE001 - a view must never break the turn
+        _LOG.warning("apollo_turn_phase_emit_failed phase=%s", phase, exc_info=True)
 
 
 async def _find_problem(
@@ -676,6 +721,7 @@ async def handle_chat(
     session_id: int,
     message: str,
     ask_hoot: bool = False,
+    on_phase: PhaseSink | None = None,
 ) -> dict[str, Any]:
     store = KGStore(db, neo)
 
@@ -776,6 +822,7 @@ async def handle_chat(
         attempt_id=int(current_attempt.id),
         content=message,
     )
+    _emit(on_phase, TURN_PHASE_READING)
 
     # Cross-turn linking (WU-2B): read the CURRENT subgraph (everything taught
     # so far this attempt — the new turn's nodes aren't written until after
@@ -844,6 +891,7 @@ async def handle_chat(
     # deliberately KEPT (the documented dangling-row rule) — it is inside the
     # transcript the winner grades.
     await _require_unclaimed(db, session_id=session_id)
+    _emit(on_phase, TURN_PHASE_THINKING)
     decision = await plan_next_question(
         db,
         course_id=int(sess.course_id),
@@ -862,7 +910,6 @@ async def handle_chat(
         validated = decision.question or "Can you explain that part one more time?"
     else:
         validated = "Thanks — I have enough to grade what you taught me."
-
     await _persist_apollo_reply(
         db,
         session_id=session_id,
@@ -870,6 +917,14 @@ async def handle_chat(
         attempt_id=int(current_attempt.id),
         apollo_msg=validated,
     )
+    # The frame goes out only once the row is DURABLE (review wave). Emitting
+    # first put the reply on the wire ahead of the commit, so a commit failure
+    # left the student reading a reply that no refresh could ever show again.
+    # It still runs before the auto-done branch below, so the reply is never
+    # held hostage to the 6-14s grading run — the cost of the correct order is
+    # one local INSERT + commit. `ApolloChat`'s keep-rule comment in the student
+    # UI cites exactly this ordering; that citation is now true by construction.
+    _emit(on_phase, TURN_PHASE_REPLY, text=validated)
     if decision.action == "done":
         from apollo.errors import GradingInProgressError  # noqa: PLC0415
         from apollo.handlers.done import handle_done  # noqa: PLC0415
@@ -885,6 +940,7 @@ async def handle_chat(
         # reply. The winner's grade reaches the student through its own
         # response; re-raising here would 409 a turn the student did not
         # initiate.
+        _emit(on_phase, TURN_PHASE_GRADING)
         try:
             done_result = await handle_done(db=db, neo=neo, session_id=session_id, auto_done=True)
         except GradingInProgressError:
