@@ -13,7 +13,7 @@ related:
   - apollo/overseer/aside-penalty
   - apollo/ontology/graph
   - apollo/conversation/handlers/done
-last_verified: 2026-08-12
+last_verified: 2026-08-24
 stub: false
 ---
 
@@ -40,10 +40,10 @@ still grades.
   tally_context, wrongness_candidates)`. **A direct caller must hand BOTH builders the same
   `reference_items`** — that is what makes each optional rule agree with its data block (see
   invariants).
-- `CREDIT_ANCHORS = (0.0, 0.6, 0.85, 1.0)` — the four-point credit scale (2026-08-07 P1.1),
-  declared in the schema AND enforced in code. `credit_enum_supported()` /
-  `reset_credit_enum_support()` read and re-arm the process-level enum latch (observability + test
-  isolation).
+- `CREDIT_ANCHORS = (0.0, 0.3, 0.6, 0.85, 1.0)` — the five-point credit scale (2026-08-07 P1.1; 0.3 added
+  2026-08-24), declared in the schema AND enforced in code; ASCENDING order is load-bearing (ties snap down).
+  `credit_enum_supported()` / `reset_credit_enum_support()` read and re-arm the process-level enum latch
+  (observability + test isolation).
 - **`tally_context` (P1.3) is a cross-slice argument shape** `list[{node_id, state, times_asked,
   student_quote|null}]` (`done.py` builds it from `QuestionOpportunity` rows it already loaded).
   Every field except `node_id` is defensively normalized here (unknown `state` → `"missing"`,
@@ -83,21 +83,21 @@ frames in the same order.
 
 ## Invariants & gotchas
 
-- **Credit is a FOUR-POINT SCALE, not a continuum (2026-08-07 P1.1).** `CREDIT_ANCHORS` is
-  declared in the schema AND enforced by `_snap_credit`, which quantizes off-anchor verdicts to
-  the nearest anchor (logging `transcript_coverage_credit_snapped`) at PARSE time, so no
-  downstream consumer ever sees one. Ties snap DOWN (distances rounded to 9 dp so a midpoint like 0.925
-  is a tie despite float error) — never manufacturing credit the model did not judge. This REVERSES the earlier continuous-credit rule (the free scale
-  collapsed to the extremes under `gpt-5.1`). That cross-consumer statement, and the one
-  deliberate non-anchor value ([aside-penalty](aside-penalty.md)'s 0.5 cap), live in
-  [_index](_index.md).
-- **Exemplars ARE the calibration (≥2 per anchor), and each is a PARAPHRASE** of a real Week-4
-  transcript — a copied clause would ride a pilot student's words into every future call
-  (`test_transcript_coverage_exemplars.py` pins it).
-- **No code clamp on the model's credit, and no prompt floor** — both measured and REJECTED
-  2026-08-08; `covered` means FULLY covered, so `covered=False` + a mid credit is the normal shape
-  of a genuine partial. The 0.6 anchor is still too cheap:
-  `_archive/experiments/2026-08-08-apollo-06-floor.md`.
+- **Credit is a FIVE-POINT SCALE, not a continuum (2026-08-07 P1.1; 0.3 added 2026-08-24).** `CREDIT_ANCHORS` is declared
+  in the schema AND enforced by `_snap_credit`, which quantizes off-anchor verdicts to the nearest anchor (logging
+  `transcript_coverage_credit_snapped`) at PARSE time, so no consumer ever sees one; ties snap DOWN (distances rounded to
+  9 dp so a midpoint like 0.925 is a tie despite float error), never manufacturing credit the model did not judge. This
+  REVERSES the earlier continuous-credit rule (the free scale collapsed to the extremes under `gpt-5.1`). **0.3 is the
+  hedge anchor, deliberately sub-threshold**: it fixes "phantom 0.6", where a not-covered, `basis="absent"`, span-less
+  verdict still landed on 0.6 — then the lowest anchor meaning "landed" (5.8% of P1-campaign credits). NEITHER
+  downstream split moved with it, so a hedged topic reads uncredited to axes and narrative while it stops inflating the
+  score, though `credit > 0` readers still admit it. That + the 0.5 [aside-penalty](aside-penalty.md) cap: [_index](_index.md).
+- **Exemplars ARE the calibration (≥2 per EXEMPLIFIED anchor), each a PARAPHRASE** of a real Week-4 transcript — a copied
+  clause would ride a pilot student's words into every future call. **0.3 has none on purpose**: the block IS the
+  instrument and stayed byte-identical across the arm that cleared 0.3, so its one prompt line is 0.3's whole definition.
+- **No code clamp on the model's credit, and no prompt floor** — both measured and REJECTED 2026-08-08; `covered` means
+  FULLY covered, so `covered=False` + a mid credit is the normal shape of a genuine partial. The 0.6-is-too-cheap finding
+  (`_archive/experiments/2026-08-08-apollo-06-floor.md`) was answered by adding 0.3 beneath it, not by clamping/flooring.
 - **`basis` is PERSISTED and gates NOTHING (2026-08-08)**, so the next lever can be sized before
   it is written: the evidence class per node, keyed like `procedure_scores`, riding into every
   `node_ledger` row. An off-enum value is DROPPED (`transcript_coverage_basis_off_enum`), never
@@ -144,8 +144,8 @@ frames in the same order.
   (`test_coverage_wrongness_downstream.py`) and cannot reach `compute_rubric`'s separate
   `misconception_scores` axis. Unchanged on purpose: `per_step` stays `{covered, missing}` and no
   `TopicStatus` is added — wrongness is a sibling record on the topic, never a status value.
-- **`per_step["covered"]` needs `verdict.covered` AND `credit >= 0.5`** — matches the graph lane's
-  scored threshold; the credit is never promoted to 1.0.
+- **`per_step["covered"]` needs `verdict.covered` AND `credit >= 0.5`** — matches the graph lane's scored threshold;
+  the credit is never promoted to 1.0. With 0.3 there are TWO sub-threshold anchors, so "missing" ≠ 0 in `procedure_scores`.
 - **`validate_span` is diagnostic only** — the serving lane never zeroes or downgrades credit on a
   failed span; it logs `span_ok` and feeds the offline replay gate. **`narrative_evidence_spans`
   keeps a span only** when it verbatim-quotes ONE student message AND the verdict earned positive

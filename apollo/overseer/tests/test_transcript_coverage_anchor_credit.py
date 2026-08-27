@@ -9,7 +9,7 @@ reachable score set is quantized and a B is arithmetically impossible.
 Policy under test:
 
 * the STRUCTURED-OUTPUT schema constrains ``credit`` to the anchor enum
-  {0, 0.6, 0.85, 1.0} — not just prose;
+  {0, 0.3, 0.6, 0.85, 1.0} — not just prose;
 * the system prompt carries calibration exemplars (>= 2 per anchor) drawn from
   the real Week-4 transcript patterns;
 * a credit the model still returns off-anchor is SNAPPED to the nearest anchor
@@ -19,6 +19,14 @@ Policy under test:
   alone enforces the anchors — but a transient 429/timeout is retried
   like-for-like, so a rate limit can neither degrade one grade to the pre-P1.1
   schema nor forge the "enum unsupported" signal the calibration arm reads.
+
+The 0.3 anchor (2026-08-24) closes the "phantom 0.6" defect: 0.6 was the lowest
+non-zero anchor, so the adjudicator's hedge on a topic it simultaneously reported
+as missing/``basis="absent"`` with no evidence span still landed on the lowest
+anchor that means "landed". 0.3 gives that hedge a cheaper landing spot below
+``topic_narrative.PRAISE_FLOOR`` (0.6, deliberately unmoved) and below the
+``per_step`` covered threshold (0.5), so a hedged topic reads as uncredited
+everywhere while its credit stops inflating the topic score.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ import pytest
 from apollo.errors import CoverageGradingError
 from apollo.ontology import KGGraph, build_node
 from apollo.overseer.coverage_contract import validate_coverage_verdict
+from apollo.overseer.topic_narrative import PRAISE_FLOOR
 from apollo.overseer.transcript_coverage import (
     CREDIT_ANCHORS,
     build_system_prompt,
@@ -96,8 +105,16 @@ def _credit_schema(client: MagicMock, call_index: int = 0) -> dict:
 # --------------------------------------------------------------------------- #
 # The schema constraint
 # --------------------------------------------------------------------------- #
-def test_anchor_enum_is_the_four_documented_values():
-    assert CREDIT_ANCHORS == (0.0, 0.6, 0.85, 1.0)
+def test_anchor_enum_is_the_five_documented_values():
+    assert CREDIT_ANCHORS == (0.0, 0.3, 0.6, 0.85, 1.0)
+
+
+def test_anchor_enum_is_ascending_which_is_what_makes_ties_snap_down():
+    """`_snap_credit` breaks a tie by taking the FIRST minimal distance, so the
+    ascending order is load-bearing, not cosmetic — inserting 0.3 out of order
+    would silently turn every midpoint tie below it into a snap UP."""
+    assert list(CREDIT_ANCHORS) == sorted(CREDIT_ANCHORS)
+    assert len(set(CREDIT_ANCHORS)) == len(CREDIT_ANCHORS)
 
 
 def test_schema_constrains_credit_to_the_anchor_enum_by_default():
@@ -105,6 +122,9 @@ def test_schema_constrains_credit_to_the_anchor_enum_by_default():
     credit = schema["schema"]["properties"]["verdicts"]["items"]["properties"]["credit"]
     assert credit["type"] == "number"
     assert credit["enum"] == list(CREDIT_ANCHORS)
+    # The 0.3 anchor is only real if the model is actually ALLOWED to return it:
+    # the snap alone cannot produce a value the structured output forbids.
+    assert 0.3 in credit["enum"]
 
 
 def test_schema_enum_can_be_dropped_for_the_downgrade_retry():
@@ -122,6 +142,7 @@ def test_schema_enum_composes_with_the_hoot_assisted_variant():
     schema = build_transcript_grader_schema(True)
     items = schema["schema"]["properties"]["verdicts"]["items"]
     assert items["properties"]["credit"]["enum"] == list(CREDIT_ANCHORS)
+    assert 0.3 in items["properties"]["credit"]["enum"]
     assert items["required"] == list(items["properties"])
 
 
@@ -130,19 +151,43 @@ def test_schema_enum_composes_with_the_hoot_assisted_variant():
 # --------------------------------------------------------------------------- #
 def test_prompt_states_the_anchors_are_the_only_allowed_values():
     prompt = build_system_prompt(_problem())
-    assert "exactly one of these four values" in prompt
-    assert "0, 0.6, 0.85, or 1.0" in prompt
+    assert "exactly one of these five values" in prompt
+    assert "0, 0.3, 0.6, 0.85, or 1.0" in prompt
     # The old "any value in [0, 1] is allowed" licence is gone.
     assert "Any value in [0, 1] is allowed" not in prompt
     assert "As guidelines, not strict rules" not in prompt
 
 
-def test_prompt_carries_at_least_two_calibration_exemplars_per_anchor():
+def test_prompt_gives_the_new_03_anchor_its_own_semantics_and_invites_it():
+    """A schema enum value the prose never explains is a value the model will not
+    reach for — the whole point of 0.3 is that the hedge lands THERE instead of
+    on 0.6, so the prompt has to say what it means AND list it among the values
+    worth reaching for. Exemplars are deliberately NOT added (that is a separate
+    calibration arm); this one line is 0.3's entire definition."""
+    prompt = build_system_prompt(_problem())
+    assert "0.3 means a bare or tangential mention" in prompt
+    assert "reach for 0.85, 0.6 and 0.3" in prompt
+    # 0.6 keeps its own distinct, unweakened meaning — 0.3 sits BELOW it, it does
+    # not redefine it.
+    assert "0.6 means on track but thin, ambiguous, or unconnected" in prompt
+
+
+def test_prompt_carries_at_least_two_calibration_exemplars_per_exemplified_anchor():
     prompt = build_system_prompt(_problem())
     assert "CALIBRATION EXAMPLES" in prompt
     # The leading space keeps " 0 —" from matching inside " 1.0 —".
     for anchor in (" 1.0 —", " 0.85 —", " 0.6 —", " 0 —"):
         assert prompt.count(anchor) >= 2, f"anchor {anchor!r} needs >= 2 exemplars"
+
+
+def test_the_new_anchor_deliberately_has_no_calibration_exemplar_yet():
+    """Pinned so it stays a DECISION rather than an oversight. The exemplar block
+    is the calibration instrument: the 5-transcript x 2-arm x 4-sample experiment
+    that cleared 0.3 held it byte-identical, so adding a 0.3 exemplar here would
+    silently invalidate that measurement. Whoever writes one must run a new arm —
+    and will land on this test first."""
+    prompt = build_system_prompt(_problem())
+    assert " 0.3 —" not in prompt
 
 
 def test_prompt_exemplars_encode_the_real_week4_patterns():
@@ -179,7 +224,7 @@ async def _credit_for(raw_credit: float) -> float:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("anchor", [0.0, 0.6, 0.85, 1.0])
+@pytest.mark.parametrize("anchor", [0.0, 0.3, 0.6, 0.85, 1.0])
 async def test_anchor_values_pass_through_untouched(anchor):
     assert await _credit_for(anchor) == pytest.approx(anchor)
 
@@ -191,20 +236,29 @@ async def test_anchor_values_pass_through_untouched(anchor):
         (0.79, 0.85),
         (0.9, 0.85),
         (0.95, 1.0),
-        (0.2, 0.0),
+        (0.1, 0.0),
+        (0.2, 0.3),
+        (0.4, 0.3),
         (0.5, 0.6),
         (0.7, 0.6),
         (0.73, 0.85),
     ],
 )
 async def test_off_anchor_credit_snaps_to_the_nearest_anchor(raw, snapped):
+    """0.2 and 0.4 used to collapse to 0.0 and 0.6 respectively — the whole
+    [0.15, 0.45] band now has its own anchor, which is exactly the band the
+    phantom-0.6 hedge was being rounded out of."""
     assert await _credit_for(raw) == pytest.approx(snapped)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("raw", "snapped"), [(0.3, 0.0), (0.725, 0.6), (0.925, 0.85)])
+@pytest.mark.parametrize(
+    ("raw", "snapped"), [(0.15, 0.0), (0.45, 0.3), (0.725, 0.6), (0.925, 0.85)]
+)
 async def test_exact_midpoints_snap_down_never_up(raw, snapped):
-    """A tie must never manufacture credit the adjudicator did not judge."""
+    """A tie must never manufacture credit the adjudicator did not judge. The new
+    anchor adds two midpoints (0.15 between 0 and 0.3, 0.45 between 0.3 and 0.6)
+    and both resolve downward like every pre-existing one."""
     assert await _credit_for(raw) == pytest.approx(snapped)
 
 
@@ -232,16 +286,55 @@ async def test_on_anchor_credit_is_not_logged_as_snapped(caplog):
 
 @pytest.mark.asyncio
 async def test_snapped_credit_drives_per_step_and_the_narrative_span_gate():
-    """Snapping happens BEFORE every consumer: a 0.2 verdict becomes a real 0,
+    """Snapping happens BEFORE every consumer: a 0.1 verdict becomes a real 0,
     so per_step is missing and the narrative loses the quote it would otherwise
-    have used to praise the node."""
-    payload = {"verdicts": [_item(0.2)]}
+    have used to praise the node. (Pre-0.3-anchor this case was 0.2, which now
+    has a nearer home — 0.1 is the value that still rounds all the way down.)"""
+    payload = {"verdicts": [_item(0.1)]}
     with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
         coverage, spans = await compute_transcript_coverage_with_spans(
             [("student", "I integrate now")], _graph(), _problem()
         )
     assert coverage["procedure_scores"]["p1"] == pytest.approx(0.0)
     assert coverage["per_step"]["p1"] == "missing"
+    assert spans == {}
+
+
+@pytest.mark.asyncio
+async def test_the_new_anchor_is_sub_threshold_for_every_binary_consumer():
+    """0.3 is the first non-zero anchor that is NOT "landed": it sits below the
+    0.5 `per_step` covered threshold and below `topic_narrative.PRAISE_FLOOR`
+    (0.6), so a hedged topic reads as uncredited to the rubric axes and to the
+    narrative gate while still carrying its fractional credit into the topic
+    lane. It keeps its evidence quote, because the span gate keys on credit > 0
+    and 0.3 IS credit the adjudicator judged."""
+    payload = {"verdicts": [_item(0.3)]}
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
+        coverage, spans = await compute_transcript_coverage_with_spans(
+            [("student", "I integrate now")], _graph(), _problem()
+        )
+    assert coverage["procedure_scores"]["p1"] == pytest.approx(0.3)
+    assert coverage["per_step"]["p1"] == "missing"
+    assert 0.3 < PRAISE_FLOOR
+    assert spans == {"p1": "I integrate now"}
+
+
+@pytest.mark.asyncio
+async def test_the_phantom_hedge_shape_no_longer_reaches_the_landed_anchor():
+    """The defect, end to end: the adjudicator reports the topic as NOT covered,
+    `basis="absent"`, no evidence span — and still credits it. Pre-fix the only
+    non-zero place that hedge could land was 0.6, the lowest anchor that means
+    "landed", so a contentless topic scored as a thin-but-real one. With 0.3
+    available the same shape lands there instead: still uncredited to every
+    binary consumer, still unquotable, and worth half as much to the score."""
+    payload = {"verdicts": [_item(0.3, covered=False, basis="absent", evidence_span=None)]}
+    with patch("apollo.overseer.transcript_coverage.bounded_client", return_value=_client(payload)):
+        coverage, spans = await compute_transcript_coverage_with_spans(
+            [("student", "I integrate now")], _graph(), _problem()
+        )
+    assert coverage["procedure_scores"]["p1"] == pytest.approx(0.3)
+    assert coverage["per_step"]["p1"] == "missing"
+    assert coverage["basis"]["p1"] == "absent"
     assert spans == {}
 
 

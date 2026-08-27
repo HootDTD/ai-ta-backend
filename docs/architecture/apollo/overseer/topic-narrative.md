@@ -7,7 +7,7 @@ related:
   - apollo/overseer/diagnostic
   - apollo/overseer/topic-score
   - apollo/overseer/grounding
-last_verified: 2026-08-23
+last_verified: 2026-08-24
 stub: false
 ---
 
@@ -30,8 +30,8 @@ structured-JSON completion.
   display fallback the P2.1 consistency gate needs (see
   [diagnostic](diagnostic.md)). Canonical keys otherwise appear only as
   response identifiers.
-- `PRAISE_FLOOR` — the credit at or above which prose may claim the student
-  earned a topic (0.6, the lowest adjudication anchor that means "landed").
+- `PRAISE_FLOOR` — the credit at or above which prose may claim the student earned a topic (0.6, the lowest
+  adjudication anchor meaning "landed"; unmoved when 0.3 was added beneath it 2026-08-24).
   DECLARED here since 2026-08-23 and re-exported by
   [diagnostic](diagnostic.md)'s `narrative_consistency`, which stays the public
   name: once the topic line renders a status WORD instead of a percentage, the
@@ -81,7 +81,10 @@ next_step}` JSON and forbids model-generated recap text. After the LLM call,
   `missing`, and `unprobed` passes through untouched (it is not a credit verdict).
   The vocabulary is still `_status_label`'s — no parallel one was invented — and
   a parametrized property test pins word ⇔ `narrative_consistency._is_uncredited`
-  across the whole credit range **for a non-Hoot topic**. Hoot-assist is the deliberate exception on both sides: the flat `0.5` cap renders "partially covered" while `_is_uncredited` exempts it (a policy penalty, not absent evidence), so the narrator withholds praise and the gate appends no gap sentence — the old "covered — 50%" outcome without its contradiction.
+  across the whole credit range **for a non-Hoot topic**. **`partially covered` only became reachable from the
+  adjudicator on 2026-08-24**: no anchor used to sit in `(0, 0.6)`, so before the 0.3 anchor the sole live source of
+  that word was the Hoot cap below. A hedged topic that used to render "covered" at 0.6 now renders "partially
+  covered" at 0.3 — the intended student-facing half of that fix. Hoot-assist is the deliberate exception on both sides: the flat `0.5` cap renders "partially covered" while `_is_uncredited` exempts it (a policy penalty, not absent evidence), so the narrator withholds praise and the gate appends no gap sentence — the old "covered — 50%" outcome without its contradiction.
 - **Reference wording is never attributed to the student** unless it appears
   verbatim in a quoted `You said:` line; a topic with no gated span is credited
   in general terms only. Topic descriptions are the reference solution's wording,

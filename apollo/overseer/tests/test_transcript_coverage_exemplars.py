@@ -58,10 +58,18 @@ def test_prompt_paraphrases_the_real_transcripts_and_quotes_no_student_verbatim(
         assert verbatim not in prompt, verbatim
 
 
-def test_every_anchor_keeps_at_least_two_worked_exemplars():
-    """The four-point scale is calibrated by example, not by adjectives alone:
-    the live calibration arm measured a 59.7% mid-anchor share against exactly
-    this exemplar block."""
+def test_every_exemplified_anchor_keeps_at_least_two_worked_exemplars():
+    """The anchor scale is calibrated by example, not by adjectives alone: the
+    live calibration arm measured a 59.7% mid-anchor share against exactly this
+    exemplar block, so the block is FROZEN — an anchor listed here must keep its
+    >= 2 or that measurement no longer describes the served prompt.
+
+    The 0.3 anchor added 2026-08-24 is deliberately absent from this list: it is
+    defined by one prose line in `build_system_prompt` and by nothing here, so
+    the exemplar block stayed byte-identical across the arm that cleared it.
+    Giving 0.3 exemplars is a separate calibration change and needs its own arm —
+    it is not a gap this test should paper over by asserting a fifth anchor that
+    the prompt does not, and must not yet, carry."""
     prompt = build_system_prompt(_problem())
     assert "CALIBRATION EXAMPLES" in prompt
     assert "three of the four" in prompt

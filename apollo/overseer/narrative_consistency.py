@@ -67,7 +67,10 @@ _LOG = logging.getLogger(__name__)
 
 # Below this credit the adjudicator did not find sufficient evidence, so prose
 # may not credit the student for it. Mirrors the adjudication anchor set
-# {0, 0.6, 0.85, 1.0} (P1.1): 0.6 is the lowest anchor that means "landed".
+# {0, 0.3, 0.6, 0.85, 1.0} (P1.1, 0.3 added 2026-08-24): 0.6 is still the lowest
+# anchor that means "landed", and the floor deliberately did NOT move with the
+# new anchor — 0.3 is the bare/tangential-mention anchor, which is exactly the
+# shape this gate exists to keep out of praise.
 #
 # Re-exported, not declared: since study-prep 2026-08-23 the topic line renders a
 # status WORD instead of a percentage, so `topic_narrative._credit_status` has to

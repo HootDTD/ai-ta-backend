@@ -12,7 +12,7 @@ related:
   - apollo/overseer/aside-penalty
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-08-23
+last_verified: 2026-08-24
 stub: false
 ---
 

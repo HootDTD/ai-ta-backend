@@ -31,10 +31,18 @@ _ADJUDICATION_ATTEMPTS = 2
 _SCHEMA_DOWNGRADE_EXTRA_ATTEMPT = 1
 _LOG = logging.getLogger(__name__)
 
-# Bimodal-fix P1.1 (2026-08-07 spec §5): the four credit anchors are now the ONLY
-# values a verdict may carry. Ascending order is load-bearing — `_snap_credit`
-# breaks ties by taking the first minimal distance, i.e. downward.
-CREDIT_ANCHORS: tuple[float, ...] = (0.0, 0.6, 0.85, 1.0)
+# Bimodal-fix P1.1 (2026-08-07 spec §5): the credit anchors are the ONLY values a
+# verdict may carry. Ascending order is load-bearing — `_snap_credit` breaks ties
+# by taking the first minimal distance, i.e. downward.
+#
+# 0.3 (2026-08-24) sits between 0 and 0.6 so the "phantom 0.6" hedge — a topic the
+# model reports as missing/basis="absent" with no evidence span yet still credits
+# at 0.6 — has a landing spot cheaper than the lowest "landed" anchor. It is
+# deliberately below BOTH downstream splits and neither moved with it: per_step
+# covered still needs credit >= 0.5, and topic_narrative.PRAISE_FLOOR is still
+# 0.6. Everything else downstream (letter bands, the 50/85 proficiency cuts,
+# weights, denominator scoping, basis handling) is untouched.
+CREDIT_ANCHORS: tuple[float, ...] = (0.0, 0.3, 0.6, 0.85, 1.0)
 
 # A provider that cannot honour `credit: {type: number, enum: [...]}` rejects the
 # REQUEST — an HTTP 400 / invalid_request_error naming the response schema. A
@@ -368,7 +376,7 @@ def _build_rubric_items(reference_graph: KGGraph) -> list[dict]:
 
 
 # Bimodal-fix P1.1 — appended to EVERY system prompt. Two to three worked
-# exemplars per anchor, so the four-point scale is calibrated by example rather
+# exemplars per anchor, so the anchor scale is calibrated by example rather
 # than by adjectives alone (the pre-P1.1 prose anchors produced 129 zeros and 114
 # near-full credits across 259 prod topic verdicts, and 8 genuinely mid ones).
 # The patterns are taken from the exported Week-4 prod transcripts, not invented
@@ -386,6 +394,13 @@ def _build_rubric_items(reference_graph: KGGraph) -> list[dict]:
 # 158 C(63) with 0.85/0.6/0.6 in 8 of 8, nothing like the F(8) the floor produced
 # 4 of 4. The -55 point regression on 158 belongs to the floor alone.
 # `docs/_archive/experiments/2026-08-08-apollo-06-floor.md` §"Bisect".
+#
+# The 0.3 anchor (2026-08-24) deliberately carries NO exemplar: this block is
+# frozen so the anchor change is measurable against it, and the 5-transcript x
+# 2-arm x 4-sample experiment that cleared 0.3 for merge ran against exactly this
+# wording. 0.3's semantics live in the one prompt line in `build_system_prompt`.
+# Exemplars for it are a SEPARATE calibration change needing its own arm — every
+# other anchor keeps its >= 2 (`test_transcript_coverage_exemplars.py` pins them).
 _CALIBRATION_EXEMPLARS = (
     " CALIBRATION EXAMPLES (the wording is illustrative; the pattern is what matters)."
     " 1.0 — the student states the item's substance in their own words and, where the item calls "
@@ -531,14 +546,16 @@ def build_system_prompt(
         "builds on during the back-and-forth counts as their own; Apollo's restatements, "
         "completions, and corrections are NOT evidence on their own, so judge what the student "
         'contributes. Set basis to "stated" (said it), "used" (correctly applied it), "implied" '
-        '(their reasoning presupposes it), or "absent". Credit is a four-point scale: set credit '
-        "to exactly one of these four values — 0, 0.6, 0.85, or 1.0 — and never to a value in "
-        "between. 1.0 means the student demonstrated the item; 0.85 means correct but one step "
+        '(their reasoning presupposes it), or "absent". Credit is a five-point scale: set credit '
+        "to exactly one of these five values — 0, 0.3, 0.6, 0.85, or 1.0 — and never to a value "
+        "in between. 1.0 means the student demonstrated the item; 0.85 means correct but one step "
         "short of the item's full scope; 0.6 means on track but thin, ambiguous, or unconnected "
-        "to this problem; 0 means the dialogue shows nothing that bears on the item. Partial "
-        "credit is expected and normal — most sessions should contain a mix of these four "
-        "values, so reach for 0.85 and 0.6 whenever the work is genuinely between the extremes "
-        "rather than rounding everything to 1.0 or 0. Lean toward crediting genuine "
+        "to this problem; 0.3 means a bare or tangential mention — the student gestures at the "
+        "idea but provides no substantive content; 0 means the dialogue shows nothing that bears "
+        "on the item. Partial "
+        "credit is expected and normal — most sessions should contain a mix of these five "
+        "values, so reach for 0.85, 0.6 and 0.3 whenever the work is genuinely between the "
+        "extremes rather than rounding everything to 1.0 or 0. Lean toward crediting genuine "
         "understanding rather than withholding it for imperfect wording. A statement that "
         "contradicts the item and is never corrected demonstrates nothing. Absence of evidence "
         "means missing with honest confidence, never fabricated certainty. When you give "
