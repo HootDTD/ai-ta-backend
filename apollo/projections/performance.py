@@ -3,7 +3,9 @@
 
 PURE READ-SIDE aggregation over already-durable rows (``app.problem_attempts``
 / ``app.course_memberships`` / ``app.student_progress`` / ``app.problems`` /
-``app.concepts``) — no new grading, no inference, no LLM/Neo4j calls.
+``app.concepts``, plus — through ``performance_insights`` — the canonical
+grading artifacts in ``internal.grading_runs``) — no new grading, no inference,
+no LLM/Neo4j calls.
 
 Unlike ``classroom.mastery_heatmap`` (which reads ``app.learner_state``, empty
 until ``APOLLO_GRAPH_SIM_LAYER3_ENABLED`` is flipped), everything here reads
@@ -66,9 +68,11 @@ def _round1(value: Any) -> float:
 async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[dict[str, Any]]:
     """One row per (user_id, problem_id): the highest-scoring graded attempt,
     carrying that attempt's own served letter (never re-derived, so a teacher
-    cell always matches what the student was shown) and that attempt's stored
-    ``coverage`` (only the coverage sub-object of ``diagnostic_report``, not the
-    whole report — it powers the per-problem node drill-down and nothing else)."""
+    cell always matches what the student was shown), that attempt's stored
+    ``coverage``, and the node ids that attempt's own grade EXCLUDED
+    (``unprobed_node_ids``, P1.2b — absent on rows graded before it). Only those
+    sub-objects of ``diagnostic_report``, not the whole report: together they are
+    exactly what the per-problem node drill-down needs and nothing else."""
     rows = (
         (
             await db.execute(
@@ -79,7 +83,8 @@ async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[d
                     pa.problem_id AS problem_id,
                     {_SCORE_EXPR} AS score,
                     {_LETTER_EXPR} AS letter,
-                    pa.diagnostic_report #> '{{coverage}}' AS coverage
+                    pa.diagnostic_report #> '{{coverage}}' AS coverage,
+                    pa.diagnostic_report #> '{{unprobed_node_ids}}' AS unprobed_node_ids
                 FROM app.problem_attempts pa
                 WHERE pa.course_id = :search_space_id
                   AND pa.result = 'graded'
@@ -100,6 +105,7 @@ async def _best_graded_rows(db: AsyncSession, *, search_space_id: int) -> list[d
             "score": _round1(row["score"]),
             "letter": row["letter"] or score_to_letter(round(float(row["score"]))),
             "coverage": row["coverage"],
+            "unprobed_node_ids": row["unprobed_node_ids"],
         }
         for row in rows
     ]
@@ -394,8 +400,17 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
     roster = await _roster_counts(db, search_space_id=search_space_id)
     progress = await _progress_rows(db, search_space_id=search_space_id)
     engagement = await performance_insights.load_engagement(db, search_space_id=search_space_id)
+    # P3.2 teacher surface: the `repeated_misconception` attention flag. Read as
+    # its own side map off the canonical artifact rows and threaded into the
+    # aggregates — an empty set (nothing persisted, or everything still marked
+    # `shadow` below wrongness level 3) reproduces today's five flags exactly.
     aggregates = await performance_insights.load_problem_aggregates(
-        db, search_space_id=search_space_id, score_expr=_SCORE_EXPR
+        db,
+        search_space_id=search_space_id,
+        score_expr=_SCORE_EXPR,
+        repeated_pairs=await performance_insights.load_repeated_misconception_pairs(
+            db, search_space_id=search_space_id
+        ),
     )
 
     active_ids = {row["user_id"] for row in totals}
@@ -459,6 +474,7 @@ async def class_performance(db: AsyncSession, *, search_space_id: int) -> dict[s
         await performance_problems.load_problem_meta(db, problem_ids=problem_ids),
         identities,
         await performance_problems.load_graded_reference_nodes(db, problem_ids=problem_ids),
+        aggregates,
     )
     # Correlation / quartiles run only over students who have a served grade;
     # the point carries the same avg_best the row shows, the email label, and

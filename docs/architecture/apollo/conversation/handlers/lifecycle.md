@@ -8,7 +8,7 @@ related:
   - apollo/knowledge-graph/store
   - apollo/persistence/models
   - apollo/schemas/problem
-last_verified: 2026-07-31
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -58,6 +58,10 @@ the concept's problem pool.
   only, never populated live** (they were the vestigial `handlers/history` path).
 - `restart_problem` is the only explicit student KG wipe; `handle_end` no longer
   deletes subgraphs.
+- **`handle_retry`'s phase reset is the student-visible stale-claim escape**
+  (M1/P3.4): a Done that dies between the claim and the grade commit leaves
+  `phase='SOLVING'`; retry resets it to `TEACHING`. The other escape is the
+  claim's own 15-minute staleness predicate (`done._STALE_CLAIM_AFTER`).
 
 ## Related
 

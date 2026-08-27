@@ -7,12 +7,14 @@ rows the live tutoring / grading paths already persist:
   student teaching turns — the Apollo side is ``role='apollo'``);
 - retry / first-vs-best over graded attempts (first = lowest ``pa.id``, best =
   the best-wins row, the same served-grade semantics `performance.py` uses
-  everywhere).
+  everywhere);
+- repeated misconceptions (``internal.grading_runs.grader_payload ->
+  'misconceptions'``, the canonical artifact array — read-only, never re-graded).
 
 The stat helpers (`pearson`, `spearman`, `median`, …) and the aggregation /
 flag / insight builders are **pure functions on plain lists**, so the validity
 anchors (`tests/`) exercise them with hand-computed fixtures and no database.
-Only the two thin ``load_*`` coroutines touch the session; they own no grading
+Only the three thin ``load_*`` coroutines touch the session; they own no grading
 logic — they read rows and hand them to the pure functions. `performance.py`
 passes its own ``_SCORE_EXPR`` into `load_problem_aggregates` so the served-grade
 expression is defined in exactly one place (no import cycle, no duplication).
@@ -21,6 +23,8 @@ expression is defined in exactly one place (no import cycle, no duplication).
 from __future__ import annotations
 
 import math
+from collections.abc import Collection, Mapping
+from datetime import datetime
 from typing import Any, NamedTuple
 
 from sqlalchemy import text
@@ -46,6 +50,45 @@ GAVE_UP_MAX_BEST = 60
 GRINDING_MIN_ATTEMPTS = 3
 GRINDING_MAX_GAIN = 2
 
+# rapid_retry: a retry spaced closer than this is a reword, not rework. The
+# pilot's observed inter-attempt gaps (42 s .. 22 min) straddle 300 s, so this
+# catches the smell without flagging genuine rework.
+RAPID_RETRY_MAX_SECONDS = 300
+# ...that nonetheless jumped at least one whole letter band. Pure arithmetic,
+# no letter import: the WIDEST band in rubric.LETTER_BANDS (F = [0, 30)) is
+# exactly 30 wide and every other band is narrower, so a gain of 30 always
+# crosses at least one boundary. Both constants are tunable — changing either
+# changes no stored data.
+RAPID_RETRY_MIN_GAIN = 30.0
+
+# repeated_misconception (Apollo P3.2 §2.5): the SAME canonical_key stood
+# uncorrected in at least this many of a student's GRADED attempts at one
+# problem — they are not converging on the thing they keep getting wrong.
+REPEATED_MISCONCEPTION_MIN_ATTEMPTS = 2
+
+# The marker an entry persisted BELOW wrongness level 3 carries
+# (``apollo.handlers.done.SHADOW_MISCONCEPTION_KEY``). Re-spelled rather than
+# imported to keep this pure module out of the ``done`` -> Neo4j import chain
+# (same convention as ``projections/scorecard``'s status markers); the spellings
+# are pinned equal by ``tests/test_misconception_surfaces_light_up.py``.
+SHADOW_MISCONCEPTION_KEY = "shadow"
+
+# The SQL twin of ``teacher_visible_misconception``, byte-identical to
+# ``classroom._TEACHER_VISIBLE_MISCONCEPTION_SQL`` (pinned equal by test). It is
+# a PRE-FILTER, not the authority: the pure function still decides on every row
+# the loader returns, so the two can only ever agree or the SQL be stricter.
+#
+# Why it is worth having twice. At wrongness levels 1-2 EVERY persisted entry is
+# shadow-marked, so without this predicate the loader ships the whole course's
+# misconception corpus over the pooler on every teacher page load and then
+# discards 100% of it in Python. Those are precisely the rungs this feature
+# ships at. `IS DISTINCT FROM 'true'` (not `!= 'true'`) because `->>` on an
+# absent key is NULL: every pre-P3.2 row, which carries neither key, still counts.
+_TEACHER_VISIBLE_MISCONCEPTION_SQL = f"""
+                  AND (misc ->> '{SHADOW_MISCONCEPTION_KEY}') IS DISTINCT FROM 'true'
+                  AND (misc ->> 'resolved') IS DISTINCT FROM 'true'
+"""
+
 
 class ProblemAgg(NamedTuple):
     """One (student, problem) pair's graded-attempt shape."""
@@ -55,6 +98,19 @@ class ProblemAgg(NamedTuple):
     first_score: float  # score of the lowest-id graded attempt
     best_score: float  # best-wins score (max, latest id breaks ties)
     best_is_last: bool  # no attempt of ANY result came after the best-producing one
+    # P3.3 DISPLAY-ONLY spacing (None unless a created_at side map is threaded
+    # in): median/min consecutive gap between this pair's graded attempts, and
+    # first-attempt-to-best-attempt elapsed seconds. Defaulted so every
+    # pre-P3.3 construction and fixture stays valid.
+    median_gap_seconds: float | None = None
+    min_gap_seconds: float | None = None
+    first_to_best_seconds: float | None = None
+    # P3.2: this pair carried the SAME uncorrected misconception across
+    # >= REPEATED_MISCONCEPTION_MIN_ATTEMPTS graded attempts. Filled only when
+    # the `repeated_misconception_pairs` side map is threaded in; defaulted so
+    # every pre-P3.2 construction and fixture stays valid and yields today's
+    # five flags exactly.
+    repeated_misconception: bool = False
 
 
 def _round1(value: float) -> float:
@@ -122,6 +178,20 @@ def word_count(content: str) -> int:
     return len(content.split())
 
 
+def gap_seconds(timestamps: list[datetime]) -> list[float]:
+    """Consecutive gaps, in seconds, between one (student, problem) pair's
+    graded-attempt timestamps: N stamps -> N-1 gaps (0 or 1 stamp -> none).
+
+    Deltas are ABSOLUTE magnitudes. The caller's contract is ascending attempt
+    id — never a sort by time, because ``created_at`` is display-only and must
+    never become an ordering key (best-wins is keyed on ``pa.id``) — so a
+    clock-skewed row reports a real duration instead of a negative one. The
+    deltas are TZ-free absolute durations; never bucket one by local date."""
+    return [
+        abs((timestamps[i] - timestamps[i - 1]).total_seconds()) for i in range(1, len(timestamps))
+    ]
+
+
 # --- pure aggregations ------------------------------------------------------
 
 
@@ -143,9 +213,96 @@ def engagement_by_student(
     return result
 
 
+def _pair_timings(
+    attempt_ids: list[int],
+    best_id: int,
+    created_at_by_attempt: dict[int, datetime] | None,
+) -> dict[str, float | None]:
+    """The three DISPLAY-ONLY timing fields for ONE (student, problem) pair.
+
+    Stamps are read in ascending ATTEMPT-ID order — id order is the best-wins
+    authority, and ``created_at`` must never become an ordering key. All-None
+    when no side map is threaded in (every pure fixture) or the pair's stamps
+    are absent, so timing can never fabricate a number it doesn't have."""
+    timings: dict[str, float | None] = {
+        "median_gap_seconds": None,
+        "min_gap_seconds": None,
+        "first_to_best_seconds": None,
+    }
+    if not created_at_by_attempt:
+        return timings
+    ordered_ids = sorted(attempt_ids)
+    stamps = [created_at_by_attempt[aid] for aid in ordered_ids if aid in created_at_by_attempt]
+    gaps = gap_seconds(stamps)
+    if gaps:
+        med = median(gaps)
+        timings["median_gap_seconds"] = _round1(med) if med is not None else None
+        timings["min_gap_seconds"] = _round1(min(gaps))
+    first_at = created_at_by_attempt.get(ordered_ids[0])
+    best_at = created_at_by_attempt.get(best_id)
+    if first_at is not None and best_at is not None:
+        # currently unconsumed; candidate input for P3.2 (wrongness signal) — drop if still unread then.
+        timings["first_to_best_seconds"] = _round1(abs((best_at - first_at).total_seconds()))
+    return timings
+
+
+def _marked_true(value: Any) -> bool:
+    """JSON ``true``, whichever projection delivered it. ``jsonb_array_elements``
+    hands Python a real ``bool``; the ``->>`` text projection the S9 reader uses
+    hands back the STRING ``"true"``. Anything else — absent key, ``False``,
+    ``"false"``, a number — is not a mark."""
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
+def teacher_visible_misconception(entry: Mapping[str, Any]) -> bool:
+    """Whether ONE ``grader_payload -> 'misconceptions'`` entry may reach a
+    teacher surface — the pure twin of
+    ``classroom._TEACHER_VISIBLE_MISCONCEPTION_SQL``, and the reason the flag
+    below is a level-3 surface even though the array is written from level 1.
+
+    Excluded: entries marked ``shadow`` (written below wrongness level 3, where
+    S10 serves nothing) and ``resolved`` ones (a contradiction the student
+    FIXED, persisted only for the decision-7 XP dedup — a success, not an
+    attention signal). An entry with neither key is KEPT, so every pre-P3.2 row
+    still counts."""
+    return (
+        bool(entry.get("canonical_key"))
+        and not _marked_true(entry.get(SHADOW_MISCONCEPTION_KEY))
+        and not _marked_true(entry.get("resolved"))
+    )
+
+
+def repeated_misconception_pairs(
+    entry_rows: list[tuple[str, int, int, Mapping[str, Any]]],
+    min_attempts: int = REPEATED_MISCONCEPTION_MIN_ATTEMPTS,
+) -> set[tuple[str, int]]:
+    """Fold ``(user_id, problem_id, attempt_id, misconception_entry)`` rows into
+    the set of ``(user_id, problem_id)`` pairs where ONE ``canonical_key`` stood
+    teacher-visible across >= ``min_attempts`` DISTINCT graded attempts.
+
+    Distinct ATTEMPTS, never rows: an attempt whose array happened to repeat a
+    key, or a second artifact row for the same attempt, must not look like a
+    second attempt. Pure — the loader below only supplies rows."""
+    attempts_by_key: dict[tuple[str, int, str], set[int]] = {}
+    for user_id, problem_id, attempt_id, entry in entry_rows:
+        if not teacher_visible_misconception(entry):
+            continue
+        key = (user_id, problem_id, str(entry["canonical_key"]))
+        attempts_by_key.setdefault(key, set()).add(attempt_id)
+    return {
+        (user_id, problem_id)
+        for (user_id, problem_id, _key), attempts in attempts_by_key.items()
+        if len(attempts) >= min_attempts
+    }
+
+
 def problem_aggregates(
     attempt_rows: list[tuple[str, int, int, float]],
     latest_attempt_ids: dict[tuple[str, int], int] | None = None,
+    created_at_by_attempt: dict[int, datetime] | None = None,
+    repeated_pairs: Collection[tuple[str, int]] | None = None,
 ) -> dict[str, list[ProblemAgg]]:
     """Fold ``(user_id, problem_id, attempt_id, score)`` graded-attempt rows
     into per-student ``ProblemAgg`` lists (one per (student, problem)).
@@ -155,7 +312,19 @@ def problem_aggregates(
     supplied it drives ``best_is_last``, so a student who has since STARTED a
     new (still-ungraded) attempt after their best is not counted as having
     stopped — ``gave_up`` must not fire mid-retry. When omitted, ``best_is_last``
-    falls back to the latest attempt among the graded rows given here."""
+    falls back to the latest attempt among the graded rows given here.
+
+    ``created_at_by_attempt`` maps a graded attempt id to its ``pa.created_at``.
+    Supplied it fills the DISPLAY-ONLY timing fields (P3.3); omitted they stay
+    None — an optional SIDE MAP, exactly like ``latest_attempt_ids``, so the
+    4-tuple row shape (and every fixture built on it) is unchanged.
+
+    ``repeated_pairs`` (P3.2) is the third such side map:
+    ``load_repeated_misconception_pairs``' ``(user_id, problem_id)`` set. Absent
+    it, every ``repeated_misconception`` is False and `student_flags` returns
+    today's five flags exactly. A pair only appears here if it has graded
+    attempts WITH a served score — the artifact rows alone never invent a
+    ProblemAgg — so the flag is conservative by construction."""
     grouped: dict[tuple[str, int], list[tuple[int, float]]] = {}
     for user_id, problem_id, attempt_id, score in attempt_rows:
         grouped.setdefault((user_id, problem_id), []).append((attempt_id, float(score)))
@@ -172,6 +341,7 @@ def problem_aggregates(
             if latest_attempt_ids is not None
             else graded_last_id
         )
+        timings = _pair_timings([a[0] for a in attempts], best_id, created_at_by_attempt)
         by_student.setdefault(user_id, []).append(
             ProblemAgg(
                 problem_id=problem_id,
@@ -179,6 +349,13 @@ def problem_aggregates(
                 first_score=first_score,
                 best_score=best_score,
                 best_is_last=best_id == last_id,
+                median_gap_seconds=timings["median_gap_seconds"],
+                min_gap_seconds=timings["min_gap_seconds"],
+                # currently unconsumed; candidate input for P3.2 (wrongness signal) — drop if still unread then.
+                first_to_best_seconds=timings["first_to_best_seconds"],
+                repeated_misconception=(
+                    repeated_pairs is not None and (user_id, problem_id) in repeated_pairs
+                ),
             )
         )
     return by_student
@@ -216,6 +393,23 @@ def student_extras(
     }
 
 
+def _is_rapid_flip(agg: ProblemAgg) -> bool:
+    """The rapid-retry smell for ONE (student, problem) pair: a retry, spaced
+    closer than ``RAPID_RETRY_MAX_SECONDS``, that gained at least a full letter
+    band (``RAPID_RETRY_MIN_GAIN``). ONE predicate serves both the per-student
+    ``rapid_retry`` flag and the class-level ``rapid_flips`` tally, so the two
+    can never disagree. A pair with no timing (no side map, pre-P3.3 fixtures)
+    never qualifies. The fast gap and the gain are measured over the pair as a
+    whole, not necessarily over the same transition — on pairs with 3+ attempts
+    this is a heuristic, not proof that one single retry did both."""
+    return (
+        agg.graded_count >= 2
+        and agg.min_gap_seconds is not None
+        and agg.min_gap_seconds < RAPID_RETRY_MAX_SECONDS
+        and (agg.best_score - agg.first_score) >= RAPID_RETRY_MIN_GAIN
+    )
+
+
 def student_flags(
     *,
     attempts: int,
@@ -223,7 +417,11 @@ def student_flags(
     median_words: float | None,
     aggs: list[ProblemAgg],
 ) -> list[str]:
-    """The four algorithmic attention flags, in a stable order."""
+    """The six algorithmic attention flags, in a stable order.
+
+    APPEND-ONLY: a new flag goes on the END and no existing flag's presence,
+    spelling, or position may change — the teacher UI keys off these strings and
+    an absent P3.2 payload must reproduce the original five exactly."""
     flags: list[str] = []
     if attempts == 0:
         flags.append("not_started")
@@ -241,6 +439,14 @@ def student_flags(
         for a in aggs
     ):
         flags.append("grinding")
+    if any(_is_rapid_flip(a) for a in aggs):
+        flags.append("rapid_retry")
+    # P3.2 §2.5, teacher surface: the same claim stood uncorrected across two or
+    # more graded attempts at one problem. Level-gated for free — the pairs come
+    # from `teacher_visible_misconception`, which drops every entry persisted
+    # below wrongness level 3.
+    if any(a.repeated_misconception for a in aggs):
+        flags.append("repeated_misconception")
     return flags
 
 
@@ -321,6 +527,36 @@ def build_retry_payoff(
     }
 
 
+def build_retry_timing(
+    aggregates: dict[str, list[ProblemAgg]],
+) -> dict[str, Any] | None:
+    """Class-wide SPACING over every retried (student, problem) pair: how many
+    pairs were retried, the gap statistics across them — `median_gap_seconds`
+    is the median of the per-pair MEDIAN gaps (not a pooled median of all raw
+    gaps); `min_gap_seconds` is the min of per-pair mins, which IS the pooled
+    minimum — and how many of them were rapid flips (`_is_rapid_flip` — the
+    same predicate behind the per-student `rapid_retry` flag).
+
+    Suppressed (None) under the SAME gate as `build_retry_payoff` — no pair
+    with >= 2 graded attempts — so the two teacher strips appear and disappear
+    together. Deliberately NOT gated on `MIN_CORRELATION_N`: that threshold
+    suppresses population statistics (correlation, quartiles), whereas this is
+    a per-pair signal that is meaningful at n=1. Pairs with no timestamps
+    still count toward `pairs_retried` but contribute no gap statistic."""
+    retried = [agg for aggs in aggregates.values() for agg in aggs if agg.graded_count >= 2]
+    if not retried:
+        return None
+    medians = [a.median_gap_seconds for a in retried if a.median_gap_seconds is not None]
+    mins = [a.min_gap_seconds for a in retried if a.min_gap_seconds is not None]
+    overall_median = median(medians)
+    return {
+        "pairs_retried": len(retried),
+        "median_gap_seconds": _round1(overall_median) if overall_median is not None else None,
+        "min_gap_seconds": _round1(min(mins)) if mins else None,
+        "rapid_flips": sum(1 for a in retried if _is_rapid_flip(a)),
+    }
+
+
 def build_insights(
     graded_students: list[dict[str, Any]],
     aggregates: dict[str, list[ProblemAgg]],
@@ -331,6 +567,7 @@ def build_insights(
         "correlation": build_correlation(graded_students),
         "effort_quartiles": build_effort_quartiles(graded_students),
         "retry_payoff": build_retry_payoff(aggregates),
+        "retry_timing": build_retry_timing(aggregates),
     }
 
 
@@ -362,8 +599,64 @@ async def load_engagement(db: AsyncSession, *, search_space_id: int) -> dict[str
     return engagement_by_student([(str(r["user_id"]), r["content"] or "") for r in rows])
 
 
+async def load_repeated_misconception_pairs(
+    db: AsyncSession, *, search_space_id: int
+) -> set[tuple[str, int]]:
+    """``(user_id, problem_id)`` pairs carrying a REPEATED uncorrected
+    misconception, read from the canonical artifact rows.
+
+    Unrolls ``internal.grading_runs.grader_payload -> 'misconceptions'`` the same
+    way ``classroom.struggle_signals`` and
+    ``persistence.attempt_history.prior_wrongness_findings`` already do, guarded
+    by ``jsonb_typeof(...) = 'array'`` so a malformed free-form payload yields
+    zero rows instead of raising. Entries arrive as whole JSONB objects and the
+    visibility/repeat decision is made by the PURE fold above — this coroutine
+    owns no logic, exactly like the other two loaders; the SQL only PRE-FILTERS
+    the invisible population (see ``_TEACHER_VISIBLE_MISCONCEPTION_SQL``), which
+    is 100% of it at wrongness levels 1-2. Course-scoped and canonical-role
+    only; roster-bounded, never a cross-course export."""
+    rows = (
+        (
+            await db.execute(
+                text(
+                    f"""
+                SELECT g.user_id AS user_id, g.problem_id AS problem_id,
+                       g.attempt_id AS attempt_id, misc AS entry
+                FROM internal.grading_runs g,
+                     LATERAL jsonb_array_elements(
+                         CASE
+                             WHEN jsonb_typeof(g.grader_payload -> 'misconceptions') = 'array'
+                             THEN g.grader_payload -> 'misconceptions'
+                             ELSE '[]'::jsonb
+                         END
+                     ) AS misc
+                WHERE g.course_id = :search_space_id
+                  AND g.role = 'canonical'
+                  AND misc ->> 'canonical_key' IS NOT NULL
+                  {_TEACHER_VISIBLE_MISCONCEPTION_SQL}
+                """
+                ),
+                {"search_space_id": search_space_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return repeated_misconception_pairs(
+        [
+            (str(r["user_id"]), int(r["problem_id"]), int(r["attempt_id"]), r["entry"])
+            for r in rows
+            if isinstance(r["entry"], Mapping)
+        ]
+    )
+
+
 async def load_problem_aggregates(
-    db: AsyncSession, *, search_space_id: int, score_expr: str
+    db: AsyncSession,
+    *,
+    search_space_id: int,
+    score_expr: str,
+    repeated_pairs: Collection[tuple[str, int]] | None = None,
 ) -> dict[str, list[ProblemAgg]]:
     """Per-student (student, problem) graded-attempt aggregates. ``score_expr``
     is `performance.py`'s served-grade SQL fragment (a module constant, not user
@@ -371,14 +664,23 @@ async def load_problem_aggregates(
 
     Scoring rows are graded-only, but ``best_is_last`` (the ``gave_up`` signal)
     must recognise retries of ANY result, so a second pass surfaces the latest
-    attempt id per (student, problem) over ALL attempts (graded or not)."""
+    attempt id per (student, problem) over ALL attempts (graded or not).
+
+    The graded SELECT also carries ``pa.created_at`` — DISPLAY-ONLY, threaded
+    through as the ``created_at_by_attempt`` side map for retry spacing. The
+    ``ORDER BY`` stays ``pa.id``: a timestamp must never order attempts.
+
+    ``repeated_pairs`` is `load_repeated_misconception_pairs`' set, passed
+    straight through as a third side map (no query of its own here) — omitted,
+    every ``repeated_misconception`` stays False."""
     rows = (
         (
             await db.execute(
                 text(
                     f"""
                 SELECT pa.user_id AS user_id, pa.problem_id AS problem_id,
-                       pa.id AS attempt_id, {score_expr} AS score
+                       pa.id AS attempt_id, {score_expr} AS score,
+                       pa.created_at AS created_at
                 FROM app.problem_attempts pa
                 WHERE pa.course_id = :search_space_id
                   AND pa.result = 'graded'
@@ -413,10 +715,17 @@ async def load_problem_aggregates(
     latest_attempt_ids = {
         (str(r["user_id"]), int(r["problem_id"])): int(r["latest_id"]) for r in latest_rows
     }
+    # DISPLAY-ONLY side map (P3.3): attempt id -> its created_at. Rows with a
+    # null stamp are dropped at this boundary so the pure helpers never see one.
+    created_at_by_attempt = {
+        int(r["attempt_id"]): r["created_at"] for r in rows if r["created_at"] is not None
+    }
     return problem_aggregates(
         [
             (str(r["user_id"]), int(r["problem_id"]), int(r["attempt_id"]), float(r["score"]))
             for r in rows
         ],
         latest_attempt_ids,
+        created_at_by_attempt=created_at_by_attempt,
+        repeated_pairs=repeated_pairs,
     )

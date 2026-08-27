@@ -250,6 +250,41 @@ def interaction_allowed_for_concept(slug: str | None) -> bool:
     return not allowlist or (slug or "").casefold() in allowlist
 
 
+# Apollo P3.2 wrongness ladder. The ordinal IS the safety design: every rung is
+# a superset of the one below it and the kill switch is a single decrement.
+# 0 = byte-identical to the pre-feature build, 4 = the (dark) score ceiling.
+_WRONGNESS_LEVEL_MIN = 0
+_WRONGNESS_LEVEL_MAX = 4
+
+
+def wrongness_level() -> int:
+    """Return ``APOLLO_WRONGNESS_LEVEL`` clamped to 0-4 (default/garbage → 0).
+
+    The Apollo P3.2 contested-credit ladder (spec 2026-08-12 §2.3/§2.6): 0
+    serves nothing, 1 produces + persists + shadow-logs findings, 2 adds probe
+    priority / the done-gate / cross-attempt question memory, 3 adds the
+    narrative line + teacher surfaces + the corrected-misconception XP bonus,
+    and 4 (built dark, nothing sets it) applies the bounded score ceiling.
+
+    Absent, empty, or non-numeric values read as 0 — an unparseable flag must
+    never accidentally serve a consequence. Out-of-range values clamp rather
+    than raise, so a typo'd ``9`` cannot reach past the highest built rung.
+
+    **Single-reader rule:** the ONLY caller is
+    ``apollo.overseer.wrongness.effective_wrongness_level``, which pairs it with
+    ``interaction_allowed_for_concept`` so the ladder can pilot on one concept
+    (exactly the INTERACTION5 pattern). No other module may read this flag —
+    ``test_wrongness_flag.py`` asserts the env var name appears in exactly one
+    non-test source file.
+    """
+    raw = os.getenv("APOLLO_WRONGNESS_LEVEL", "")
+    try:
+        level = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return _WRONGNESS_LEVEL_MIN
+    return max(_WRONGNESS_LEVEL_MIN, min(_WRONGNESS_LEVEL_MAX, level))
+
+
 def get_embedding_dim() -> int:
     """Vector dimension for embeddings (must match the model used at index time)."""
     return int(os.getenv("EMBEDDING_DIM", "3072"))
@@ -323,6 +358,7 @@ __all__ = [
     "interaction5_enabled",
     "interaction_concepts",
     "interaction_allowed_for_concept",
+    "wrongness_level",
     "get_embedding_dim",
     "get_embedding_model",
     "get_supabase_db_url",

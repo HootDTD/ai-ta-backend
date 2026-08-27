@@ -14,7 +14,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +26,9 @@ from apollo.auth_deps import (
 )
 from apollo.errors import (
     CoverageGradingError,
+    EmptyAttemptError,
     FilterRejectedError,
+    GradingInProgressError,
     InvalidPhaseError,
     KGEntryNotFoundError,
     KGUnavailableError,
@@ -42,6 +44,17 @@ from apollo.errors import (
 )
 from apollo.handlers.browse import handle_list_problems
 from apollo.handlers.chat import handle_chat
+from apollo.handlers.chat_stream import (
+    MEDIA_TYPE as CHAT_STREAM_MEDIA_TYPE,
+)
+from apollo.handlers.chat_stream import (
+    STREAM_HEADERS as CHAT_STREAM_HEADERS,
+)
+from apollo.handlers.chat_stream import (
+    TurnSessionOpener,
+    get_turn_session_opener,
+    stream_chat_turn,
+)
 from apollo.handlers.done import handle_done
 from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_retry
 from apollo.handlers.negotiate import (
@@ -214,6 +227,48 @@ async def chat(
         session_id=session_id,
         message=body.message,
         ask_hoot=body.ask_hoot,
+    )
+
+
+@router.post("/sessions/{session_id}/chat/stream")
+async def chat_stream(
+    session_id: int,
+    body: ChatRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
+    open_session: TurnSessionOpener = Depends(get_turn_session_opener),
+    auth: AuthContext = Depends(require_session_owner),
+) -> StreamingResponse:
+    """Streaming sibling of `POST /sessions/{id}/chat` (study-prep B.1 Tier 1).
+
+    Same request body, same turn, same final payload — delivered as SSE phase
+    events so the student sees activity immediately instead of a 10-17s dead
+    spinner. The blocking route above is untouched and stays the fallback /
+    kill switch (the student UI picks between them behind a flag).
+
+    Everything resolvable BEFORE the turn starts (401/403/404 from the owner
+    gate, 422 from body validation) is still a real HTTP status; only failures
+    raised inside the turn become in-band `error` events, because the 200 and
+    its headers are already on the wire by then.
+    """
+    # The owner gate is the ONLY use of the request-scoped session here — the
+    # turn runs on its own detached session. Release this one's pooled
+    # connection now rather than pinning it for the 10-17s the stream stays
+    # open; otherwise a streaming turn would hold two pool slots where the
+    # blocking route holds one.
+    await db.rollback()
+    return StreamingResponse(
+        stream_chat_turn(
+            request=request,
+            neo=neo,
+            open_session=open_session,
+            session_id=session_id,
+            message=body.message,
+            ask_hoot=body.ask_hoot,
+        ),
+        media_type=CHAT_STREAM_MEDIA_TYPE,
+        headers=CHAT_STREAM_HEADERS,
     )
 
 
@@ -585,6 +640,38 @@ async def kg_unavailable_handler(request: Request, exc: KGUnavailableError) -> J
     )
 
 
+async def empty_attempt_handler(request: Request, exc: EmptyAttemptError) -> JSONResponse:
+    """2026-08-07 bimodal-fix defect I1: an attempt with no student messages
+    has nothing to adjudicate. Refusing is a student-correctable state (teach
+    something, then click Done), so 409 — not the 503 retry family."""
+    return JSONResponse(
+        status_code=409,
+        content=_err_payload(
+            "empty_attempt",
+            "There's nothing to grade yet — teach Apollo something first, then click Done.",
+            session_id=exc.session_id,
+            attempt_id=exc.attempt_id,
+        ),
+    )
+
+
+async def grading_in_progress_handler(
+    request: Request, exc: GradingInProgressError
+) -> JSONResponse:
+    """M1 (P3.4): a second Done landed while the first still owns the claim.
+    Retryable within seconds and student-correctable, so 409 — not the 503
+    infrastructure family."""
+    return JSONResponse(
+        status_code=409,
+        content=_err_payload(
+            "grading_in_progress",
+            "We're still grading this attempt — give it a moment and try again.",
+            session_id=exc.session_id,
+            attempt_id=exc.attempt_id,
+        ),
+    )
+
+
 async def coverage_grading_handler(request: Request, exc: CoverageGradingError) -> JSONResponse:
     """Item #10: 503 surfaces the no-fallback contract — the UI shows
     "grading unavailable, try again" instead of receiving a downgraded
@@ -676,6 +763,8 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(NoMatchingConceptError, no_matching_concept_handler)
     app.add_exception_handler(PoolExhaustedError, pool_exhausted_handler)
     app.add_exception_handler(CoverageGradingError, coverage_grading_handler)
+    app.add_exception_handler(EmptyAttemptError, empty_attempt_handler)
+    app.add_exception_handler(GradingInProgressError, grading_in_progress_handler)
     app.add_exception_handler(KGUnavailableError, kg_unavailable_handler)
     # ContextOverflowError lives in apollo.agent.apollo_llm; import lazily
     # to avoid a circular import in api.py's top-level module load.

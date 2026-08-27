@@ -10,7 +10,7 @@ related:
   - apollo/overseer/xp
   - apollo/conversation/handlers/done
   - apollo/conversation/handlers/progress
-last_verified: 2026-07-25
+last_verified: 2026-08-11
 stub: false
 ---
 
@@ -20,11 +20,14 @@ The per-course XP + leveling repository over `app.student_progress`.
 
 ## Interface
 
-- **`load_progress(*, db, user_id, course_id) → StudentProgress`** — returns the
-  per-course row, creating a default 0-XP / level-1 row if missing, then commits.
-- **`apply_xp(*, db, user_id, course_id, xp_delta) → dict`** — adds the delta,
-  recomputes the level via `overseer.xp.level_from_xp`, stamps `last_level_up_at`
-  on a level change, commits, and returns
+- **`load_progress(*, db, user_id, course_id) → StudentProgress`** — materializes
+  the per-course row with `INSERT … ON CONFLICT (user_id, course_id) DO NOTHING`
+  (never check-then-insert), commits, and re-reads it with `populate_existing`.
+- **`apply_xp(*, db, user_id, course_id, xp_delta) → dict`** — ATOMIC:
+  `UPDATE … SET xp_total = xp_total + :delta … RETURNING xp_total`. Every
+  returned field is derived from that returned total, the level is written back
+  under a `level < :level_after` ratchet, `last_level_up_at` is stamped on a
+  level change, then it commits and returns
   `{xp_before, xp_after, level_before, level_after, level_up}` — the payload the
   Done response's `xp_earned` / `level_before` / `level_after` / `level_up` use.
 
@@ -42,6 +45,14 @@ The per-course XP + leveling repository over `app.student_progress`.
 - `xp_delta` must be **non-negative** (raises `ValueError` otherwise).
 - XP/level are keyed per `(user_id, course_id)` (Invariant A1); the composite PK
   is on `StudentProgress`.
+- **M2 (P3.4): no read-modify-write anywhere.** `student_progress` has no
+  per-award row and no idempotency key, and it commits BEFORE the artifact's
+  `UNIQUE(attempt_id, role, grader_version)` fires, so that constraint cannot
+  shield it — the atomicity has to live here. Never reintroduce
+  `row.xp_total = row.xp_total + delta`.
+- **`_insert_for` dispatches the dialect** so the ON CONFLICT path is exercised
+  by BOTH the SQLite unit suite and the real-Postgres gate
+  (`tests/database/test_apollo_progress_repo_concurrency_postgres.py`).
 
 ## Related
 

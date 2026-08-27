@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.handlers.progress import handle_get_progress_detail
+from apollo.overseer.rubric import score_to_band
 from apollo.persistence.models import (
     Concept,
     LearnerEntity,
@@ -205,6 +206,8 @@ async def test_detail_recent_attempts_graded_only_newest_first(db):
     assert [a["problem_id"] for a in attempts] == ["p-new", "p-old"]
     assert attempts[0]["score"] == 85
     assert attempts[0]["letter"] == "A-"
+    # Additive study-prep band beside the unchanged letter (2026-08-23).
+    assert attempts[0]["band"] == score_to_band(85)
     assert attempts[0]["concept_display_name"] == "Newton's Second Law"
 
 
@@ -231,3 +234,8 @@ async def test_detail_recent_attempts_prefer_served_overall(db):
     assert attempts["p-served"]["letter"] == "B+"
     assert attempts["p-legacy"]["score"] == 60
     assert attempts["p-legacy"]["letter"] == "C"
+    # `band` follows the SAME snapshot-vs-legacy resolution as score/letter:
+    # neither of these rows carries a persisted band, so both derive from the
+    # score they are being served with — never from the other one.
+    assert attempts["p-served"]["band"] == score_to_band(82)
+    assert attempts["p-legacy"]["band"] == score_to_band(60)

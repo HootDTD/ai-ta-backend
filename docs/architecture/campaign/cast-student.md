@@ -9,8 +9,10 @@ related:
   - campaign/judges-s3-s4
   - apollo/persistence/models
   - apollo/conversation/handlers/grading-artifact-writer
+  - apollo/conversation/handlers/done
+  - apollo/projections/performance-insights
   - platform/config-model-pins
-last_verified: 2026-07-25
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -48,6 +50,15 @@ seam so the flow unit-tests with fakes.
 - **`SqlArtifactReader._row_to_payload`** reassembles the grading-artifact dict
   from the typed `GradingRun` columns (DB-14/A7 artifacts-only merge) — the
   inverse of the artifact writer; referenced cross-domain by the apollo grading docs.
+- **`misconceptions` is the one key that is FILTERED, not copied.** From Apollo
+  P3.2 wrongness level 1, `grader_payload -> 'misconceptions'` is a superset of
+  the served array — it also carries the internal record (`shadow`-marked below
+  level 3, plus `resolved` entries the XP dedup subtracts,
+  [done](../apollo/conversation/handlers/done.md)). The reader imports
+  `performance_insights.teacher_visible_misconception`
+  ([performance-insights](../apollo/projections/performance-insights.md)) so the
+  campaign measures exactly what a Done served; re-spelling it here would let a
+  measuring instrument disagree with the surface it measures.
 
 ## Related
 

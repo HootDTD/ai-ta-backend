@@ -9,7 +9,7 @@ related:
   - apollo/projections/classroom
   - apollo/overseer/topic-score
   - apollo/conversation/routing/router
-last_verified: 2026-07-31
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -41,6 +41,22 @@ endpoints). No new grading, inference, LLM, or Neo4j.
   shared `letter_distribution` behind `grade_distribution` — now lives in
   [performance-problems](performance-problems.md); this leaf's assembler threads
   the best-wins rows + identities into it.
+- **P3.3 payload deltas** (design spec 2026-08-11, additive only, instrumentation
+  with no grade change): NEW `insights.retry_timing`
+  (`{pairs_retried, median_gap_seconds, min_gap_seconds, rapid_flips}`, null
+  under the same gate as `retry_payoff`); each `problems[].students[]` row
+  gained `attempts` + `median_gap_seconds`; `students[].flags` gained a 5th
+  flag `rapid_retry`. The assembler now threads the `aggregates` map it already
+  computes into `build_problems` as a 5th argument. All timing derives from a
+  single added SELECT column, `pa.created_at`, which is DISPLAY-ONLY — no
+  ordering, selection, or score expression is keyed on it.
+- **P3.2 payload delta** (wrongness signal, additive only): `students[].flags`
+  gained a 6th flag `repeated_misconception`. The assembler awaits
+  `performance_insights.load_repeated_misconception_pairs` and threads its
+  `(user_id, problem_id)` set into `load_problem_aggregates` as a third side map;
+  an empty set (nothing persisted, or everything still `shadow`-marked below
+  wrongness level 3) reproduces today's five flags exactly. One payload key, no
+  layout change — teacher-UI work is out of scope.
 
 ## Data flow
 
@@ -49,8 +65,10 @@ activity + retry aggregates), `app.course_memberships` (roster),
 `app.student_progress` (the "signed in but never attempted" set + those
 students' `last_active` — xp/level are no longer surfaced), `app.problems` →
 `app.concepts` (concept + per-problem rollups), `app.tutoring_messages` →
-`app.learning_activities` (student teaching turns, via
-[performance-insights](performance-insights.md)), and Supabase-managed
+`app.learning_activities` (student teaching turns) and
+`internal.grading_runs` (the canonical artifacts' misconception array, behind
+the `repeated_misconception` flag) — both via
+[performance-insights](performance-insights.md) — and Supabase-managed
 `auth.users` (identity). The grade of one attempt is
 `diagnostic_report -> 'served_overall'` (the served [topic
 score](../overseer/topic-score.md) snapshot) with
@@ -78,9 +96,11 @@ byte-identical to best-wins.
   [performance-problems](performance-problems.md) from the same `best_rows` (and
   the shared `letter_distribution`) as `grade_distribution`, so the two never
   disagree; its `nodes` drill-down reuses the served topic score's own
-  `_credit_for_node`, so it can't disagree with the grade either. `_best_graded_rows`
-  carries each best attempt's `diagnostic_report -> 'coverage'` (coverage only) to
-  feed it.
+  `_credit_for_node`, so it can't disagree with the grade either.
+  `_best_graded_rows` carries each best attempt's
+  `diagnostic_report -> 'coverage'` AND its `'unprobed_node_ids'` (those two
+  sub-objects only) to feed it — without the second the drill-down counts a node
+  P1.2b dropped from that student's own grade as a class-wide `missed`.
 - **`auth.users` lookup is failure-isolated**: outside `Base.metadata`
   (absent from the Testcontainers schema), queried under a `begin_nested()`
   SAVEPOINT so a missing table / revoked grant degrades to null identities

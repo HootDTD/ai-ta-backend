@@ -82,7 +82,13 @@ def test_legacy_output_is_pattern_sanitized(mock_openai):
 
 @patch("apollo.overseer.diagnostic.bounded_client")
 def test_clean_output_and_placeholder_are_preserved(mock_openai):
-    clean = "You covered causality well (80%).\n\nNext step: explain overload."
+    # Study-prep 2026-08-23: this fixture used to read "…well (80%)." and pinned
+    # the percentage as PRESERVED. Students now see a proficiency band and never
+    # a number, so the percentage is no longer clean text — it is scrubbed
+    # (`test_percentage_leak_is_scrubbed_end_to_end` below). What this test still
+    # pins is the untouched-input contract: prose with nothing to remove comes
+    # back byte-identical, paragraph breaks and all.
+    clean = "You covered causality well and grounded it in the pipe example.\n\nNext step: explain overload."
     mock_openai.return_value = _client_returning(clean)
     kwargs = {
         "coverage": {"per_step": {}, "procedure_scores": {}},
@@ -98,6 +104,27 @@ def test_clean_output_and_placeholder_are_preserved(mock_openai):
         "[Diagnostic narrative unavailable — the grade above is still accurate.]",
         None,
     )
+
+
+@patch("apollo.overseer.diagnostic.bounded_client")
+def test_percentage_leak_is_scrubbed_end_to_end(mock_openai):
+    """Study-prep 2026-08-23: a percentage reaching the return boundary is a
+    numeric grade the student is not supposed to see, so the whole serving lane
+    — not just the unit-tested regex — has to drop it."""
+    mock_openai.return_value = _client_returning(
+        "You covered causality well (80%).\n\nNext step: explain overload."
+    )
+
+    out, feedback = generate_diagnostic(
+        coverage={"per_step": {}, "procedure_scores": {}},
+        reference_steps=[],
+        problem_text="P?",
+        rubric=_RUBRIC,
+        topic_score=_topic_score(),
+    )
+
+    assert out == "You covered causality well.\n\nNext step: explain overload."
+    assert feedback is None
 
 
 @patch("apollo.overseer.diagnostic.bounded_client")

@@ -13,6 +13,7 @@ import pytest
 from apollo.ontology import Node, build_node
 from apollo.overseer.rubric import LETTER_BANDS
 from apollo.projections import performance_problems as pp
+from apollo.projections.performance_insights import ProblemAgg
 
 pytestmark = pytest.mark.unit
 
@@ -99,8 +100,13 @@ def test_usable_coverage(coverage, expected_usable):
 # --- aggregate_nodes --------------------------------------------------------
 
 
+def _attempts(*coverages: dict) -> list[pp.AttemptNodes]:
+    """Pre-P1.2b shape: coverage only, nothing excluded from any grade."""
+    return [pp.AttemptNodes(coverage=coverage) for coverage in coverages]
+
+
 def test_aggregate_nodes_tallies_each_status_over_best_attempts():
-    nodes = pp.aggregate_nodes([_eq(), _cond()], [_COV_COVERED, _COV_PARTIAL, _COV_MISSED])
+    nodes = pp.aggregate_nodes([_eq(), _cond()], _attempts(_COV_COVERED, _COV_PARTIAL, _COV_MISSED))
     by_id = {n["node_id"]: n for n in nodes}
     # display_name + node_type come from the reference node (scorer's own resolver).
     assert (by_id["eq1"]["display_name"], by_id["eq1"]["node_type"]) == ("Bernoulli", "equation")
@@ -113,6 +119,7 @@ def test_aggregate_nodes_tallies_each_status_over_best_attempts():
         "understood": 1,
         "partial": 1,
         "missed": 1,
+        "unprobed": 0,
         "graded": 3,
     }
     # c1: covered in all three.
@@ -121,7 +128,7 @@ def test_aggregate_nodes_tallies_each_status_over_best_attempts():
 
 
 def test_aggregate_nodes_no_graded_nodes_is_empty():
-    assert pp.aggregate_nodes([], [_COV_COVERED]) == []
+    assert pp.aggregate_nodes([], _attempts(_COV_COVERED)) == []
 
 
 def test_aggregate_nodes_no_attempts_reports_zeroed_nodes():
@@ -134,9 +141,69 @@ def test_aggregate_nodes_no_attempts_reports_zeroed_nodes():
             "understood": 0,
             "partial": 0,
             "missed": 0,
+            "unprobed": 0,
             "graded": 0,
         }
     ]
+
+
+# --- unprobed nodes (review finding 1) --------------------------------------
+
+
+def test_a_node_excluded_from_an_attempts_grade_is_never_counted_missed():
+    """The defect: `_credit_for_node` can only say covered/partial/missing, so a
+    node P1.2b dropped from that student's grade — never asked, "not part of
+    this grade" in their own payload — was reported to the teacher as a class
+    failure on a topic nobody was asked about."""
+    nodes = pp.aggregate_nodes(
+        [_eq()],
+        [
+            pp.AttemptNodes(coverage=_COV_MISSED, unprobed=frozenset({"eq1"})),
+            pp.AttemptNodes(coverage=_COV_MISSED, unprobed=frozenset({"eq1"})),
+        ],
+    )
+
+    assert nodes[0]["missed"] == 0
+    assert nodes[0]["unprobed"] == 2
+    # Nothing counted, so nothing is averaged over it either.
+    assert nodes[0]["graded"] == 0
+
+
+def test_graded_counts_only_the_attempts_where_the_node_counted():
+    """The stacked bar must reconcile: understood+partial+missed == graded, with
+    the excluded attempts accounted for separately."""
+    nodes = pp.aggregate_nodes(
+        [_eq()],
+        [
+            pp.AttemptNodes(coverage=_COV_COVERED),
+            pp.AttemptNodes(coverage=_COV_MISSED, unprobed=frozenset({"eq1"})),
+        ],
+    )
+
+    node = nodes[0]
+    assert (node["understood"], node["partial"], node["missed"], node["unprobed"]) == (1, 0, 0, 1)
+    assert node["graded"] == node["understood"] + node["partial"] + node["missed"] == 1
+
+
+def test_exclusion_is_per_node_not_per_attempt():
+    """The same attempt still contributes a real verdict for its other nodes."""
+    nodes = pp.aggregate_nodes(
+        [_eq(), _cond()],
+        [pp.AttemptNodes(coverage=_COV_COVERED, unprobed=frozenset({"eq1"}))],
+    )
+
+    by_id = {n["node_id"]: n for n in nodes}
+    assert (by_id["eq1"]["unprobed"], by_id["eq1"]["graded"]) == (1, 0)
+    assert (by_id["c1"]["understood"], by_id["c1"]["graded"]) == (1, 1)
+
+
+@pytest.mark.parametrize("raw", [None, "not a list", {"eq1": True}, 7, ["eq1", 5, None], []])
+def test_unprobed_ids_degrades_to_empty_on_anything_unusable(raw):
+    """Pre-P1.2b rows carry no snapshot at all, and the column is free-form
+    JSON — the teacher panel must degrade to the coverage-only tally, never
+    raise. A well-formed list keeps only its string members."""
+    resolved = pp._unprobed_ids(raw)
+    assert resolved == (frozenset({"eq1"}) if raw == ["eq1", 5, None] else frozenset())
 
 
 # --- students_for -----------------------------------------------------------
@@ -151,7 +218,14 @@ def test_students_for_orders_by_score_desc_and_resolves_email():
     identities = {"u1": {"email": "u1@e"}, "u2": {"email": "u2@e"}}
     students = pp.students_for(rows, identities)
     assert [s["user_id"] for s in students] == ["u2", "u1", "u3"]  # score desc
-    assert students[0] == {"user_id": "u2", "email": "u2@e", "score": 100.0, "letter": "A+"}
+    assert students[0] == {
+        "user_id": "u2",
+        "email": "u2@e",
+        "score": 100.0,
+        "letter": "A+",
+        "attempts": 1,
+        "median_gap_seconds": None,
+    }
     assert students[2]["email"] is None  # u3 not in identities -> None
 
 
@@ -180,6 +254,8 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
         {"user_id": "u3", "problem_id": 1, "score": 30.0, "letter": "F", "coverage": {}},
         {"user_id": "u1", "problem_id": 2, "score": 55.0, "letter": "D", "coverage": None},
     ]
+    # u1's own grade excluded c1 (P1.2b) — never asked, so never a class failure.
+    best_rows[0]["unprobed_node_ids"] = ["c1"]
     meta = {
         1: {
             "problem_code": "pb",
@@ -206,7 +282,16 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
     assert alpha["problem_text"] == "Explain pressure"
     assert (alpha["students_graded"], alpha["avg_best"]) == (1, 55.0)
     assert alpha["nodes"] == []  # no graded reference nodes
-    assert alpha["students"] == [{"user_id": "u1", "email": "u1@e", "score": 55.0, "letter": "D"}]
+    assert alpha["students"] == [
+        {
+            "user_id": "u1",
+            "email": "u1@e",
+            "score": 55.0,
+            "letter": "D",
+            "attempts": 1,
+            "median_gap_seconds": None,
+        }
+    ]
 
     assert beta["problem_text"] == "Explain flow"
     assert (beta["problem_code"], beta["concept_name"]) == ("pb", "Beta")
@@ -215,7 +300,14 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
     assert beta_dist["A-"] == 1 and beta_dist["A+"] == 1 and beta_dist["F"] == 1
     # students: all three distinct students, score desc, u3 email degraded to None.
     assert [s["user_id"] for s in beta["students"]] == ["u2", "u1", "u3"]
-    assert beta["students"][2] == {"user_id": "u3", "email": None, "score": 30.0, "letter": "F"}
+    assert beta["students"][2] == {
+        "user_id": "u3",
+        "email": None,
+        "score": 30.0,
+        "letter": "F",
+        "attempts": 1,
+        "median_gap_seconds": None,
+    }
     # nodes: u3's empty coverage is EXCLUDED, so graded=2 (u1 partial + u2 covered).
     beta_nodes = {n["node_id"]: n for n in beta["nodes"]}
     assert beta_nodes["eq1"]["graded"] == 2
@@ -224,8 +316,76 @@ def test_build_problems_groups_orders_and_composes_all_blocks():
         beta_nodes["eq1"]["partial"],
         beta_nodes["eq1"]["missed"],
     ) == (1, 1, 0)
-    assert (beta_nodes["c1"]["understood"], beta_nodes["c1"]["graded"]) == (2, 2)
+    # c1 left u1's own grade, so it counted for u2 only — and is reported as
+    # excluded, not as a miss.
+    assert (beta_nodes["c1"]["understood"], beta_nodes["c1"]["graded"]) == (1, 1)
+    assert beta_nodes["c1"]["unprobed"] == 1
 
 
 def test_build_problems_empty():
     assert pp.build_problems([], {}, {}, {}) == []
+
+
+# --- P3.3 attempts / median_gap_seconds decoration --------------------------
+
+
+def test_students_for_without_aggregates_defaults_to_one_attempt():
+    """No aggregates threaded in -> the truthful floor: a best-wins row exists
+    only because >= 1 graded attempt does, and no timing is known."""
+    rows = [{"user_id": "u1", "problem_id": 10, "score": 85.0, "letter": "A-"}]
+    assert pp.students_for(rows, {}) == [
+        {
+            "user_id": "u1",
+            "email": None,
+            "score": 85.0,
+            "letter": "A-",
+            "attempts": 1,
+            "median_gap_seconds": None,
+        }
+    ]
+
+
+def test_students_for_decorates_from_the_matching_pair_aggregate():
+    """The decoration is PAIR-grained: u1's problem-10 aggregate supplies
+    attempts + median gap; their problem-20 aggregate must not leak into the
+    problem-10 row, and a student with no aggregate falls back to (1, None)."""
+    rows = [
+        {"user_id": "u1", "problem_id": 10, "score": 85.0, "letter": "A-"},
+        {"user_id": "u2", "problem_id": 10, "score": 30.0, "letter": "F"},
+    ]
+    aggregates = {
+        "u1": [
+            ProblemAgg(10, 3, 40.0, 85.0, False, 120.0, 42.0),
+            ProblemAgg(20, 7, 10.0, 20.0, True, 999.0, 999.0),
+        ]
+    }
+    students = pp.students_for(rows, {"u1": {"email": "u1@e"}}, aggregates)
+    by_user = {s["user_id"]: s for s in students}
+    assert (by_user["u1"]["attempts"], by_user["u1"]["median_gap_seconds"]) == (3, 120.0)
+    assert (by_user["u2"]["attempts"], by_user["u2"]["median_gap_seconds"]) == (1, None)
+
+
+def test_build_problems_threads_aggregates_into_student_rows():
+    best_rows = [
+        {"user_id": "u1", "problem_id": 1, "score": 85.0, "letter": "A-", "coverage": None},
+    ]
+    meta = {
+        1: {
+            "problem_code": "pb",
+            "problem_text": "Explain flow",
+            "concept_id": 7,
+            "concept_name": "Beta",
+        }
+    }
+    aggregates = {"u1": [ProblemAgg(1, 2, 40.0, 85.0, False, 42.0, 42.0)]}
+    block = pp.build_problems(best_rows, meta, {}, {1: []}, aggregates)
+    assert block[0]["students"] == [
+        {
+            "user_id": "u1",
+            "email": None,
+            "score": 85.0,
+            "letter": "A-",
+            "attempts": 2,
+            "median_gap_seconds": 42.0,
+        }
+    ]

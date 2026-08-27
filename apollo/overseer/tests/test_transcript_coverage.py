@@ -65,10 +65,14 @@ def test_prompt_uses_knowledge_demonstration_basis_and_preserves_evidence_rails(
     assert "Apollo's restatements, completions, and corrections are NOT evidence" in prompt
 
 
-def test_prompt_states_grader_of_record_and_guidance_only_no_verbatim_requirement():
+def test_prompt_states_grader_of_record_and_no_verbatim_requirement():
+    """The credit VALUES stopped being guidance at P1.1 (they are a five-point
+    enum now — see test_transcript_coverage_anchor_credit.py), but which anchor
+    an item earns is still the adjudicator's judgement, and it is still never
+    required to find a verbatim span before crediting."""
     prompt = build_system_prompt(_problem())
     assert "grader of record" in prompt
-    assert "guidelines, not" in prompt
+    assert "you judge fair" not in prompt
     assert "must quote a verbatim evidence span" not in prompt
 
 
@@ -79,11 +83,17 @@ def test_prompt_uses_loosened_credit_anchors_and_credits_dialogue_contribution()
     the dialogue rather than only verbatim solo statements, and it leans toward
     crediting genuine understanding over penalizing informal wording. The
     anti-gaming guard (Apollo's own words are not evidence on their own) is
-    deliberately retained."""
+    deliberately retained.
+
+    P1.1 hardened the loosened anchors from "around 0.85 / around 0.6" prose
+    into an enum — the VALUES were unchanged, so this test pins them in their
+    enum form. 2026-08-24 ADDED one value, 0.3, below every existing anchor:
+    {0, 0.3, 0.6, 0.85, 1.0}. Nothing here was redefined — 0.6 keeps the exact
+    meaning it was loosened to — so the loosening this test guards is intact.
+    The 0.7 anchor stays retired."""
     prompt = build_system_prompt(_problem())
-    assert "around 0.85" in prompt
-    assert "around 0.6" in prompt
-    assert "around 0.7" not in prompt
+    assert "0, 0.3, 0.6, 0.85, or 1.0" in prompt
+    assert "0.7" not in prompt
     assert "Lean toward crediting genuine understanding" in prompt
     assert "confirms, corrects, or builds on" in prompt
     assert "NOT evidence on their own" in prompt
@@ -93,6 +103,10 @@ def test_span_validation_is_student_only_and_normalizes_whitespace():
     assert validate_span("a  b\nc", ["a b c"])
     assert not validate_span("Apollo quote", ["student quote"])
     assert not validate_span(None, ["student quote"])
+    # A blank/whitespace-only span normalizes to "" and must NOT match by
+    # substring against every message — it proves the student said nothing.
+    assert not validate_span("   \n ", ["student quote"])
+    assert not validate_span("", ["student quote"])
 
 
 @pytest.mark.asyncio
@@ -126,8 +140,9 @@ async def test_full_credit_maps_to_contract_and_calls_once():
 @pytest.mark.asyncio
 async def test_span_mismatch_does_not_zero_credit():
     """Span validation is diagnostic-only now: a positive credit whose span
-    isn't a verbatim student quote still flows through to procedure_scores
-    untouched."""
+    isn't a verbatim student quote still flows through to procedure_scores as
+    positive credit (anchored by P1.1: 0.9 -> 0.85). A failed span never zeroes
+    or downgrades — only the anchor snap moves the number."""
     payload = {
         "verdicts": [
             {
@@ -146,7 +161,7 @@ async def test_span_mismatch_does_not_zero_credit():
         result = await compute_transcript_coverage(
             [("apollo", "Apollo only"), ("student", "no")], _graph(), _problem()
         )
-    assert result["procedure_scores"]["p1"] == pytest.approx(0.9)
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.85)
     assert result["per_step"]["p1"] == "covered"
 
 
@@ -158,9 +173,13 @@ async def test_empty_output_raises_named_error():
 
 
 @pytest.mark.asyncio
-async def test_continuous_credit_passes_through_untouched():
-    """The LLM's continuous credit in [0, 1] flows through to procedure_scores
-    unmodified — no quantization to {0, 0.4, 0.7, 1.0}."""
+async def test_off_anchor_credit_is_quantized_to_the_nearest_anchor():
+    """POLICY REVERSAL (bimodal-fix P1.1, 2026-08-07): credit used to flow
+    through as an arbitrary continuous value ("no quantization"). Under
+    gpt-5.1 that freedom collapsed to the extremes, so credit is now the
+    four-value anchor enum and an off-anchor verdict is snapped (0.79 -> 0.85).
+    The full snapping matrix lives in test_transcript_coverage_anchor_credit.py;
+    this pins that the LIVE lane applies it."""
     payload = {
         "verdicts": [
             {
@@ -179,20 +198,21 @@ async def test_continuous_credit_passes_through_untouched():
         result = await compute_transcript_coverage(
             [("student", "I integrate both sides")], _graph(), _problem()
         )
-    assert result["procedure_scores"]["p1"] == pytest.approx(0.79)
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.85)
     assert result["per_step"]["p1"] == "covered"
 
 
 @pytest.mark.asyncio
 async def test_basis_no_longer_overrides_credit():
     """basis == "absent" no longer force-zeroes a positive credit — basis is
-    provenance/logging only, never a code rule."""
+    provenance/logging only, never a code rule. (The credit here is an anchor
+    value, so P1.1's snap is a no-op and only the basis rule is under test.)"""
     payload = {
         "verdicts": [
             {
                 "node_id": "p1",
                 "covered": True,
-                "credit": 0.3,
+                "credit": 0.6,
                 "confidence": 0.9,
                 "evidence_span": "I integrate",
                 "prompted": False,
@@ -205,11 +225,17 @@ async def test_basis_no_longer_overrides_credit():
         result = await compute_transcript_coverage(
             [("student", "I integrate")], _graph(), _problem()
         )
-    assert result["procedure_scores"]["p1"] == pytest.approx(0.3)
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.6)
 
 
 @pytest.mark.asyncio
-async def test_sub_half_credit_is_missing_in_per_step_but_raw_in_procedure_scores():
+async def test_sub_half_credit_is_missing_in_per_step_and_anchored_in_procedure_scores():
+    """A verdict below the covered threshold stays "missing" for the binary axis
+    consumers. Since 2026-08-24 there are TWO sub-0.5 anchors (0 and 0.3), so a
+    0.3 verdict is now on-anchor: it stays 0.3 into the topic lane while every
+    binary consumer still reads it as missing. This test guards the split — the
+    new anchor moved the SCORE for a hedged topic, it did not promote it to
+    covered, and the 0.5 threshold was deliberately not touched."""
     payload = {
         "verdicts": [
             {
@@ -374,7 +400,9 @@ def test_narrative_evidence_spans_drops_zero_credit_verdicts():
 @pytest.mark.asyncio
 async def test_with_spans_returns_contract_coverage_plus_gated_spans():
     """One adjudication call yields BOTH the frozen coverage verdict and the
-    per-attempt narrative spans — no second LLM call, no extra coverage key."""
+    per-attempt narrative spans — no second LLM call, no extra coverage key.
+    (0.7 anchors down to 0.6, which is still positive credit, so the span
+    survives the gate.)"""
     payload = {
         "verdicts": [
             {
@@ -395,6 +423,6 @@ async def test_with_spans_returns_contract_coverage_plus_gated_spans():
             [("student", "I integrate now")], _graph(), _problem()
         )
     validate_coverage_verdict(coverage)
-    assert coverage["procedure_scores"]["p1"] == pytest.approx(0.7)
+    assert coverage["procedure_scores"]["p1"] == pytest.approx(0.6)
     assert spans == {"p1": "I integrate now"}
     client.chat.completions.create.assert_called_once()

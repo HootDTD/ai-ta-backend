@@ -25,7 +25,7 @@ import pytest
 from apollo.handlers.done import handle_done
 from apollo.handlers.tests._done_fixtures import _old_path_patches
 from apollo.ontology import KGGraph, build_node
-from apollo.overseer.rubric import score_to_letter
+from apollo.overseer.rubric import score_to_band, score_to_letter
 from apollo.overseer.xp import compute_xp_earned
 
 pytestmark = pytest.mark.unit
@@ -205,11 +205,15 @@ async def test_topics_served_with_expected_shape(monkeypatch):
             "weight",
             "evidence_span",
             "hoot_assisted",
+            "reference_text",
             "misconceptions",
         }
         assert t["evidence_span"] is None
         # No asides in this harness -> the additive flag serves False.
         assert t["hoot_assisted"] is False
+    # D2: only the sub-threshold topic exposes "what full credit looks like".
+    assert by_key["eq1"]["reference_text"] is None
+    assert by_key["c1"]["reference_text"] is not None
 
 
 async def test_feedback_served_with_topic_score_and_flattened_narrative(monkeypatch):
@@ -387,7 +391,11 @@ async def test_remediation_failure_leaves_grade_payload_untouched(monkeypatch):
 
     assert out == expected
     assert out["feedback"] == feedback
-    assert out["rubric"]["overall"] == {"score": 50, "letter": score_to_letter(50)}
+    assert out["rubric"]["overall"] == {
+        "score": 50,
+        "letter": score_to_letter(50),
+        "band": score_to_band(50),
+    }
     assert "review" not in out["feedback"]["topic_feedback"][1]
     retrieve.assert_awaited_once()
 
@@ -473,9 +481,13 @@ async def test_topic_score_raising_soft_fails_legacy_rubric_served(monkeypatch):
     out = await _run(monkeypatch, topic_score_side_effect=RuntimeError("boom"))
 
     assert "topics" not in out
-    # topic_score computation failed -> falls back to the OLD rubric
-    # (served_rubric is rubric itself).
-    assert out["rubric"] == _OLD_RUBRIC
+    # topic_score computation failed -> falls back to the OLD rubric, whole-blob
+    # identical EXCEPT the additive `band` the serving layer attaches to the
+    # overall (study-prep 2026-08-23). Every axis block is untouched.
+    assert out["rubric"] == {
+        **_OLD_RUBRIC,
+        "overall": {**_OLD_RUBRIC["overall"], "band": score_to_band(90)},
+    }
     assert "rubric" in out  # HTTP 200 shape, no exception escaped
 
 
@@ -499,15 +511,25 @@ async def test_served_overall_snapshot_persisted(monkeypatch):
 
 async def test_served_overall_snapshot_on_soft_fail_equals_raw_overall(monkeypatch):
     """When topic scoring soft-fails, the student saw the legacy overall, so
-    the snapshot must equal `rubric.overall` (still present, still a copy)."""
+    the snapshot must equal `rubric.overall` (still present, still a copy) —
+    plus the additive band, which the PERSISTED RAW rubric must NOT have."""
     capture: dict = {}
     out = await _run(
         monkeypatch, topic_score_side_effect=RuntimeError("boom"), capture=capture
     )
 
     report = capture["attempt"].diagnostic_report
-    assert report["served_overall"] == {"score": 90, "letter": "A"}
+    assert report["served_overall"] == {"score": 90, "letter": "A", "band": score_to_band(90)}
     assert report["served_overall"] == out["rubric"]["overall"]
+    # THE end-to-end raw-rubric assertion (2026-08-23 fix round): `_with_band`
+    # decorates a COPY, so the rubric that is persisted, handed to
+    # `write_artifacts`, and read by the teacher projections is band-free and
+    # whole-blob identical to what `compute_rubric` returned. A `{**d}` that
+    # accidentally became an in-place mutation would leak the band into the
+    # grade of record and every teacher surface, and only this assertion sees it.
+    assert report["rubric"] == _OLD_RUBRIC
+    assert report["rubric"]["overall"] == {"score": 90, "letter": "A"}
+    assert "band" not in report["rubric"]["overall"]
 
 
 async def test_topic_score_raising_artifact_receives_none(monkeypatch):

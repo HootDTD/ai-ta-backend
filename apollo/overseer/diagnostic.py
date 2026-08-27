@@ -28,6 +28,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from apollo.agent._llm import bounded_client
+from apollo.overseer.narrative_consistency import enforce_narrative_consistency
 from apollo.overseer.topic_narrative import build_topic_narrative_prompt, sanitize_narrative
 from apollo.overseer.topic_score import TopicScoreResult
 from config.models import MAIN_MODEL
@@ -307,12 +308,18 @@ def _parse_topic_feedback(
         rubric=rubric,
         canonical_keys=ledger_keys,
     )
-    return {
-        "headline": sanitize_narrative(payload["headline"], canonical_keys=ledger_keys),
-        "topic_feedback": feedback_items,
-        "recap": recap,
-        "next_step": sanitize_narrative(payload["next_step"], canonical_keys=ledger_keys),
-    }
+    # P2.1 (2026-08-07): the served prose may never praise a topic the ledger
+    # did not credit. Runs LAST — on sanitized text, before flattening — so the
+    # structured feedback and the flattened narrative carry the same repair.
+    return enforce_narrative_consistency(
+        {
+            "headline": sanitize_narrative(payload["headline"], canonical_keys=ledger_keys),
+            "topic_feedback": feedback_items,
+            "recap": recap,
+            "next_step": sanitize_narrative(payload["next_step"], canonical_keys=ledger_keys),
+        },
+        topics=topic_score.topics,
+    )
 
 
 def _gate_topic_quote(
@@ -343,13 +350,22 @@ def _deterministic_recap(
 
 
 def _flatten_topic_feedback(feedback: dict[str, Any]) -> str:
-    """Flatten structured feedback in one stable back-compat order."""
+    """Flatten structured feedback in one stable back-compat order.
+
+    Empty parts are dropped, matching how `_deterministic_recap` already skips
+    empty appender output. Study-prep 2026-08-23 made an empty prose field
+    reachable — `sanitize_narrative` returns "" for a field that was nothing but
+    a numeric grade statement — and an unconditional join served the bare label
+    "Next step: " with nothing after it.
+    """
+    next_step = feedback["next_step"]
     parts = [
         feedback["headline"],
         *(item["note"] for item in feedback["topic_feedback"]),
         *feedback["recap"],
-        f"Next step: {feedback['next_step']}",
+        f"Next step: {next_step}" if str(next_step).strip() else "",
     ]
+    parts = [part for part in parts if str(part).strip()]
     return "\n\n".join(parts)
 
 

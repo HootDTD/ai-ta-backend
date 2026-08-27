@@ -66,7 +66,10 @@ async def _seed_session(db, *, current_code: str, sid: int, cid: int):
         search_space_id=sid,
         concept_id=cid,
         status=SessionStatus.active.value,
-        phase=SessionPhase.SOLVING.value,
+        # M1 (P3.4): SOLVING is now the CLAIM marker — seeding it would make this
+        # Done lose the claim to a phantom winner. TEACHING is the real pre-Done
+        # phase anyway.
+        phase=SessionPhase.TEACHING.value,
         current_problem_id=current_problem_id,
     )
     db.add(sess)
@@ -100,7 +103,6 @@ def _neo_stubs(attempt_id: int):
             "apollo.handlers.done.KGStore.read_graph",
             new=AsyncMock(return_value=_student_graph(attempt_id)),
         ),
-        patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
     ]
 
@@ -174,6 +176,85 @@ async def test_done_writes_one_canonical_artifact_and_scorecard(db_session):
     # Provenance ships on every Done and reports the transcript lane.
     assert out["grading_provenance"]["grader_used"] == "llm_transcript"
     assert out["grading_provenance"]["evidence_source"] == "transcript"
+
+
+async def test_second_done_click_serves_the_stored_grade(db_session):
+    """A re-clicked Done no longer re-grades (M1, P3.4): the attempt is already
+    `result='graded'`, so `handle_done` short-circuits to the persisted
+    `diagnostic_report`. The artifact table therefore still holds exactly one
+    canonical row, and only the first response carries the scorecard."""
+    sid, cid, codes = await seed_course(
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
+    )
+    sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
+
+    patches = _neo_stubs(attempt.id) + _grading_stubs()
+    _start(patches)
+    try:
+        first = await handle_done(db=db_session, neo=object(), session_id=sess.id)
+        second = await handle_done(db=db_session, neo=object(), session_id=sess.id)
+    finally:
+        _stop(patches)
+
+    # The re-click is still served a complete graded response.
+    assert second["already_graded"] is True
+    assert "rubric" in second
+    assert "progress" in second
+    assert second["xp_earned"] == 0
+
+    # The artifact write degraded exactly as documented: the first row stands
+    # alone, and only the first response carries the scorecard projection.
+    rows = await _artifact_rows(db_session, attempt.id)
+    assert len(rows) == 1
+    assert rows[0].role == "canonical"
+    assert "scorecard" in first
+    assert "scorecard" not in second
+
+
+async def test_repeat_artifact_write_soft_fails_on_unique_conflict(db_session):
+    """Prod incident 2026-08-05 (session 72, 4x 500), pinned at its real seam.
+
+    A second canonical INSERT for the same attempt violates the append-only
+    `UNIQUE(attempt_id, role, grader_version)`. That conflict must roll back
+    only the SAVEPOINT and return `None` — the outer transaction stays healthy
+    and `attempt`/`sess` stay UNEXPIRED. The original shape of the bug was the
+    except block evaluating `int(attempt.id)` on an instance the failed flush
+    had just expired, re-entering the poisoned session and raising
+    `PendingRollbackError` before the cleanup could run."""
+    from apollo.handlers.artifact_writer import write_artifacts
+
+    sid, cid, codes = await seed_course(
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
+    )
+    sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
+
+    patches = _neo_stubs(attempt.id) + _grading_stubs()
+    _start(patches)
+    try:
+        await handle_done(db=db_session, neo=object(), session_id=sess.id)
+    finally:
+        _stop(patches)
+
+    conflicting = await write_artifacts(
+        db_session,
+        attempt=attempt,
+        sess=sess,
+        coverage=dict(_COVERAGE),
+        rubric={"overall": {"score": 70, "letter": "B-"}},
+        latency_ms=5,
+    )
+
+    assert conflicting is None
+    rows = await _artifact_rows(db_session, attempt.id)
+    assert len(rows) == 1
+    # The outer transaction survived: `attempt` is still usable, not expired.
+    assert attempt.result == "graded"
 
 
 async def test_canonical_composite_matches_axis_rubric_and_band(db_session):

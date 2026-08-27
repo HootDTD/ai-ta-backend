@@ -16,10 +16,12 @@ import pytest
 from apollo.conftest import TEST_USER_ID
 from apollo.handlers.done import _find_problem, handle_done
 from apollo.ontology import KGGraph
+from apollo.overseer.rubric import score_to_band
 from apollo.persistence.models import (
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
     TutoringSession,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
@@ -52,7 +54,10 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         search_space_id=sid,
         concept_id=cid,
         status=SessionStatus.active.value,
-        phase=SessionPhase.SOLVING.value,
+        # M1 (P3.4): SOLVING is now the CLAIM marker — seeding it would make this
+        # Done lose the claim to a phantom winner. TEACHING is the real pre-Done
+        # phase anyway.
+        phase=SessionPhase.TEACHING.value,
         current_problem_id=current_problem_id,
     )
     db_session.add(sess)
@@ -65,6 +70,19 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         course_id=sess.course_id,
     )
     db_session.add(attempt)
+    await db_session.flush()
+    # The empty-attempt guard (P0.1) refuses to grade transcripts with zero
+    # student messages — seed one so grading proceeds.
+    db_session.add(
+        TutoringMessage(
+            session_id=sess.id,
+            course_id=sess.course_id,
+            attempt_id=attempt.id,
+            role="student",
+            content="Faster flow means lower pressure along the streamline.",
+            turn_index=0,
+        )
+    )
     await db_session.flush()
 
     envelope = MagicMock(
@@ -81,15 +99,24 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
 
     captured = {}
 
+    # `tally_context` (bimodal-fix P1.3) and `wrongness_candidates` (P3.2 seam
+    # S5) are both passed by `done.py` on the sole grading lane, so a double
+    # that omits either fails every Done in this test.
     async def _coverage(
-        *, transcript, reference_graph, problem, course_evidence=None, hoot_asides=()
+        *,
+        transcript,
+        reference_graph,
+        problem,
+        course_evidence=None,
+        hoot_asides=(),
+        tally_context=None,
+        wrongness_candidates=None,
     ):
         captured["reference_nodes"] = list(reference_graph.nodes)
         return {}, {}
 
     with (
         patch("apollo.handlers.done.KGStore.read_graph", new=AsyncMock(return_value=KGGraph())),
-        patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
         patch(
             "apollo.handlers.done.compute_transcript_coverage_with_spans",
@@ -112,7 +139,9 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
     ):
         out = await handle_done(db=db_session, neo=MagicMock(), session_id=sess.id)
 
-    assert out["rubric"] == {"overall": {"score": 0.5}}
+    # Whole-blob: the mocked axis rubric plus the additive `band` the soft-fail
+    # serving branch attaches to the overall (study-prep 2026-08-23).
+    assert out["rubric"] == {"overall": {"score": 0.5, "band": score_to_band(0)}}
     # The reference graph passed to the grader came from the DB problem payload.
     assert captured["reference_nodes"]
 

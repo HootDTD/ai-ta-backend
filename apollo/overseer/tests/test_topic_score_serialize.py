@@ -77,6 +77,7 @@ def test_serialize_topic_field_names():
         "weight",
         "evidence_span",
         "hoot_assisted",
+        "reference_text",
         "misconceptions",
     }
     assert topic["canonical_key"] == "eq1"
@@ -87,6 +88,8 @@ def test_serialize_topic_field_names():
     assert topic["evidence_span"] == "student said Bernoulli"
     # INTERACTION5: additive flag defaults False when the topic was not Hoot-assisted.
     assert topic["hoot_assisted"] is False
+    # D2: additive, defaults None when the topic scored at/above the threshold.
+    assert topic["reference_text"] is None
 
 
 def test_serialize_misconception_field_names():
@@ -134,6 +137,33 @@ def test_serialize_returns_plain_dicts_and_lists_not_dataclasses():
     assert all(isinstance(m, dict) for t in block["topics"] for m in t["misconceptions"])
 
 
+def test_serialize_topic_surfaces_reference_text_and_unprobed_status():
+    """D2 + P1.2b: a never-probed topic serializes with weight 0, status
+    ``unprobed``, and the reference statement the UI renders as "what full
+    credit looks like"."""
+    result = TopicScoreResult(
+        score=0,
+        letter="F",
+        coverage_component=0.0,
+        misconception_dock=0.0,
+        topics=(
+            TopicCredit(
+                canonical_key="eq2",
+                display_name="Momentum",
+                credit=0.0,
+                status="unprobed",
+                weight=0.0,
+                misconceptions=(),
+                reference_text="Momentum — p = m v",
+            ),
+        ),
+    )
+    topic = serialize_topics(result)[0]
+    assert topic["status"] == "unprobed"
+    assert topic["weight"] == 0.0
+    assert topic["reference_text"] == "Momentum — p = m v"
+
+
 def test_serialize_topic_surfaces_hoot_assisted_true():
     """INTERACTION5: a Hoot-assisted topic serves ``hoot_assisted: True`` while
     every other key stays byte-identical to the pre-feature shape."""
@@ -157,8 +187,8 @@ def test_serialize_topic_surfaces_hoot_assisted_true():
     )
     topic = serialize_topics(result)[0]
     assert topic["hoot_assisted"] is True
-    # The additive flag is the ONLY difference from the pre-feature shape.
-    assert {k: v for k, v in topic.items() if k != "hoot_assisted"} == {
+    # The additive flags are the ONLY difference from the pre-feature shape.
+    assert {k: v for k, v in topic.items() if k not in ("hoot_assisted", "reference_text")} == {
         "canonical_key": "eq1",
         "display_name": "Bernoulli",
         "credit": 0.5,

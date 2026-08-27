@@ -378,10 +378,25 @@ async def test_ask_hoot_flag_off_returns_normal_teaching_turn(monkeypatch):
     session_result.scalar_one.return_value = sess
     attempt_result = MagicMock()
     attempt_result.scalars.return_value.first.return_value = attempt
-    db.execute = AsyncMock(side_effect=[session_result, attempt_result])
+    # M4 (P3.4): the flag is off, so the aside lane never engages and this
+    # exercises the FULL teaching path — all three of _require_unclaimed's
+    # fresh phase reads (call sites #1, #2, #3) run unmocked, each issuing its
+    # own db.execute. None is SOLVING, so the turn is never refused.
+    phase_result = MagicMock()
+    phase_result.scalar_one_or_none.return_value = "TEACHING"
+    db.execute = AsyncMock(
+        side_effect=[
+            session_result,
+            attempt_result,
+            phase_result,
+            phase_result,
+            phase_result,
+        ]
+    )
 
     bridge = AsyncMock()
-    persist_turn = AsyncMock()
+    persist_student = AsyncMock(return_value=0)
+    persist_reply = AsyncMock()
     normal_reply = "How does that idea connect to the problem?"
     decision = SimpleNamespace(
         action="ask",
@@ -413,7 +428,8 @@ async def test_ask_hoot_flag_off_returns_normal_teaching_turn(monkeypatch):
             "apollo.handlers.chat.plan_next_question",
             new=AsyncMock(return_value=decision),
         ),
-        patch("apollo.handlers.chat._persist_turn", new=persist_turn),
+        patch("apollo.handlers.chat._persist_student_message", new=persist_student),
+        patch("apollo.handlers.chat._persist_apollo_reply", new=persist_reply),
         patch("apollo.handlers.chat.answer_reference_question", new=bridge),
     ):
         response = await handle_chat(
@@ -429,7 +445,13 @@ async def test_ask_hoot_flag_off_returns_normal_teaching_turn(monkeypatch):
         "kg_entries_added": 0,
         "kg": {"nodes": [], "edges": []},
         "covered_topics": [],
+        # P2.2 meter: this harness's problem double carries no reference steps.
+        "graded_topic_total": 0,
+        "open_graded_topics": 0,
         "question_target": None,
     }
     bridge.assert_not_awaited()
-    persist_turn.assert_awaited_once()
+    # P0.3: the teaching path persists the student message up front and the
+    # apollo reply at the end — no pair-persist.
+    persist_student.assert_awaited_once()
+    persist_reply.assert_awaited_once()

@@ -26,7 +26,23 @@ def test_unresolved_status_excluded_from_reference_key_statuses():
     surface opaque per-student ids instead of a reusable per-concept
     signal."""
     assert "unresolved" not in classroom._LEDGER_STATUSES_WITH_REFERENCE_KEY
-    assert set(classroom._LEDGER_STATUSES_WITH_REFERENCE_KEY) == {"credited", "misconception"}
+    assert set(classroom._LEDGER_STATUSES_WITH_REFERENCE_KEY) == {
+        "credited",
+        "misconception",
+        "unprobed",
+    }
+
+
+def test_unprobed_rows_stay_in_the_lowest_coverage_signal():
+    """Review fix. Before P1.2b a graded node nobody ever raised was filed
+    ``unresolved`` with a NULL evidence span and surfaced as a 0.0-coverage
+    worst offender — "this concept is never being taught or asked about" is
+    exactly the signal that branch exists for. P1.2b moved those rows to their
+    own status, which silently deleted the signal; matching it explicitly keeps
+    them counted, and the status constant is imported so the two modules cannot
+    drift."""
+    assert classroom.LEDGER_STATUS_UNPROBED == "unprobed"
+    assert classroom.LEDGER_STATUS_UNPROBED in classroom._LEDGER_STATUSES_WITH_REFERENCE_KEY
 
 
 def test_mastery_heatmap_signature():

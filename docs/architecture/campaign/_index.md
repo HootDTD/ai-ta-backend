@@ -3,7 +3,7 @@ doc: campaign/_index
 description: Router for the offline Apollo grading-campaign harness — casts an AI student against the live teaching loop and scores it.
 owns: []
 related: []
-last_verified: 2026-07-25
+last_verified: 2026-08-12
 stub: false
 ---
 
@@ -17,7 +17,8 @@ score it with the permanent transcript grader + the S1–S5 judge pipeline.
 
 | Leaf | One-liner | Owns |
 |---|---|---|
-| [transcript-replay](transcript-replay.md) | Deterministic transcript-grader fixture replay | `transcript_replay.py`, `__init__.py` + README.md |
+| [transcript-replay](transcript-replay.md) | Deterministic transcript-grader fixture replay + the shared grading core | `transcript_replay.py`, `__init__.py` + README.md |
+| [turn-replay](turn-replay.md) | Per-turn producer replay through the live questioning engine (S3 client seam) | `turn_replay.py` |
 | [cast-student](cast-student.md) | AI-student session driver + JSONL ledger | `cast/student.py`, `cast/__init__.py` |
 | [cast-teacher](cast-teacher.md) | Teacher provisioning driver (seeded + authored) | `cast/teacher.py` |
 | [cast-subjects-materials](cast-subjects-materials.md) | Subject registry + PDF fixture generator | `cast/subjects.py`, `cast/materials/generate_fixtures.py` |

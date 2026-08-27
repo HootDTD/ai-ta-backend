@@ -54,11 +54,15 @@ def test_user_prompt_has_topic_canonical_key_but_no_scoring_decimals():
     assert "Misconception dock" not in user
 
 
-def test_user_prompt_carries_display_name_status_and_percent():
+def test_user_prompt_carries_display_name_and_status_word_but_no_percent():
+    """Study-prep 2026-08-23: the topic line used to end ``— 90%``, and that
+    number is where "you scored 72%" in the prose came from. The status word is
+    all the narrator gets now."""
     _system, user = build_topic_narrative_prompt(_result(), problem_text="P?")
     assert "Explain causality in directional systems" in user
     assert "covered" in user
-    assert "90%" in user
+    assert "90%" not in user
+    assert "%" not in user
     assert "Score:" not in user
 
 
@@ -75,11 +79,18 @@ def test_missing_display_name_falls_back_to_humanized_key():
     assert "explain causality" in user
 
 
-def test_system_prompt_forbids_internals_and_allows_percentages():
+def test_system_prompt_forbids_internals_and_every_numeric_grade():
+    """Percentages used to be explicitly ALLOWED here ("available for
+    prioritization"). Study-prep 2026-08-23 inverted that: no score, no
+    percentage, no points, no letter — while subject-matter numbers stay
+    welcome, so the rule cannot be read as "avoid numbers"."""
     system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
     assert "internal identifiers" in system
     assert "outside the canonical_key JSON fields" in system
-    assert "percentage" in system.lower()
+    lowered = " ".join(system.lower().split())
+    assert "never put a grade into words as a number" in lowered
+    assert "no score, no percentage, no points" in lowered
+    assert "numbers that belong to the subject matter" in lowered
 
 
 def test_system_prompt_requires_exact_json_shape_and_gated_quotes():
@@ -97,6 +108,25 @@ def test_system_prompt_forbids_third_person_audit_feedback():
     assert 'speak to the student as "you" and "your"' in lowered
     assert 'never call them "the student,' in lowered
     assert "say nothing at all about misconceptions" in lowered
+
+
+# ── 2026-08-07 P2.1: the narrative is written FROM the per-node verdicts ──
+
+
+def test_system_prompt_bans_praise_below_the_credit_floor():
+    """A topic the ledger did not credit must not be credited in prose (defect
+    U2). Study-prep 2026-08-23 moved the currency from the percentage to the
+    status word — the RULE is unchanged, so the block still has to name every
+    uncredited status and still has to bind the headline and the next step."""
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    lowered = " ".join(system.lower().split())
+    assert "credit consistency" in lowered
+    assert '"covered" is the only status that was credited' in lowered
+    assert '"partially covered" was not credited' in lowered
+    assert '"missing" was not credited at all' in lowered
+    assert "the headline and the next step follow the same rule" in lowered
+    # And the currency itself is gone: no percentage threshold survives.
+    assert "60%" not in lowered and "0%" not in lowered
 
 
 # ── 2026-07-14 narrative grounding: verbatim student transcript in the prompt ──

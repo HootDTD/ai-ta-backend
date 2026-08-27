@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.errors import ParserCouldNotExtractError
+from apollo.errors import ParserCouldNotExtractError, SessionFrozenError
 from apollo.handlers.intent import (
     INTENT_CONFIDENCE_THRESHOLD,
     classify_intent,
@@ -43,9 +44,15 @@ from apollo.hoot_bridge.reference_answer import (
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.problem_selector import list_problems_for_concept
+from apollo.overseer.topic_score import _GRADED_NODE_TYPES
 from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
-from apollo.persistence.models import ProblemAttempt, TutoringMessage, TutoringSession
+from apollo.persistence.models import (
+    ProblemAttempt,
+    SessionPhase,
+    TutoringMessage,
+    TutoringSession,
+)
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import plan_next_question
@@ -75,6 +82,50 @@ _REFERENCE_QUESTION_APOLOGY = (
 )
 _REFERENCE_QUESTION_EMPTY = "Type your question above first, then click Ask."
 
+# ----------------------------------------------------------------------
+# Turn phase notifications (2026-08-23 study-prep B.1 Tier 1).
+#
+# The streaming route (`handlers/chat_stream`) is a VIEW of a turn, never a
+# second writer: it passes an `on_phase` sink so it can tell the student what
+# this turn is doing while the 10-17s LLM chain runs. The BLOCKING route passes
+# nothing, so every emit below is a no-op and the blocking payload is
+# byte-identical to its pre-streaming behavior (pinned by
+# tests/test_chat_phase_sink.py's whole-payload comparison).
+#
+# These are TURN phases, not wire events — the SSE event names, human-readable
+# copy, and ordering guarantees all live in `handlers/chat_stream`.
+# ----------------------------------------------------------------------
+
+# Student message is durable (P0.3); the parse/KG chain starts now.
+TURN_PHASE_READING = "reading"
+# About to enter the unified question-decision call (the 7.8-12s long pole).
+TURN_PHASE_THINKING = "thinking"
+# Apollo's student-visible reply text is final; `fields["text"]` carries it.
+TURN_PHASE_REPLY = "reply"
+# The questioning engine self-declared done; auto-`handle_done` starts now.
+TURN_PHASE_GRADING = "grading"
+
+# ``(phase, fields) -> None``. Called from `handle_chat`'s own coroutine, never
+# from a worker thread, so a sink may assume the running event loop.
+PhaseSink = Callable[[str, dict[str, Any]], None]
+
+
+def _emit(on_phase: PhaseSink | None, phase: str, **fields: Any) -> None:
+    """Best-effort turn-phase notification. NEVER raises.
+
+    A progress channel must not be able to fail a teaching turn: a broken sink
+    (client gone, queue misuse, serialization bug) is logged and swallowed, so
+    the streaming turn degrades to "no visible progress" rather than losing the
+    student's work. With `on_phase=None` (the blocking route) this is a single
+    identity check.
+    """
+    if on_phase is None:
+        return
+    try:
+        on_phase(phase, fields)
+    except Exception:  # noqa: BLE001 - a view must never break the turn
+        _LOG.warning("apollo_turn_phase_emit_failed phase=%s", phase, exc_info=True)
+
 
 async def _find_problem(
     db: AsyncSession, concept_id: int, problem_id: int, *, course_id: int
@@ -88,6 +139,41 @@ async def _find_problem(
     raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
 
 
+def _graded_topic_counts(problem: Any, covered_topics: Any) -> tuple[int, int]:
+    """``(graded_topic_total, open_graded_topics)`` for the pre-Done coverage
+    meter (2026-08-07 bimodal-fix P2.2).
+
+    The student had no way to see how much of the problem was still unaddressed
+    before clicking Done. ``graded_topic_total`` counts only reference steps of a
+    GRADED type (`_GRADED_NODE_TYPES`) — `definition` / `variable_mapping` nodes
+    never enter the grade, so counting them would show a denominator unrelated to
+    the score. ``open_graded_topics`` subtracts the graded nodes the live tally
+    has marked ``understood`` (the same snapshot that drives `covered_topics`),
+    so a celebrated ungraded topic can never make the meter read "done".
+
+    Derived from data this turn already holds — no extra query, no extra LLM
+    call. Display-only: any failure to derive either side logs and degrades to
+    ``(0, 0)`` rather than breaking a teaching turn — the covered-topics walk is
+    inside the guard too, so a `QuestionDecision` shape change (rolling deploy,
+    test double, controller regression) can never 500 an ordinary turn for the
+    sake of a meter."""
+    try:
+        graded_ids = {
+            str(step.id)
+            for step in problem.reference_solution
+            if step.entry_type in _GRADED_NODE_TYPES
+        }
+        understood_ids = {topic.node_id for topic in covered_topics}
+    except Exception:
+        _LOG.warning(
+            "apollo_graded_topic_counts_failed problem=%r",
+            getattr(problem, "id", None),
+            exc_info=True,
+        )
+        return 0, 0
+    return len(graded_ids), len(graded_ids - understood_ids)
+
+
 async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
     result = await db.execute(
         select(TutoringMessage.turn_index)
@@ -97,6 +183,27 @@ async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
     )
     latest = result.scalar_one_or_none()
     return (latest + 1) if latest is not None else 0
+
+
+async def _require_unclaimed(db: AsyncSession, *, session_id: int) -> None:
+    """Refuse a teaching turn while a Done owns the grading claim (M4, P3.4).
+
+    A FRESH read every time. `handle_chat` loads `sess` once and the session
+    factory sets `expire_on_commit=False`, so the in-memory `sess.phase` is a
+    snapshot up to 17s stale by the back half of a turn — useless for this.
+
+    Deliberately NARROWER than `KGStore._ensure_unfrozen`'s
+    {PROBLEM_REVEAL, SOLVING, REPORT} triple: M1 removed the transient
+    PROBLEM_REVEAL write entirely, and REPORT is the post-grade resting phase in
+    which the student can legitimately still be typing, so only the SOLVING
+    CLAIM blocks a turn. Raises `SessionFrozenError` → 409 `session_frozen`,
+    which the FE already handles.
+    """
+    phase = (
+        await db.execute(select(TutoringSession.phase).where(TutoringSession.id == session_id))
+    ).scalar_one_or_none()
+    if phase == SessionPhase.SOLVING.value:
+        raise SessionFrozenError(session_id=str(session_id))
 
 
 async def _load_history(
@@ -127,7 +234,13 @@ async def _persist_turn(
     student_msg: str,
     apollo_msg: str,
 ) -> None:
-    """Append the (student, apollo) turn pair atomically."""
+    """Append the (student, apollo) turn pair atomically.
+
+    Used by the SHORT lanes only (intent confirmations, aside cap/apology) —
+    the normal teaching path persists the student message up front instead
+    (`_persist_student_message`, bimodal-fix P0.3) because its LLM chain runs
+    10-17s and a Done clicked mid-turn would grade a transcript missing the
+    student's last message."""
     next_idx = await _next_turn_index(db, session_id)
     db.add(
         TutoringMessage(
@@ -147,6 +260,63 @@ async def _persist_turn(
             role="apollo",
             content=apollo_msg,
             turn_index=next_idx + 1,
+        )
+    )
+    await db.commit()
+
+
+async def _persist_student_message(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    course_id: int,
+    attempt_id: int,
+    content: str,
+) -> int:
+    """Persist the student's message in its own commit; returns its turn index.
+
+    Done-race fix (2026-08-07 bimodal-fix P0.3, defect I3): the teaching path
+    used to persist the (student, apollo) pair only at the END of the turn,
+    after 10-17s of LLM work — a Done clicked mid-turn graded a transcript
+    missing the student's last (usually best) message. Persisting the student
+    row BEFORE the parse/questioning chain closes that window. If the turn
+    later fails, the dangling student row is kept deliberately: the transcript
+    retains the student's words (grading-favorable), and the next turn's
+    history simply includes them."""
+    next_idx = await _next_turn_index(db, session_id)
+    db.add(
+        TutoringMessage(
+            session_id=session_id,
+            course_id=course_id,
+            attempt_id=attempt_id,
+            role="student",
+            content=content,
+            turn_index=next_idx,
+        )
+    )
+    await db.commit()
+    return next_idx
+
+
+async def _persist_apollo_reply(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    course_id: int,
+    attempt_id: int,
+    apollo_msg: str,
+) -> None:
+    """Append Apollo's reply for a teaching turn whose student message was
+    already persisted up front by `_persist_student_message` (P0.3)."""
+    next_idx = await _next_turn_index(db, session_id)
+    db.add(
+        TutoringMessage(
+            session_id=session_id,
+            course_id=course_id,
+            attempt_id=attempt_id,
+            role="apollo",
+            content=apollo_msg,
+            turn_index=next_idx,
         )
     )
     await db.commit()
@@ -551,6 +721,7 @@ async def handle_chat(
     session_id: int,
     message: str,
     ask_hoot: bool = False,
+    on_phase: PhaseSink | None = None,
 ) -> dict[str, Any]:
     store = KGStore(db, neo)
 
@@ -571,6 +742,12 @@ async def handle_chat(
     )
     if current_attempt is None:
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
+
+    # M4 (P3.4) — check #1, before ANY LLM spend (concept load, aside lane,
+    # intent classification). A turn that starts inside the grading window is
+    # refused outright instead of being half-written into a transcript that is
+    # already being graded.
+    await _require_unclaimed(db, session_id=session_id)
 
     concept = await load_concept_definition(
         db, concept_id=sess.concept_id, search_space_id=sess.course_id
@@ -628,6 +805,25 @@ async def handle_chat(
         return intent_response
 
     # ---- Normal teaching path -----------------------------------------
+    # Done-race fix (P0.3): persist the student message NOW, before the long
+    # parse + questioning LLM chain (10-17s), so a Done clicked mid-turn
+    # grades a transcript that already contains it. `history_pre` was loaded
+    # above, so the transcript handed to the question planner below does not
+    # double-count this message. Apollo's reply is appended at the end of the
+    # turn by `_persist_apollo_reply`.
+    # M4 — check #2. The intent classifier runs ~1-2s in a thread; a Done can
+    # claim the session inside that window (the documented P0.3 residual). Re-read
+    # before the message becomes durable.
+    await _require_unclaimed(db, session_id=session_id)
+    student_turn_index = await _persist_student_message(
+        db,
+        session_id=session_id,
+        course_id=sess.course_id,
+        attempt_id=int(current_attempt.id),
+        content=message,
+    )
+    _emit(on_phase, TURN_PHASE_READING)
+
     # Cross-turn linking (WU-2B): read the CURRENT subgraph (everything taught
     # so far this attempt — the new turn's nodes aren't written until after
     # parsing) and project it into a GraphContext the parser threads in so it
@@ -674,7 +870,10 @@ async def handle_chat(
         attempt_id=current_attempt.id,
         stage="student_graph",
     )
-    next_idx = await _next_turn_index(db, session_id)
+    # The question ledger's turn bookkeeping keys off the STUDENT message's
+    # index — before P0.3 this was computed here (the index the pair-persist
+    # would assign); the early persist already fixed that same value.
+    next_idx = student_turn_index
 
     # One-call reference-driven question controller. The same model assesses
     # the full student transcript and writes Apollo's answer-safe next reply.
@@ -683,6 +882,16 @@ async def handle_chat(
     full_transcript = [
         ("student" if item["role"] == "user" else "apollo", item["content"]) for item in history_pre
     ] + [("student", message)]
+    # M4 — check #3, before the question-planner call (and therefore before its
+    # ledger write, modulo the planner's own LLM latency — a residual sub-window,
+    # see chat.md). The parse + KG chain runs 10-17s;
+    # a tally row committed after `done._question_ledger`'s single unlocked
+    # SELECT is silently orphaned, and `times_asked` written into a grading
+    # window mis-scopes the P1.2b denominator. The student row persisted above is
+    # deliberately KEPT (the documented dangling-row rule) — it is inside the
+    # transcript the winner grades.
+    await _require_unclaimed(db, session_id=session_id)
+    _emit(on_phase, TURN_PHASE_THINKING)
     decision = await plan_next_question(
         db,
         course_id=int(sess.course_id),
@@ -696,34 +905,68 @@ async def handle_chat(
         {"node_id": topic.node_id, "display_name": topic.display_name}
         for topic in decision.covered_topics
     ]
+    graded_topic_total, open_graded_topics = _graded_topic_counts(problem, decision.covered_topics)
     if decision.action == "ask":
         validated = decision.question or "Can you explain that part one more time?"
     else:
         validated = "Thanks — I have enough to grade what you taught me."
-
-    await _persist_turn(
+    await _persist_apollo_reply(
         db,
         session_id=session_id,
         course_id=sess.course_id,
         attempt_id=int(current_attempt.id),
-        student_msg=message,
         apollo_msg=validated,
     )
+    # The frame goes out only once the row is DURABLE (review wave). Emitting
+    # first put the reply on the wire ahead of the commit, so a commit failure
+    # left the student reading a reply that no refresh could ever show again.
+    # It still runs before the auto-done branch below, so the reply is never
+    # held hostage to the 6-14s grading run — the cost of the correct order is
+    # one local INSERT + commit. `ApolloChat`'s keep-rule comment in the student
+    # UI cites exactly this ordering; that citation is now true by construction.
+    _emit(on_phase, TURN_PHASE_REPLY, text=validated)
     if decision.action == "done":
+        from apollo.errors import GradingInProgressError  # noqa: PLC0415
         from apollo.handlers.done import handle_done  # noqa: PLC0415
 
-        done_result = await handle_done(db=db, neo=neo, session_id=session_id)
-        return {
+        # This Done was decided by the questioning engine (budget exhaustion /
+        # coverage-sufficient), not clicked by the student — stamp it for
+        # grade forensics (bimodal-fix P0.4).
+        #
+        # M1 (P3.4): the student may have clicked Done a moment earlier, in
+        # which case that request owns the grading claim and this one loses it.
+        # An auto-done is not a student action, so it must NEVER surface an
+        # error: skip the dispatch, log it, and serve the ordinary teaching
+        # reply. The winner's grade reaches the student through its own
+        # response; re-raising here would 409 a turn the student did not
+        # initiate.
+        _emit(on_phase, TURN_PHASE_GRADING)
+        try:
+            done_result = await handle_done(db=db, neo=neo, session_id=session_id, auto_done=True)
+        except GradingInProgressError:
+            _LOG.info(
+                "apollo_auto_done_claim_lost session_id=%s attempt_id=%s",
+                session_id,
+                int(current_attempt.id),
+            )
+            done_result = None
+        payload = {
             "apollo_reply": validated,
             "kg_entries_added": nodes_added,
             "kg": student_graph.model_dump(mode="json"),
             "covered_topics": covered_topics,
-            "intent_executed": {"intent": "done", "result": done_result},
+            "graded_topic_total": graded_topic_total,
+            "open_graded_topics": open_graded_topics,
         }
+        if done_result is not None:
+            payload["intent_executed"] = {"intent": "done", "result": done_result}
+        return payload
     return {
         "apollo_reply": validated,
         "kg_entries_added": nodes_added,
         "kg": student_graph.model_dump(mode="json"),
         "covered_topics": covered_topics,
+        "graded_topic_total": graded_topic_total,
+        "open_graded_topics": open_graded_topics,
         "question_target": decision.target_node_id,
     }

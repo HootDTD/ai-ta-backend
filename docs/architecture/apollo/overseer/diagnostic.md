@@ -4,13 +4,15 @@ description: Generates the student-facing narrative that explains — never deci
 owns:
   - apollo/overseer/diagnostic.py
   - apollo/overseer/remediation.py
+  - apollo/overseer/narrative_consistency.py
 related:
   - apollo/overseer/topic-narrative
   - apollo/overseer/grounding
   - apollo/overseer/topic-score
+  - apollo/overseer/aside-penalty
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
-last_verified: 2026-08-04
+last_verified: 2026-08-24
 stub: false
 ---
 
@@ -30,6 +32,11 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
 - `add_remediation_reviews(*, db, search_space_id, topic_score, feedback,
   grounding_bundle) -> decorated_feedback_or_none` — copy-on-success citation
   decoration for at most three `partial`/`missing` topics.
+- `narrative_consistency.enforce_narrative_consistency(feedback, *, topics)
+  -> feedback` — pure, total, idempotent verdict-consistency gate (P2.1);
+  `PRAISE_FLOOR = 0.6`, `FALLBACK_HEADLINE` and `MAX_REFERENCE_NAME_QUOTES`
+  (imported from [topic-score](topic-score.md)) are its public constants.
+  `PRAISE_FLOOR` is RE-EXPORTED, not declared, since 2026-08-23: [topic-narrative](topic-narrative.md) now needs the same literal to pick a topic line's status word, so it owns it (the reverse import would be a cycle) while the public name stays here. Behaviour unchanged — the P3.2 gate digest is byte-identical.
 
 ## Data flow
 
@@ -41,14 +48,34 @@ now calls `generate_diagnostic` through `asyncio.to_thread` (see `handlers/done`
 so this narrative LLM call no longer blocks the event loop. Code validates topic
 keys/order, exact-gates each quote against that topic's `evidence_span`,
 sanitizes every prose field, appends deterministic misconception + negotiation
-entries in `recap[]`, then flattens headline → topic notes → recap → prefixed
-next step for back compatibility. Otherwise it uses the unchanged axis prompt
-and returns the legacy sanitized narrative plus null feedback.
+entries in `recap[]`, runs the consistency gate LAST, then flattens headline →
+topic notes → recap → prefixed next step for back compatibility, **dropping any empty part** (2026-08-23: `sanitize_narrative` can now return "" for a field that was nothing but a numeric grade statement, and an unconditional join served a bare `Next step:` label). Otherwise it
+uses the unchanged axis prompt and returns the legacy sanitized narrative plus
+null feedback.
+
+`narrative_consistency` (P2.1, 2026-08-07) is the code half of "the narrative
+is written FROM the verdicts" — the prompt half lives in
+[topic-narrative](topic-narrative.md). It takes the sanitized payload plus
+`TopicScoreResult.topics` and, for every UNCREDITED topic, strips each
+PURE-praise sentence (a credit claim or praise word with no gap named) and — when
+that topic counted toward the grade — guarantees the gap is named, appending one
+deterministic quoted-reference sentence if the model named none. Headline and
+next step lose only pure-praise sentences that are demonstrably ABOUT an
+uncredited topic; emptied fields fall back to deterministic text.
+
+"Uncredited" is `credit < PRAISE_FLOOR`, minus one carve-out: a **Hoot-assisted**
+topic (INTERACTION5) whose credit is above zero is exempt, because
+[aside-penalty](aside-penalty.md)'s flat `0.5` cap is unconditionally below the
+floor — its sub-floor credit is a policy penalty, not missing evidence, and
+`min(evidence, 0.5)` can only reach exactly `0` from a pre-cap `0`. A
+**zero-weight** topic (P1.2b `unprobed` — Apollo never asked, so it left the
+denominator) still loses praise but never receives a gap sentence; a note that
+stripping empties gets a neutral "did not count toward your grade" line instead,
+and such a topic is never chosen as the next-step subject.
 
 `course_evidence` (INTERACTION2, supplied by `handlers/done.py` from
-[grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY.
-The axis prompt is the soft-fail fallback and stays frozen — grounding must not
-change the shape of a degraded narrative.
+[grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY; the
+axis prompt is the frozen soft-fail fallback, so grounding never changes the shape of a degraded narrative.
 With `INTERACTION3` enabled and the problem concept allowed by
 `INTERACTION_CONCEPTS`, `done.py` passes successful structured feedback to
 `remediation.py`. A non-null session grounding bundle is reused exclusively;
@@ -63,8 +90,7 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
 - **Quotes are code-gated:** a quote survives only when it exactly equals the
   gated `evidence_span` for its canonical topic and is already sanitizer-clean;
   otherwise it becomes null.
-- **Attribution rules** match the topic narrative: address the student as
-  "you"/"your"; never present a reference detail as something the student said.
+- **Attribution rules** match the topic narrative: address the student as "you"/"your"; never present a reference detail as something the student said.
 - **`topic_feedback[].hoot_assisted` (INTERACTION5) is code-injected from the
   ledger, never the LLM** — copied from each `TopicCredit.hoot_assisted` so the
   flat Hoot-assist cap can't be argued away by prose. `False` for un-assisted
@@ -78,7 +104,54 @@ The helper returns citation-only `{doc_id, label, page, upload_id}` pointers —
 - **`course_evidence=None` (the default, and what an OFF flag or NULL bundle
   produces) keeps both prompt paths byte-identical to the pre-INTERACTION2
   build**, so grounding can never silently move a grade.
-  boundary.
+- **An EMPTY prose field is repaired on BOTH branches** (2026-08-23). The uncredited path gets `FALLBACK_HEADLINE` / the deterministic next step from `_repair_prose`; the all-credited early return now runs `_fill_empty_prose` first, substituting `FALLBACK_HEADLINE_CREDITED` / `FALLBACK_NEXT_STEP_CREDITED` — a blank field is reachable because the grade scrub drops whole grade statements, and a fully credited attempt is exactly where the model most wants to headline the number (`FALLBACK_HEADLINE`, "what Apollo did not get", would be a lie there). A non-blank field is returned untouched.
+- **The consistency gate never decides anything and never raises.** It edits
+  prose only; credits, letters, quotes, `recap[]`, `hoot_assisted`, and every
+  other key pass through. With no topic under `PRAISE_FLOOR` — and for a topic
+  whose note needs no repair — the payload is returned unchanged, so a fully
+  credited attempt is byte-identical to the pre-P2.1 build. A defect inside it
+  is caught by the same structured-path `except` as a JSON failure: legacy
+  narrative, null feedback, no second completion.
+- **It runs on sanitized text and its own sentences are code-owned**, quoting a
+  shortened (≤90 chars, word-boundary) reference name — never re-sanitized, so
+  a topic display name reaches the student as authored, and never a snake_case
+  key (`humanize_key` is the no-display-name fallback). The quoted span is
+  bracket-balanced (a clip landing inside a parenthetical drops it) and embedded
+  double quotes become single ones, and each topic is quoted at most ONCE per
+  payload: a next step that falls back for a topic whose note already quotes it
+  uses the no-quote variant.
+- **Its quotes share D2's reveal budget.** A topic name IS the reference
+  solution's wording, so a gap sentence quoting it is the same reveal channel as
+  `topics[].reference_text`. At most `MAX_REFERENCE_NAME_QUOTES`
+  (== `topic_score.MAX_REFERENCE_TEXT_REVEALS`) topic names are quoted per
+  payload — chosen by the SAME ordering key as the scorer's reveal, so both
+  surfaces name the same nodes — and the next-step fallback spends from that
+  same budget. Past it the gap is still NAMED, with a wording-free sentence (the
+  note hangs off its own `canonical_key`, so the topic is still identifiable).
+  Uncapped, a wholly-failed attempt handed back the whole graded reference
+  solution — one quoted clause per zeroed node — while `topics[]` was capped at two.
+  **P3.2 L3 (2026-08-12) made it a THREE-channel budget:** `_quotable_keys`
+  subtracts `topic_narrative.nameable_misconception_keys(topics)` from the quota
+  AND drops those keys from its candidates, so the union never exceeds the budget
+  in reveals or in distinct nodes. It recomputes that allocation instead of
+  receiving it — same pure function, same `topics`. Empty below wrongness level 3,
+  restoring the pre-P3.2 selection exactly.
+- **`_is_uncredited` is deliberately NOT taught about the wrongness ceiling.** A
+  corroborated finding requires `credit >= 0.6`, so a flagged topic is a CREDITED
+  topic: it stays out of `uncredited` and keeps its praise and its untouched note,
+  while [topic-narrative](topic-narrative.md) narrates the finding as its own
+  separate line. Level 4's `min(raw, 84)` moves the attempt SCORE, never a topic's
+  credit — reading the ceiling as "not credited" would strip praise the
+  adjudicator's own verdict awards.
+- **Headline/next-step praise is deleted only on strong evidence.** Emptying a
+  one-sentence headline replaces the whole thing, so the sentence must share at
+  least two topic-name words that appear in NO credited topic (one of them 6+
+  chars; scaled down for one/two-word names) AND overlap that topic more than any
+  credited one. Measured on the 14 exported prod problems with 2+ graded nodes —
+  240 ledger-supported praise headlines — the earlier one-shared-word rule
+  false-stripped 57.9%; this one strips 0% at unchanged recall. The trade is
+  deliberate: praise naming a credited AND an uncredited topic in one sentence
+  survives (the prompt half and the per-topic note repair still cover it).
 - **Remediation is copy-on-success and all-or-nothing:** empty/unsafe results or
   any failure publish no `review` key. Solution-bearing snippets use the same
   metadata filter as Interaction 1; snippet quotes never enter the payload.

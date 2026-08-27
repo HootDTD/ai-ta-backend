@@ -3,15 +3,13 @@ doc: apollo/conversation/_index
 description: Router + Apollo teaching-turn end-to-end authority — routing, handlers, agent, parser, questioning, curriculum, session entry
 owns: []
 related: []
-last_verified: 2026-07-27
+last_verified: 2026-08-23
 stub: false
 ---
 
 # Apollo conversation — the teaching-turn path
 
-Live path: `api.py` (routing/router) → session_init → chat (parser + questioning) → done (grade). Neo4j is optional; the transcript LLM grader is the sole grading lane. The questioning/ leaves own `apollo/smart_questions/` (renamed in the doc tree, not on disk).
-
-Grading-path recipe (D21): to change grading, start at handlers/done (the orchestrator) and follow its directional related chain; the full recipe + grading invariants live in [overseer/_index](../overseer/_index.md).
+Live path: `api.py` (routing/router) → session_init → chat (parser + questioning) → done (grade). The chat turn is served two ways — blocking (`chat`) and streamed (`chat-stream`, a VIEW of the same `handle_chat`, never a second writer). Neo4j is optional; the transcript LLM grader is the sole grading lane. The questioning/ leaves own `apollo/smart_questions/` (renamed in the doc tree, not on disk). Grading-path recipe (D21): to change grading, start at handlers/done (the orchestrator) and follow its directional related chain; the full recipe + grading invariants live in [overseer/_index](../overseer/_index.md).
 
 ## Cross-cutting invariants
 - The transcript adjudicator is the ONLY grading lane; a grading failure returns a retryable 503, never a fallback grade.
@@ -25,10 +23,11 @@ Grading-path recipe (D21): to change grading, start at handlers/done (the orches
 | [errors](routing/errors.md) | NO-FALLBACK exception taxonomy (apollo-wide) · apollo/errors.py |
 | [auth-deps](routing/auth-deps.md) | 4 async auth deps + DB-08b RLS ordering · apollo/auth_deps.py |
 
-## Handlers — live
+## Handlers ([V] = vestigial, deletion candidate)
 | Leaf | Role · owns |
 |---|---|
 | [chat](handlers/chat.md) | handle_chat full V3 teaching turn · handlers/chat.py |
+| [chat-stream](handlers/chat-stream.md) | SSE view over that same turn (B.1 Tier 1) · handlers/chat_stream.py |
 | [done](handlers/done.md) | handle_done grade-of-record ORCHESTRATOR · handlers/done.py |
 | [grading-artifact-writer](handlers/grading-artifact-writer.md) | write_artifacts canonical GradingRun row · handlers/artifact_writer.py |
 | [negotiate](handlers/negotiate.md) | P3 challenge/paraphrase/skip/trace · handlers/negotiate.py |
@@ -37,13 +36,9 @@ Grading-path recipe (D21): to change grading, start at handlers/done (the orches
 | [navigation](handlers/navigation.md) | next + restart_problem transitions · handlers/{next,restart_problem}.py |
 | [browse](handlers/browse.md) | read-only problem browse · handlers/browse.py |
 | [progress](handlers/progress.md) | course-scoped XP/level read · handlers/progress.py |
-
-## Handlers — vestigial (deletion candidates)
-| Leaf | Role |
-|---|---|
-| [history](handlers/history.md) | [V] dead windowed-history loader |
-| [olm-invite](handlers/olm-invite.md) | [V] dead P3.5 clarification-invite |
-| [done-turn-order](handlers/done-turn-order.md) | [V] dead WU-4C1 shadow turn order |
+| [history](handlers/history.md) | [V] dead windowed-history loader · handlers/history.py |
+| [olm-invite](handlers/olm-invite.md) | [V] dead P3.5 clarification-invite · handlers/olm_invite.py |
+| [done-turn-order](handlers/done-turn-order.md) | [V] dead WU-4C1 shadow turn order · handlers/done_turn_order.py |
 
 ## Agent · parser
 | Leaf | Role · owns |
@@ -59,7 +54,11 @@ Grading-path recipe (D21): to change grading, start at handlers/done (the orches
 ## Questioning · curriculum · session entry
 | Leaf | Role · owns |
 |---|---|
-| [unified](questioning/unified.md) | evaluate_and_ask one-call engine + log-only belt · smart_questions/unified.py |
+| [unified](questioning/unified.md) | evaluate_and_ask one-call tally+question engine · smart_questions/unified.py |
+| [prompts](questioning/prompts.md) | system prompt + WRONGNESS DUTY block + JSON response schema for that call · smart_questions/prompts.py |
+| [selection](questioning/selection.md) | graded-first target policy + contested-first priority + 2-ask cap + graded budget reservation · smart_questions/selection.py |
+| [challenge](questioning/challenge.md) | P3.2 done-gate — one owed challenge before Apollo may self-declare done · smart_questions/challenge.py |
+| [leakage](questioning/leakage.md) | log-only private-atom belt + shared text normalizer · smart_questions/leakage.py |
 | [controller](questioning/controller.md) | plan_next_question persistence orchestration · smart_questions/controller.py |
 | [registry](curriculum/registry.md) | filesystem authoring registry · apollo/subjects/__init__.py |
 | [db](curriculum/db.md) | live DB-backed concept loader · apollo/subjects/curriculum_db.py |

@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.overseer.rubric import band_from_served_overall
 from apollo.overseer.xp import next_tier_threshold, title_for_level
 from apollo.persistence.models import (
     Concept,
@@ -121,6 +122,14 @@ async def handle_get_progress_detail(
                 "difficulty": attempt.difficulty,
                 "score": overall.get("score"),
                 "letter": overall.get("letter"),
+                # Study-prep 2026-08-23: additive student-facing band beside the
+                # UNCHANGED letter. Snapshot-first (see
+                # `rubric.band_from_served_overall`); None whenever `overall`
+                # carries no usable score. That is NOT the same row set as
+                # `letter is None` — a row with a letter but no usable score
+                # yields a letter and a null band, so do not read the two keys
+                # as agreeing about whether this attempt has a grade to show.
+                "band": band_from_served_overall(overall),
                 "created_at": attempt.created_at.isoformat(),
             }
         )

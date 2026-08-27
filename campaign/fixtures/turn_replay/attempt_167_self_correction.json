@@ -1,0 +1,337 @@
+{
+  "fixture_version": 1,
+  "attempt_ref": "prod-2026-08-11/attempt-167",
+  "pii_scrubbed": true,
+  "concept": {
+    "id": 20,
+    "slug": "ethics"
+  },
+  "problem": {
+    "authored": {
+      "solution": "Answer: BIG PAPA is the 2020 extension of Mason's PAPA framework proposed by Young, Smith, and Zheng for the big data era. It keeps Mason's four issues — privacy, accuracy, property, accessibility — in their evolved forms and appends three issues: Behavioral surveillance, Interpretation, and Governance. Each new issue is rooted in Mason's original work but has grown into a distinct concern. Behavioral surveillance is rooted primarily in Mason's discussion of privacy: he worried about data users consciously provided, whereas modern technology collects behavioral data — location, communication, digital interaction — continuously and often without awareness or meaningful consent. Interpretation is teased out as a subset of Mason's accuracy issue: accuracy asks whether the data is correct, while interpretation recognizes that perfectly accurate data can still yield wrong conclusions through flawed models and analyses. Governance is formed from Mason's repeated calls for adequate safeguards, which were embedded within each PAPA issue; Young et al. argue governance failures are now so pervasive that the question 'who will watch the watchmen?' deserves standalone attention. Before the big data era these issues only loosely overlapped with data practice; today each is fully entrenched in it.",
+      "completeness": "answer_only",
+      "worked_procedure": null
+    },
+    "verification": "faithfulness_only",
+    "layer1_seeded": true,
+    "declared_paths": [
+      [
+        "define_papa_framework",
+        "define_big_papa",
+        "define_behavioral_surveillance",
+        "define_interpretation_issue",
+        "define_governance_issue",
+        "q19_map_roots"
+      ]
+    ],
+    "id": "authored.ebfa7ada026be88d6ccdc96f0e23b730",
+    "concept_id": "ethics",
+    "difficulty": "intro",
+    "problem_text": "What is the BIG PAPA framework, who proposed it, and how does each of its three new issues tie back into Mason's original PAPA framework?",
+    "given_values": {},
+    "target_unknown": "",
+    "reference_solution": [
+      {
+        "id": "define_papa_framework",
+        "step": 1,
+        "content": {
+          "concept": "PAPA framework",
+          "meaning": "PAPA is Richard Mason's 1986 framework naming the four major ethical issues of the information age — Privacy, Accuracy, Property, and Accessibility — posed as questions society must answer so that the information society being created is the one we actually want."
+        },
+        "depends_on": [],
+        "entity_key": "def.define_papa_framework",
+        "entry_type": "definition"
+      },
+      {
+        "id": "define_big_papa",
+        "step": 2,
+        "content": {
+          "concept": "BIG PAPA framework",
+          "meaning": "BIG PAPA is Young, Smith, and Zheng's 2020 extension of Mason's PAPA framework to the big data era: it appends three new ethical issues — Behavioral surveillance, Interpretation, and Governance — to the original four issues of privacy, accuracy, property, and accessibility."
+        },
+        "depends_on": [
+          "define_papa_framework"
+        ],
+        "entity_key": "def.define_big_papa",
+        "entry_type": "definition"
+      },
+      {
+        "id": "define_behavioral_surveillance",
+        "step": 3,
+        "content": {
+          "concept": "behavioral surveillance",
+          "meaning": "Behavioral surveillance is the BIG PAPA issue concerning data that reveals individual activity — location, communication, and digital interaction. Its core questions: how can users be better informed before making an active choice to share data, and how do we preserve individual liberty when behavior is constantly monitored?"
+        },
+        "depends_on": [
+          "define_big_papa"
+        ],
+        "entity_key": "def.define_behavioral_surveillance",
+        "entry_type": "definition"
+      },
+      {
+        "id": "define_interpretation_issue",
+        "step": 4,
+        "content": {
+          "concept": "interpretation (BIG PAPA)",
+          "meaning": "Interpretation is the BIG PAPA issue concerning analytical error: how can we avoid developing flawed models built upon erroneous or incomplete data, reduce the likelihood of drawing erroneous conclusions, and educate others to recognize poor analyses?"
+        },
+        "depends_on": [
+          "define_big_papa"
+        ],
+        "entity_key": "def.define_interpretation_issue",
+        "entry_type": "definition"
+      },
+      {
+        "id": "define_governance_issue",
+        "step": 5,
+        "content": {
+          "concept": "governance (BIG PAPA)",
+          "meaning": "Governance is the BIG PAPA issue of ensuring that the necessary controls are in place to handle ethical challenges related to big data — summarized by the question 'who will watch the watchmen?'"
+        },
+        "depends_on": [
+          "define_big_papa"
+        ],
+        "entity_key": "def.define_governance_issue",
+        "entry_type": "definition"
+      },
+      {
+        "id": "q19_map_roots",
+        "step": 6,
+        "content": {
+          "order": 1,
+          "action": "Map each new issue to its Mason root: behavioral surveillance grows out of privacy (consciously provided data versus continuous collection); interpretation is teased out of accuracy (correct data versus correct conclusions); governance elevates Mason's embedded safeguard calls into a standalone issue.",
+          "purpose": "Show BIG PAPA as an extension, not a replacement, of PAPA.",
+          "uses_equations": []
+        },
+        "depends_on": [
+          "define_behavioral_surveillance",
+          "define_interpretation_issue",
+          "define_governance_issue"
+        ],
+        "entity_key": "proc.q19_map_roots",
+        "entry_type": "procedure_step"
+      }
+    ]
+  },
+  "messages": [
+    {
+      "turn_index": 0,
+      "role": "student",
+      "content": "Its behaviour suveillance, interpretation, and governance. behaviour suvelleince means that a lot of small information can create a bigger picture about you and that how people can find out who you are, what you like and also where you live. It is not just about what you share but instead its also about what other people share about you which makes privacy harder nowadays. for governance it basically talks about rules etc. about property and information since its hard to keep property about information since its easy to share information fast without losing it. Interpretation is important because it is not just about the information is being correct instead it is also about if you have interpreted it right",
+      "intent": null
+    },
+    {
+      "turn_index": 1,
+      "role": "apollo",
+      "content": "That helps—especially the point about it not just being what you share. If you start from the older four-part ethics checklist (privacy, accuracy, property, accessibility), which one do you think each newer issue (behavior monitoring, interpretation, governance) grows out of, and why?",
+      "intent": null
+    },
+    {
+      "turn_index": 2,
+      "role": "student",
+      "content": "interpretation grows out of accuracy because like I said itsnot just about the information being accurate instead it is also important to interpreted the data right. Behaviour suvveillance grows out of privacy because its about gaining an idea about a person with a lot of small information that create a bigger picture which makes it harder to have privacy. Governance builds on proberty since its also about who is responsible in case something goes wrong or it harms someone.",
+      "intent": null
+    },
+    {
+      "turn_index": 3,
+      "role": "apollo",
+      "content": "Okay, that mapping for interpretation→accuracy and surveillance→privacy is clear. Can you remind me what the four parts of PAPA are and what each one is asking us to think about?",
+      "intent": null
+    },
+    {
+      "turn_index": 4,
+      "role": "student",
+      "content": "its privacy accuracy property and accessibility. privacy- who should have access to personal information. accuracy - who is responsible if information is incorrect. property - who owns information? accessibility - who should have access to information? So I guess I was wrong about governance since its more a mix of all of them but also to make sure accuracy is right",
+      "intent": null
+    },
+    {
+      "turn_index": 5,
+      "role": "apollo",
+      "content": "Got it—that breakdown of the four PAPA parts makes sense. Do you remember who introduced the BIG PAPA idea, and what they were trying to add beyond the original PAPA list?",
+      "intent": null
+    },
+    {
+      "turn_index": 6,
+      "role": "student",
+      "content": "It was Jacob A. Young, Tyler J. Smith, and Shawn H. Zheng in 2020 and they tried to add behavioral suveillance, interpretation and governance",
+      "intent": null
+    },
+    {
+      "turn_index": 7,
+      "role": "apollo",
+      "content": "Thanks, that helps. For the governance part, what’s the main worry it’s trying to solve in big-data use, and which of the older PAPA concerns does that most directly build on?",
+      "intent": null
+    },
+    {
+      "turn_index": 8,
+      "role": "student",
+      "content": "accessibility with rules about who can access data and who manages it",
+      "intent": null
+    },
+    {
+      "turn_index": 9,
+      "role": "apollo",
+      "content": "Okay, I see why you’re linking it to access control and management. In a real situation where an organization sets the rules for who can use the data, what’s the specific risk governance is trying to prevent if the people managing access make bad choices or act in their own interest?",
+      "intent": null
+    },
+    {
+      "turn_index": 10,
+      "role": "student",
+      "content": "the misuse of data like giving people access to data who arent supposed to have access to it",
+      "intent": null
+    },
+    {
+      "turn_index": 11,
+      "role": "apollo",
+      "content": "Okay, that example makes the “rules and control” part feel concrete. If you had to connect that worry to just one of the original four (privacy, accuracy, property, accessibility), which one would you pick as the closest “root,” and what’s the main difference between that root issue and the newer “governance” issue?",
+      "intent": null
+    }
+  ],
+  "question_opportunities": [
+    {
+      "reference_node_id": "define_behavioral_surveillance",
+      "state": "tentative",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "behaviour suvelleince means that a lot of small information can create a bigger picture about you and that how people can find out who you are, what you like and also where you live. It is not just about what you share but instead its also about what other people share about you which makes privacy harder nowadays."
+        },
+        {
+          "turn_id": 2,
+          "quote": "Behaviour suvveillance grows out of privacy because its about gaining an idea about a person with a lot of small information that create a bigger picture which makes it harder to have privacy."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_governance_issue",
+      "state": "tentative",
+      "times_asked": 2,
+      "last_asked_turn": 9,
+      "asked_turn": 9,
+      "answered_turn": 10,
+      "question": "In a real situation where an organization sets the rules for who can use the data, what’s the specific risk governance is trying to prevent if the people managing access make bad choices or act in their own interest?",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "for governance it basically talks about rules etc."
+        },
+        {
+          "turn_id": 2,
+          "quote": "Governance builds on proberty since its also about who is responsible in case something goes wrong or it harms someone."
+        },
+        {
+          "turn_id": 4,
+          "quote": "So I guess I was wrong about governance since its more a mix of all of them but also to make sure accuracy is right"
+        },
+        {
+          "turn_id": 8,
+          "quote": "accessibility with rules about who can access data and who manages it"
+        },
+        {
+          "turn_id": 10,
+          "quote": "the misuse of data like giving people access to data who arent supposed to have access to it"
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_interpretation_issue",
+      "state": "tentative",
+      "times_asked": 0,
+      "last_asked_turn": null,
+      "asked_turn": null,
+      "answered_turn": null,
+      "question": "",
+      "evidence": [
+        {
+          "turn_id": 0,
+          "quote": "Interpretation is important because it is not just about the information is being correct instead it is also about if you have interpreted it right"
+        },
+        {
+          "turn_id": 2,
+          "quote": "interpretation grows out of accuracy because like I said itsnot just about the information being accurate instead it is also important to interpreted the data right."
+        }
+      ]
+    },
+    {
+      "reference_node_id": "q19_map_roots",
+      "state": "conflicting",
+      "times_asked": 2,
+      "last_asked_turn": 11,
+      "asked_turn": 11,
+      "answered_turn": null,
+      "question": "If you had to connect that worry to just one of the original four (privacy, accuracy, property, accessibility), which one would you pick as the closest “root,” and what’s the main difference between that root issue and the newer “governance” issue?",
+      "evidence": [
+        {
+          "turn_id": 2,
+          "quote": "interpretation grows out of accuracy because like I said itsnot just about the information being accurate instead it is also important to interpreted the data right. Behaviour suvveillance grows out of privacy because its about gaining an idea about a person with a lot of small information that create a bigger picture which makes it harder to have privacy. Governance builds on proberty since its also about who is responsible in case something goes wrong or it harms someone."
+        },
+        {
+          "turn_id": 4,
+          "quote": "So I guess I was wrong about governance since its more a mix of all of them but also to make sure accuracy is right"
+        },
+        {
+          "turn_id": 8,
+          "quote": "accessibility with rules about who can access data and who manages it"
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_papa_framework",
+      "state": "understood",
+      "times_asked": 1,
+      "last_asked_turn": 3,
+      "asked_turn": 3,
+      "answered_turn": 4,
+      "question": "Can you remind me what the four parts of PAPA are and what each one is asking us to think about?",
+      "evidence": [
+        {
+          "turn_id": 4,
+          "quote": "its privacy accuracy property and accessibility. privacy- who should have access to personal information. accuracy - who is responsible if information is incorrect. property - who owns information? accessibility - who should have access to information?"
+        }
+      ]
+    },
+    {
+      "reference_node_id": "define_big_papa",
+      "state": "understood",
+      "times_asked": 1,
+      "last_asked_turn": 5,
+      "asked_turn": 5,
+      "answered_turn": 6,
+      "question": "Do you remember who introduced the BIG PAPA idea, and what they were trying to add beyond the original PAPA list?",
+      "evidence": [
+        {
+          "turn_id": 6,
+          "quote": "It was Jacob A. Young, Tyler J. Smith, and Shawn H. Zheng in 2020 and they tried to add behavioral suveillance, interpretation and governance"
+        }
+      ]
+    }
+  ],
+  "adjudicator_output": {
+    "verdicts": [
+      {
+        "node_id": "q19_map_roots",
+        "covered": true,
+        "credit": 0.9,
+        "confidence": 0.86,
+        "evidence_span": null,
+        "prompted": false,
+        "corrected_later": false,
+        "contradicted": false,
+        "basis": "stated",
+        "hoot_assisted": false
+      }
+    ]
+  },
+  "recorded": {
+    "served_score": 90,
+    "served_letter": "A",
+    "topic_credits": {
+      "q19_map_roots": 0.9
+    }
+  }
+}
