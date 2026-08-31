@@ -213,6 +213,41 @@ async def test_auto_done_turn_streams_the_reply_before_the_grading_stage():
     assert events[3][1]["stage"] == TURN_PHASE_GRADING
 
 
+async def test_ask_hoot_turn_gets_hoot_copy_in_the_accepted_frame():
+    """The accepted frame is the ONLY working frame an Ask Hoot aside emits
+    (the aside lane returns before any turn phase fires), and Hoot — not
+    Apollo — answers asides, so the copy must not claim Apollo is listening."""
+    release = asyncio.Event()
+
+    async def _turn(**_kwargs):
+        await release.wait()
+        return {"apollo_reply": "here's the reference", "message_kind": "reference_aside"}
+
+    with patch.object(cs, "handle_chat", new=AsyncMock(side_effect=_turn)):
+        gen = _stream(_request_with_handlers(), ask_hoot=True)
+        first = await gen.__anext__()
+        second = await gen.__anext__()
+        name, accepted = parse_sse([first, second])[1]
+        assert name == "working"
+        assert accepted["stage"] == cs.STAGE_ACCEPTED
+        assert accepted["message"] == cs.ASK_HOOT_ACCEPTED_MESSAGE
+        assert "Apollo" not in accepted["message"]
+        assert "Hoot" in accepted["message"]
+        release.set()
+        await _drain(gen)
+
+
+async def test_teaching_turn_keeps_the_apollo_accepted_copy():
+    """`ask_hoot=False` (the default) must be untouched by the aside copy —
+    the teaching accepted frame still names Apollo."""
+    with patch.object(cs, "handle_chat", new=AsyncMock(return_value={"apollo_reply": "go on"})):
+        events = parse_sse(await _drain(_stream(_request_with_handlers())))
+    accepted = events[1][1]
+    assert accepted["stage"] == cs.STAGE_ACCEPTED
+    assert accepted["message"] == cs._WORKING_MESSAGES[cs.STAGE_ACCEPTED]
+    assert "Apollo" in accepted["message"]
+
+
 async def test_short_lane_gets_a_synthesized_reply_before_complete():
     """Intent confirmations / Ask Hoot asides never reach the teaching path's
     emit site, but the contract still promises exactly one `reply`."""

@@ -9,7 +9,7 @@ related:
   - apollo/conversation/routing/errors
   - database/session
   - platform/http-server
-last_verified: 2026-08-23
+last_verified: 2026-08-31
 stub: false
 ---
 
@@ -43,7 +43,7 @@ also parses standalone.
 | Event | Data | When |
 |---|---|---|
 | `received` | `{session_id}` | first frame, before any turn work |
-| `working` | `{stage, message}` | `accepted` immediately, then `reading` / `thinking` / `grading` from the turn's own phases |
+| `working` | `{stage, message}` | `accepted` immediately, then `reading` / `thinking` / `grading` from the turn's own phases. The `accepted` copy is actor-aware: an explicit Ask Hoot turn (`ask_hoot=True`) gets `ASK_HOOT_ACCEPTED_MESSAGE` (Hoot answers asides, and `accepted` is the only working frame an aside emits); every other turn gets the Apollo teaching copy — an implicitly classified question can't be told apart at accept time |
 | `reply` | `{apollo_reply}` | Apollo's student-visible text is final |
 | `complete` | `{payload}` | terminal — `payload` is the blocking route's JSON body |
 | `error` | `{status, body, message}` | terminal — `body` rendered by the SAME registered exception handler the blocking route would hit; `message` mirrors its student-facing text at top level |
