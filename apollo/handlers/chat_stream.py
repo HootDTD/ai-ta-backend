@@ -93,6 +93,13 @@ _WORKING_MESSAGES = {
     TURN_PHASE_GRADING: "Apollo is grading what you taught…",
 }
 
+#: Accepted-frame copy for an explicit Ask Hoot turn (`ask_hoot=True`). The
+#: aside lane returns before any turn phase fires, so this is the ONLY working
+#: message an aside shows — and Hoot, not Apollo, answers it. An implicitly
+#: classified question (typed without the button) still gets the teaching copy:
+#: intent is unknown at accept time.
+ASK_HOOT_ACCEPTED_MESSAGE = "Got it — Hoot is looking it up…"
+
 #: Body served when a turn fails with something that has no registered Apollo
 #: exception handler. Deliberately opaque — the detail is logged server-side,
 #: never streamed to a student.
@@ -319,9 +326,10 @@ async def stream_chat_turn(
     # Both of these precede any awaited work, so "visible activity < 1s" is a
     # property of the framing, not of how fast the LLM chain happens to be.
     yield sse_frame(EVENT_RECEIVED, {"session_id": session_id})
-    yield sse_frame(
-        EVENT_WORKING, {"stage": STAGE_ACCEPTED, "message": _WORKING_MESSAGES[STAGE_ACCEPTED]}
+    accepted_message = (
+        ASK_HOOT_ACCEPTED_MESSAGE if ask_hoot else _WORKING_MESSAGES[STAGE_ACCEPTED]
     )
+    yield sse_frame(EVENT_WORKING, {"stage": STAGE_ACCEPTED, "message": accepted_message})
 
     replied = False
     while True:
