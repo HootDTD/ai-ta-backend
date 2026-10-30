@@ -1,8 +1,8 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-08-23",
-  "repo": "ai-ta-backend",
+  "generated_at": "2026-10-29",
+  "repo": "jev-node-judge",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -92,6 +92,8 @@
     "apollo/overseer/coverage_contract.py": "apollo/overseer/transcript-coverage",
     "apollo/overseer/diagnostic.py": "apollo/overseer/diagnostic",
     "apollo/overseer/grounding.py": "apollo/overseer/grounding",
+    "apollo/overseer/jev_client.py": "apollo/overseer/jev-node-judge",
+    "apollo/overseer/jev_node_judge.py": "apollo/overseer/jev-node-judge",
     "apollo/overseer/misconception.py": "apollo/overseer/rubric",
     "apollo/overseer/narrative_consistency.py": "apollo/overseer/diagnostic",
     "apollo/overseer/personalization_flag.py": "apollo/overseer/problem-selector",
@@ -832,6 +834,15 @@
       "description": "INTERACTION2 \u2014 turns a session's cached retrieval bundle into one capped, student-safe evidence block for the grading prompts.",
       "owns": [
         "apollo/overseer/grounding.py"
+      ]
+    },
+    "apollo/overseer/jev-node-judge": {
+      "path": "docs/architecture/apollo/overseer/jev-node-judge.md",
+      "kind": "leaf",
+      "description": "EXPERIMENTAL per-turn node judge on TypeSafe Jev (APOLLO_NODE_JUDGE=jev, default off) + its HTTP client; emits the same coverage verdict as the GPT adjudicator.",
+      "owns": [
+        "apollo/overseer/jev_node_judge.py",
+        "apollo/overseer/jev_client.py"
       ]
     },
     "apollo/overseer/problem-selector": {
@@ -2161,6 +2172,7 @@
         "apollo/overseer/coverage",
         "apollo/overseer/diagnostic",
         "apollo/overseer/grounding",
+        "apollo/overseer/jev-node-judge",
         "apollo/overseer/problem-selector",
         "apollo/overseer/rubric",
         "apollo/overseer/topic-narrative",
