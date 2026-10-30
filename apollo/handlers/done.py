@@ -37,6 +37,7 @@ from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer import wrongness
 from apollo.overseer.aside_penalty import apply_aside_caps
+from apollo.overseer.coverage_contract import CoverageVerdict
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.grounding import (
     CourseEvidence,
@@ -44,6 +45,8 @@ from apollo.overseer.grounding import (
     evidence_block,
     grounding_provenance,
 )
+from apollo.overseer.jev_node_judge import evidence_spans as jev_evidence_spans
+from apollo.overseer.jev_node_judge import judge_transcript
 from apollo.overseer.misconception import (
     MisconceptionSignal,
     summarize_for_rubric,
@@ -84,6 +87,8 @@ from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
 from config.settings import (
+    NODE_JUDGE_JEV,
+    apollo_node_judge,
     interaction2_enabled,
     interaction3_enabled,
     interaction5_enabled,
@@ -649,6 +654,32 @@ async def _wrongness_bonus_xp(
     except Exception:
         _LOG.exception("apollo_wrongness_xp_bonus_failed attempt_id=%s", attempt.id)
         return 0
+
+
+async def _jev_coverage_safe(
+    transcript: tuple[tuple[str, str], ...],
+    reference_graph: Any,
+    *,
+    attempt_id: int,
+) -> tuple[CoverageVerdict, dict[str, str]] | None:
+    """`APOLLO_NODE_JUDGE=jev`: per-turn Jev coverage + winning-turn spans, or
+    `None` on ANY failure so the caller falls back to the GPT adjudicator.
+
+    The Jev verdict carries no `hoot_assisted` / `wrongness` keys (Jev answers
+    neither question), so under this flag the INTERACTION5 cap and the P3.2
+    corroboration read as "nothing assisted / not corroborated"."""
+    try:
+        result = await judge_transcript(reference_graph, transcript)
+    except Exception:
+        _LOG.exception("apollo_jev_node_judge_failed attempt_id=%s fallback=gpt", attempt_id)
+        return None
+    _LOG.info(
+        "apollo_jev_node_judge_served attempt_id=%s cells=%d usage=%s",
+        attempt_id,
+        len(result.cells),
+        result.usage,
+    )
+    return result.verdict, jev_evidence_spans(result, transcript)
 
 
 def _course_evidence_safe(
@@ -1271,15 +1302,28 @@ async def _grade_claimed_attempt(
             wrongness.candidate_quotes(tally_findings, graded_node_ids=graded_node_ids) or None
         )
 
-    coverage, narrative_spans = await compute_transcript_coverage_with_spans(
-        transcript=transcript,
-        reference_graph=reference_graph,
-        problem=problem,
-        course_evidence=evidence_block(course_evidence),
-        hoot_asides=hoot_asides,
-        tally_context=tally_context,
-        wrongness_candidates=wrongness_candidates,
+    # Experimental node judge (spec 2026-10-29, `APOLLO_NODE_JUDGE`, default
+    # `gpt`). `jev` grades node coverage per student turn on TypeSafe Jev; ANY
+    # failure logs and falls through to the GPT adjudicator below, so the flag
+    # can never fail a Done. Unset, this block is skipped and the grade is
+    # byte-identical to the GPT-only path.
+    jev_judged = (
+        await _jev_coverage_safe(transcript, reference_graph, attempt_id=int(attempt.id))
+        if apollo_node_judge() == NODE_JUDGE_JEV
+        else None
     )
+    if jev_judged is not None:
+        coverage, narrative_spans = jev_judged
+    else:
+        coverage, narrative_spans = await compute_transcript_coverage_with_spans(
+            transcript=transcript,
+            reference_graph=reference_graph,
+            problem=problem,
+            course_evidence=evidence_block(course_evidence),
+            hoot_asides=hoot_asides,
+            tally_context=tally_context,
+            wrongness_candidates=wrongness_candidates,
+        )
 
     # Apply the flat cap to the coverage BEFORE rubric / topic-score / diagnostic
     # / artifacts, so every downstream consumer sees the SAME capped values. Any
