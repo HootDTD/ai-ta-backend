@@ -33,7 +33,7 @@ Done path never sends a request to Jev and the grade is byte-identical.
 - `@dataclass TurnNodeCell(turn_index, node_id, label, probabilities, confidence, latency_ms)`,
   `@dataclass JevJudgeResult(verdict, cells, winning_turn, usage)`.
 - `async judge_transcript(reference_graph, transcript_messages, *, client=None) -> JevJudgeResult`.
-  Raises on any failure (no internal fallback — the caller owns that).
+  Raises on any failure (no fallback anywhere).
 - Builders: `build_question(item)`, `build_question_payload(rubric_items)` (qids `n0..nK` in
   rubric order), `question_ids(rubric_items)` (`{qid: node_id}`), `build_state(turn)`,
   `student_turns(transcript_messages)`, `node_text(item)`; pure `aggregate(node_ids, cells)`;
@@ -67,10 +67,10 @@ so it passes `validate_span`) and feeds the narrative like the GPT spans.
 
 ## Invariants & gotchas
 
-- **Fallback is the Done path's job.** Any exception from `judge_transcript` (missing key, HTTP,
-  timeout, malformed body, an absent answer, an off-label choice) is caught in
-  `done._jev_coverage_safe`, logged `apollo_jev_node_judge_failed … fallback=gpt`, and the GPT
-  adjudicator grades as if the flag were off. The flag can never fail a Done.
+- **No fallback (local experiment).** Any exception from `judge_transcript` (missing key, HTTP,
+  timeout, malformed body, an absent answer, an off-label choice) propagates out of
+  `done._jev_coverage` and fails the Done. The flag is for local benchmarking only and is never
+  set on a deployed environment.
 - **Retry only 429/529**, backoff 1s/2s/4s each stretched by ≤25% jitter, then raise. 401/422/any
   other non-200 and timeouts raise at once. `latency_ms` is the whole call incl. backoff. The key
   is never logged.

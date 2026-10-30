@@ -7,8 +7,8 @@ prompt wording and aggregation live in ``jev_node_judge``.
 
 Retry policy (spec 2026-10-29 §1 Wiring): 429 / 529 retry with a 1s / 2s / 4s
 backoff plus jitter; 401 / 422 (and every other non-2xx) raise at once; a
-timeout raises at once. Every failure surfaces as :class:`JevError`, which the
-Done path catches to fall back to the GPT adjudicator. The API key is read from
+timeout raises at once. Every failure surfaces as :class:`JevError`; nothing
+catches it (no GPT fallback). The API key is read from
 ``JEV_API_KEY`` and is never logged.
 """
 

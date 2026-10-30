@@ -110,15 +110,12 @@ async def test_flag_jev_grades_with_the_jev_verdict(monkeypatch, flag):
 
 
 @pytest.mark.parametrize("error", [JevError("HTTP 529", status_code=529), RuntimeError("boom")])
-async def test_any_jev_failure_falls_back_to_gpt(monkeypatch, caplog, error):
+async def test_any_jev_failure_raises_without_gpt_fallback(monkeypatch, error):
     judge = AsyncMock(side_effect=error)
-    out, gpt, rubric, topic = await _run(monkeypatch, flag="jev", judge=judge)
+    with pytest.raises(type(error)):
+        await _run(monkeypatch, flag="jev", judge=judge)
 
     judge.assert_awaited_once()
-    gpt.assert_awaited_once()
-    assert rubric.call_args.args[0] == _GPT_COVERAGE
-    assert out is not None
-    assert "apollo_jev_node_judge_failed" in caplog.text
 
 
 @pytest.mark.parametrize(

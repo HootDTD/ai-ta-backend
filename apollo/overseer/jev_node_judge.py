@@ -10,8 +10,8 @@ correction overrides an earlier mistake, and the result is a standard
 
 The graded-node selection and the node text are the GPT adjudicator's own
 (``transcript_coverage._build_rubric_items``), so the two judges grade the same
-rubric. Behind ``APOLLO_NODE_JUDGE=jev`` only; ``handlers/done`` falls back to
-the GPT adjudicator on any exception raised here.
+rubric. Behind ``APOLLO_NODE_JUDGE=jev`` only (local experiment); exceptions raised
+here propagate and fail the Done. There is no GPT fallback.
 """
 
 from __future__ import annotations

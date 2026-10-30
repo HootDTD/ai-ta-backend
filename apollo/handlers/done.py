@@ -656,23 +656,20 @@ async def _wrongness_bonus_xp(
         return 0
 
 
-async def _jev_coverage_safe(
+async def _jev_coverage(
     transcript: tuple[tuple[str, str], ...],
     reference_graph: Any,
     *,
     attempt_id: int,
-) -> tuple[CoverageVerdict, dict[str, str]] | None:
-    """`APOLLO_NODE_JUDGE=jev`: per-turn Jev coverage + winning-turn spans, or
-    `None` on ANY failure so the caller falls back to the GPT adjudicator.
+) -> tuple[CoverageVerdict, dict[str, str]]:
+    """`APOLLO_NODE_JUDGE=jev`: per-turn Jev coverage + winning-turn spans.
 
-    The Jev verdict carries no `hoot_assisted` / `wrongness` keys (Jev answers
-    neither question), so under this flag the INTERACTION5 cap and the P3.2
-    corroboration read as "nothing assisted / not corroborated"."""
-    try:
-        result = await judge_transcript(reference_graph, transcript)
-    except Exception:
-        _LOG.exception("apollo_jev_node_judge_failed attempt_id=%s fallback=gpt", attempt_id)
-        return None
+    No fallback (local experiment, never deployed): any Jev failure raises and
+    the benchmark records it as an error. The Jev verdict carries no
+    `hoot_assisted` / `wrongness` keys (Jev answers neither question), so under
+    this flag the INTERACTION5 cap and the P3.2 corroboration read as "nothing
+    assisted / not corroborated"."""
+    result = await judge_transcript(reference_graph, transcript)
     _LOG.info(
         "apollo_jev_node_judge_served attempt_id=%s cells=%d usage=%s",
         attempt_id,
@@ -1303,17 +1300,13 @@ async def _grade_claimed_attempt(
         )
 
     # Experimental node judge (spec 2026-10-29, `APOLLO_NODE_JUDGE`, default
-    # `gpt`). `jev` grades node coverage per student turn on TypeSafe Jev; ANY
-    # failure logs and falls through to the GPT adjudicator below, so the flag
-    # can never fail a Done. Unset, this block is skipped and the grade is
-    # byte-identical to the GPT-only path.
-    jev_judged = (
-        await _jev_coverage_safe(transcript, reference_graph, attempt_id=int(attempt.id))
-        if apollo_node_judge() == NODE_JUDGE_JEV
-        else None
-    )
-    if jev_judged is not None:
-        coverage, narrative_spans = jev_judged
+    # `gpt`). `jev` grades node coverage per student turn on TypeSafe Jev and
+    # raises on failure (no fallback; local experiment). Unset, this block is
+    # skipped and the grade is byte-identical to the GPT-only path.
+    if apollo_node_judge() == NODE_JUDGE_JEV:
+        coverage, narrative_spans = await _jev_coverage(
+            transcript, reference_graph, attempt_id=int(attempt.id)
+        )
     else:
         coverage, narrative_spans = await compute_transcript_coverage_with_spans(
             transcript=transcript,

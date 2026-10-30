@@ -294,7 +294,7 @@ def apollo_node_judge() -> str:
 
     ``APOLLO_NODE_JUDGE=jev`` grades node coverage with the TypeSafe Jev
     per-turn judge (``apollo/overseer/jev_node_judge.py``); any Jev failure
-    falls back to the GPT adjudicator inside the Done path. Absent, empty, or
+    raises (no GPT fallback; local experiment only). Absent, empty, or
     any other value reads as ``"gpt"`` — an unparseable flag must never switch
     the grader of record.
     """
