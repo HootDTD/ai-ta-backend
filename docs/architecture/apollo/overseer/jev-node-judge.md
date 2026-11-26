@@ -9,7 +9,7 @@ related:
   - apollo/overseer/topic-score
   - apollo/conversation/handlers/done
   - platform/config-settings
-last_verified: 2026-10-29
+last_verified: 2026-11-26
 stub: false
 ---
 
@@ -86,6 +86,6 @@ so it passes `validate_span`) and feeds the narrative like the GPT spans.
   property the benchmark measures, not a bug to patch here. Mapping-shaped transcript rows (e.g.
   exports) are accepted too; rows with `intent == ASIDE_MESSAGE_INTENT_TAG` are dropped.
 - **Limits:** 64k tokens/request, state + longest question ≤ 32k; an oversize turn is a 4xx →
-  fallback. Lowercase `type` only.
+  `JevError`, which fails the Done (no fallback). Lowercase `type` only.
 - `httpx` is used directly; it is already installed as an `openai` dependency (and pinned in
   `requirements-test.txt`), not a new package.
