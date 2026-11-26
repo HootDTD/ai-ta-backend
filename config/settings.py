@@ -285,6 +285,28 @@ def wrongness_level() -> int:
     return max(_WRONGNESS_LEVEL_MIN, min(_WRONGNESS_LEVEL_MAX, level))
 
 
+NODE_JUDGE_GPT = "gpt"
+NODE_JUDGE_JEV = "jev"
+
+
+def apollo_node_judge() -> str:
+    """Return the Apollo Done node judge: ``"gpt"`` (default) or ``"jev"``.
+
+    ``APOLLO_NODE_JUDGE=jev`` grades node coverage with the TypeSafe Jev
+    per-turn judge (``apollo/overseer/jev_node_judge.py``); any Jev failure
+    raises (no GPT fallback; local experiment only). Absent, empty, or
+    any other value reads as ``"gpt"`` — an unparseable flag must never switch
+    the grader of record.
+    """
+    raw = os.getenv("APOLLO_NODE_JUDGE", "").strip().casefold()
+    return NODE_JUDGE_JEV if raw == NODE_JUDGE_JEV else NODE_JUDGE_GPT
+
+
+def get_jev_api_key() -> str:
+    """TypeSafe Jev bearer token (``JEV_API_KEY``); empty when unset."""
+    return os.getenv("JEV_API_KEY", "")
+
+
 def get_embedding_dim() -> int:
     """Vector dimension for embeddings (must match the model used at index time)."""
     return int(os.getenv("EMBEDDING_DIM", "3072"))

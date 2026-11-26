@@ -11,9 +11,10 @@ related:
   - apollo/overseer/coverage
   - apollo/overseer/grounding
   - apollo/overseer/aside-penalty
+  - apollo/overseer/jev-node-judge
   - apollo/ontology/graph
   - apollo/conversation/handlers/done
-last_verified: 2026-08-24
+last_verified: 2026-10-29
 stub: false
 ---
 
@@ -59,10 +60,10 @@ still grades.
   Supplied, it adds the strict-schema `contradicted` boolean, the `FLAGGED CLAIMS` block and the
   corroboration rule; answers ride back under `wrongness`.
 - From `coverage_contract.py`: `CoverageVerdict` / `NegotiationCounts` TypedDicts +
-  `validate_coverage_verdict` + `BASIS_VALUES` + `WRONGNESS_FLAGS`. Exactly THREE optional
-  additive keys are allowed — `hoot_assisted: {node_id: bool}` (INTERACTION5), `basis: {node_id:
-  stated|used|implied|absent}` (2026-08-08), `wrongness: {node_id: {contradicted, corrected_later,
-  prompted}}` (P3.2); any other extra key is rejected.
+  `validate_coverage_verdict` + `BASIS_VALUES` + `JEV_BASIS_VALUES` + `WRONGNESS_FLAGS`. Exactly THREE
+  optional additive keys — `hoot_assisted: {node_id: bool}` (INTERACTION5), `basis: {node_id:
+  stated|used|implied|absent}` (2026-08-08; or a [jev-node-judge](jev-node-judge.md) label), `wrongness:
+  {node_id: {contradicted, corrected_later, prompted}}` (P3.2); any other extra key is rejected.
 
 ## Data flow
 

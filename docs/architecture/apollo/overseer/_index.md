@@ -3,20 +3,20 @@ doc: apollo/overseer/_index
 description: Router for Apollo's grading, scoring, narrative, XP, and selection brains — home of the grading-path invariants.
 owns: []
 related: []
-last_verified: 2026-08-24
+last_verified: 2026-10-29
 stub: false
 ---
 
 # Apollo overseer — grading, scoring & selection
 
-The graders, the score→letter→narrative chain, XP, and problem selection. The live
-Done grade is assembled by [done.md](../conversation/handlers/done.md) — recipe below.
+The graders, the score→letter→narrative chain, XP, and problem selection. The live Done grade is assembled by [done.md](../conversation/handlers/done.md) — recipe below.
 
 ## Leaves
 
 | Doc | One-liner | Owns |
 |---|---|---|
 | [transcript-coverage](transcript-coverage.md) | LIVE grader of record: one-call transcript adjudication + span gate | `apollo/overseer/transcript_coverage.py`, `apollo/overseer/coverage_contract.py`, `apollo/overseer/__init__.py` |
+| [jev-node-judge](jev-node-judge.md) | EXPERIMENTAL per-turn node judge on TypeSafe Jev (`APOLLO_NODE_JUDGE=jev`, default off; falls back to GPT) | `apollo/overseer/jev_node_judge.py`, `apollo/overseer/jev_client.py` |
 | [topic-score](topic-score.md) | LIVE grade of record: coverage-weighted topic score + the one serializer | `apollo/overseer/topic_score.py`, `apollo/overseer/topic_score_serialize.py` |
 | [rubric](rubric.md) | Axis-weighted grade + `score_to_letter` + misconception value objects | `apollo/overseer/rubric.py`, `apollo/overseer/misconception.py` |
 | [topic-narrative](topic-narrative.md) | Ledger-grounded narrative prompt + output sanitizer | `apollo/overseer/topic_narrative.py` |

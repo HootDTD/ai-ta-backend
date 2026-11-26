@@ -7,6 +7,7 @@ related:
   - apollo/conversation/routing/errors
   - apollo/overseer/_index
   - apollo/overseer/transcript-coverage
+  - apollo/overseer/jev-node-judge
   - apollo/overseer/rubric
   - apollo/overseer/topic-score
   - apollo/overseer/wrongness
@@ -21,7 +22,7 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-08-23
+last_verified: 2026-10-29
 stub: false
 ---
 
@@ -41,7 +42,7 @@ Ordered grade assembly (each step delegates to the owner doc):
 1. Load session + problem (`_find_problem`) + latest `ProblemAttempt`. **Empty-attempt guard** (2026-08-07, defect I1): zero persisted student messages (`_student_message_count`) → `EmptyAttemptError` (409 `empty_attempt`, `routing/errors`) BEFORE any mutation — no freeze/phase change/XP/narrative, attempt row untouched (marking it flips `is_reattempt_in_session` and docks XP on the real Done). An already-graded attempt short-circuits to its stored report; otherwise Done CASes the claim (Invariants "Claim lifecycle") then reads the graph (degraded Neo4j tolerated).
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
 2a. **Question ledger** (`_question_ledger`, P1.2b/P1.3): ONE read of this attempt's `QuestionOpportunity` rows (by `id`), feeding the adjudicator's `tally_context` (step 3 — `[{node_id, state, times_asked, student_quote|null}]`), the scorer's `asked_node_ids` (step 5) via `_probed_node_ids(rows)` — NOT the raw row set, since a degenerate `fallback_served` turn mints a row without probing anything — and the wrongness findings (step 3b). Any exception logs and yields `None` for all of them (pre-fix grade); an EMPTY ledger stays `frozenset()`.
-3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans` (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated evidence spans. `_course_evidence_safe` (before it) checks `INTERACTION2` + `INTERACTION_CONCEPTS`, then renders `grounding_bundle` into the optional `course_evidence` block (also step 6). `_full_transcript` excludes `TutoringMessage` tagged `intent == ASIDE_MESSAGE_INTENT_TAG` (`hoot-bridge-reference-answer`) — INTERACTION4 hint-lane text never enters grading, but the student's untagged triggering question does.
+3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans` (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated evidence spans. `_course_evidence_safe` (before it) checks `INTERACTION2` + `INTERACTION_CONCEPTS`, then renders `grounding_bundle` into the optional `course_evidence` block (also step 6). `_full_transcript` excludes `TutoringMessage` tagged `intent == ASIDE_MESSAGE_INTENT_TAG` (`hoot-bridge-reference-answer`) — INTERACTION4 hint-lane text never enters grading, but the student's untagged triggering question does. **Node-judge switch** (2026-10-29, `apollo_node_judge()` / `APOLLO_NODE_JUDGE`, default `gpt`): at `jev`, `_jev_coverage` runs `judge_transcript` (`overseer/jev-node-judge`) over the SAME transcript INSTEAD of the GPT call and serves its verdict + winning-turn spans; any exception propagates (no GPT fallback — local experiment only). The Jev verdict has no `hoot_assisted` / `wrongness` keys, so steps 3a/3b read as nothing-assisted / not-corroborated under it.
 3a. **Hoot-assist cap** (INTERACTION5, `overseer/aside-penalty`): gated on `interaction5_enabled()` AND `interaction_allowed_for_concept`, `_aside_texts` fetches the same aside rows `_full_transcript` EXCLUDES (its exact complement) and passes them to the adjudicator as `hoot_asides`; `apply_aside_caps` (cap 0.5) then flat-caps every flagged node in the coverage BEFORE rubric / topic-score / diagnostic / artifacts, so all consumers see the same values.
 3b. **Wrongness ladder** (P3.2, `overseer/wrongness`): `effective_wrongness_level` — the flag paired with the concept allowlist, INTERACTION5-style — is read ONCE. At level ≥1 the SAME ledger rows from 2a become `ledger_findings`, and `candidate_quotes` hands the adjudicator `wrongness_candidates` (graded nodes only, carrying the tally's verbatim quote) so it can CORROBORATE a finding it may never originate. Its answers ride back on `coverage["wrongness"]`.
 4. `compute_rubric` (`overseer/rubric`) maps coverage into the axis rubric.

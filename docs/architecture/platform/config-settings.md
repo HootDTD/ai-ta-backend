@@ -8,7 +8,8 @@ related:
   - platform/http-server
   - rag-pipeline/hybrid-search
   - apollo/overseer/wrongness
-last_verified: 2026-08-12
+  - apollo/overseer/jev-node-judge
+last_verified: 2026-10-29
 stub: false
 ---
 
@@ -56,6 +57,12 @@ The single authority on these env-flag getters; `retrieval/`, `apollo/`, and
   caller is `apollo.overseer.wrongness.effective_wrongness_level`, which applies
   `interaction_allowed_for_concept` on top. See
   [apollo/overseer/wrongness](../apollo/overseer/wrongness.md).
+- Apollo node judge: `apollo_node_judge()` reads `APOLLO_NODE_JUDGE` and returns
+  `NODE_JUDGE_JEV` (`"jev"`, stripped + casefolded match) or `NODE_JUDGE_GPT`
+  (`"gpt"`) for absent/empty/anything else — a typo never switches the grader.
+  Read at the Done call site (`apollo/conversation/handlers/done`).
+  `get_jev_api_key()` reads `JEV_API_KEY` (empty when unset) for
+  [apollo/overseer/jev-node-judge](../apollo/overseer/jev-node-judge.md).
 
 ## Data flow
 
@@ -79,7 +86,8 @@ gates a one-time subject log line.
 `USE_PGVECTOR_RETRIEVAL`, `EMBEDDING_DIM`, `OPENAI_EMBEDDING_MODEL`,
 `SUPABASE_DB_URL`, `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`/`NEO4J_DATABASE`,
 `RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION1`, `INTERACTION2`, `INTERACTION3`,
-`INTERACTION5`, `INTERACTION_CONCEPTS`, `APOLLO_WRONGNESS_LEVEL`.
+`INTERACTION5`, `INTERACTION_CONCEPTS`, `APOLLO_WRONGNESS_LEVEL`, `APOLLO_NODE_JUDGE`,
+`JEV_API_KEY`.
 
 **Retired flag names — never reuse:** `APOLLO_MISCONCEPTION_DETECTOR`,
 `APOLLO_MISC_STRUCT_COKEY`, `APOLLO_EMERGENT_MISCONCEPTIONS`,

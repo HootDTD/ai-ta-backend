@@ -60,6 +60,12 @@ _WRONGNESS_FLAG_KEYS = frozenset(WRONGNESS_FLAGS)
 # contract's vocabulary identical to the schema's is the point: a fifth value
 # means the two have drifted, which is a defect, not data to pass downstream.
 BASIS_VALUES = ("stated", "used", "implied", "absent")
+# 2026-10-29: the experimental Jev node judge (``jev_node_judge.py``, behind
+# ``APOLLO_NODE_JUDGE=jev``) records its WINNING LABEL as the basis — its own
+# closed vocabulary, disjoint from the adjudicator's. ``BASIS_VALUES`` itself is
+# unchanged, so the GPT lane's off-enum drop rule still admits only its four.
+JEV_BASIS_VALUES = ("covered", "partial", "not_covered", "incorrect")
+_ALLOWED_BASIS = frozenset(BASIS_VALUES) | frozenset(JEV_BASIS_VALUES)
 
 
 def _validate_score_map(value: object, *, key: str) -> None:
@@ -93,15 +99,18 @@ def _validate_assist_map(value: object) -> None:
 def _validate_basis_map(value: object) -> None:
     """Validate the optional ``basis`` per-node map.
 
-    Values are restricted to :data:`BASIS_VALUES` — the adjudicator's structured
-    output already constrains them, so anything else means the schema and this
-    contract have drifted apart and the ledger would record a vocabulary no
-    consumer knows."""
+    Values are restricted to :data:`BASIS_VALUES` (the adjudicator's structured
+    output) plus :data:`JEV_BASIS_VALUES` (the Jev judge's labels) — anything
+    else means a judge and this contract have drifted apart and the ledger would
+    record a vocabulary no consumer knows."""
     if not isinstance(value, dict):
         raise ValueError("basis must be a dict")
     for node_id, basis in value.items():
-        if not isinstance(node_id, str) or basis not in BASIS_VALUES:
-            raise ValueError(f"basis must map string node ids to one of {list(BASIS_VALUES)}")
+        if not isinstance(node_id, str) or basis not in _ALLOWED_BASIS:
+            raise ValueError(
+                "basis must map string node ids to one of "
+                f"{list(BASIS_VALUES) + list(JEV_BASIS_VALUES)}"
+            )
 
 
 def _validate_wrongness_map(value: object) -> None:
@@ -163,6 +172,7 @@ def validate_coverage_verdict(value: object) -> None:
 
 __all__ = [
     "BASIS_VALUES",
+    "JEV_BASIS_VALUES",
     "WRONGNESS_FLAGS",
     "CoverageVerdict",
     "NegotiationCounts",
